@@ -80,5 +80,7 @@ export default {
     pasteToken: '粘贴访问令牌',
     yourUsername: '你的用户名',
     shortcutFormat: '格式：ctrl+alt/shift+字母，如 ctrl+shift+n',
+    saveFailed: '保存失败',
+    syncFailed: '同步失败',
   },
 };

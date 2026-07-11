@@ -1,6 +1,6 @@
 // ============ 共享工具函数 ============
 
-import { t } from './i18n';
+import { t, getLocaleTag } from './i18n';
 
 /** HTML 转义 */
 export function escapeHtml(s: string): string {
@@ -16,7 +16,7 @@ export function localISO(d: Date): string {
 /** 格式化日期为 yyyy/MM/dd HH:mm */
 export function formatDate(iso: string): string {
   const d = new Date(iso);
-  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
+  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${d.toLocaleTimeString(getLocaleTag(), { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 /** Hub 列表用的颜色映射 */

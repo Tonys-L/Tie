@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { Reminder, ShortcutConfig } from './types';
 import * as api from './api';
 import { COLOR_MAP, escapeHtml, formatDate, localISO, quickDate, repeatLabel } from './utils';
-import { initLocale, t, applyLocale, getLocale, setLocale } from './i18n';
+import { initLocale, t, applyLocale, getLocale, setLocale, getLocaleTag } from './i18n';
 
 initLocale();
 
@@ -254,7 +254,7 @@ async function loadExistingReminders(noteId: string) {
     if (active.length === 0) { container.innerHTML = ''; return; }
     const label = (t: string) => t === 'none' ? '' : ` · ${repeatLabel(t)}`;
     container.innerHTML = active.map((r: Reminder) => {
-      const dt = new Date(r.remind_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const dt = new Date(r.remind_at).toLocaleString(getLocaleTag(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
       return `<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-light);"><span>${dt}${label(r.repeat_type)}</span><button class="rm-del" data-id="${r.id}" style="border:none;background:none;color:#ef4444;cursor:pointer;font-size:14px;padding:0 4px;">&times;</button></div>`;
     }).join('');
     container.querySelectorAll('.rm-del').forEach(btn => {
@@ -328,7 +328,7 @@ async function loadSyncConfig() {
 
   document.getElementById('save-btn')?.addEventListener('click', async () => {
     try { await api.saveSyncConfig(getSyncConfig()); showSyncStatus(t('hub.configSaved'), 'ok'); }
-    catch (e) { showSyncStatus('保存失败: ' + e, 'err'); }
+	    catch (e) { showSyncStatus(t('hub.saveFailed') + ': ' + e, 'err'); }
   });
 
   document.getElementById('sync-btn')?.addEventListener('click', async () => {
@@ -347,7 +347,7 @@ async function loadSyncConfig() {
       showSyncStatus(result, 'ok');
     } catch (e) {
       console.error('[同步] 失败:', e);
-      showSyncStatus('同步失败: ' + e, 'err');
+	      showSyncStatus(t('hub.syncFailed') + ': ' + e, 'err');
     } finally {
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
       btn.style.opacity = ''; btn.style.pointerEvents = '';
@@ -400,7 +400,7 @@ async function loadShortcutConfig() {
       await api.saveShortcutConfig(config);
       showShortcutStatus(t('hub.shortcutSaved'), 'ok');
     } catch (e) {
-      showShortcutStatus('保存失败: ' + e, 'err');
+      showShortcutStatus(t('hub.saveFailed') + ': ' + e, 'err');
     }
   });
 

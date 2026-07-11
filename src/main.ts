@@ -3,7 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { marked } from 'marked';
 import type { Note, Reminder } from './types';
 import { COLORS, escapeHtml, localISO, repeatLabel } from './utils';
-import { initLocale, t, applyLocale } from './i18n';
+import { initLocale, t, applyLocale, getLocaleTag } from './i18n';
 import './styles.css';
 
 initLocale();
@@ -409,7 +409,7 @@ async function loadReminders(noteId: string, container: HTMLElement) {
     list.innerHTML = `<div class="rd-summary">${t('note.existingReminders', { n: active.length })} ▸</div>` +
       `<div class="rd-list" style="display:none">` +
       active.map(r => {
-        const dt = new Date(r.remind_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const dt = new Date(r.remind_at).toLocaleString(getLocaleTag(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
         const repeatText = r.repeat_type !== 'none' ? ` · ${repeatLabel(r.repeat_type)}` : '';
         return `<div class="reminder-item"><span>${dt}${repeatText}</span><button class="rd-del" data-del-id="${r.id}">&times;</button></div>`;
       }).join('') +

@@ -30,6 +30,10 @@ export function t(key: string, params?: Record<string, string | number>): string
   return val;
 }
 
+export function getLocaleTag(): string {
+  return current === 'zh' ? 'zh-CN' : 'en-US';
+}
+
 export function applyLocale(): void {
   document.querySelectorAll('[data-i18n]').forEach(el => {
     el.textContent = t(el.getAttribute('data-i18n')!);

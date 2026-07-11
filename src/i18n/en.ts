@@ -80,5 +80,7 @@ export default {
     pasteToken: 'Paste access token',
     yourUsername: 'Your username',
     shortcutFormat: 'Format: ctrl+alt/shift+letter, e.g. ctrl+shift+n',
+    saveFailed: 'Save failed',
+    syncFailed: 'Sync failed',
   },
 };

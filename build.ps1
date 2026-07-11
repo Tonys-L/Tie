@@ -38,15 +38,19 @@ if (-not $SkipBuild) {
     Write-Host ""
     Write-Host "[3/4] Building (may take 8-15 min)..." -ForegroundColor Yellow
     Set-Location $PSScriptRoot
-    $output = & npx tauri build --no-bundle 2>&1
-    $code = $LASTEXITCODE
-    $output | Where-Object { $_ -match "Built application|error|Error|Finished|Compiling" } | ForEach-Object {
-        Write-Host "  $_" -ForegroundColor White
+    $savedEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & npx tauri build 2>&1 | ForEach-Object {
+        $line = $_.ToString()
+        if ($line -match "error|Error|Finished|Compiling|Built|Bundle|NSIS|MSI") {
+            Write-Host "  $line" -ForegroundColor White
+        }
     }
-    if ($code -ne 0) {
+    $ErrorActionPreference = $savedEAP
+    if ($LASTEXITCODE -ne 0) {
         Write-Host ""
-        Write-Host "  BUILD FAILED! Exit code: $code" -ForegroundColor Red
-        Write-Host "  Run manually: npx tauri build --no-bundle" -ForegroundColor Gray
+        Write-Host "  BUILD FAILED! Exit code: $LASTEXITCODE" -ForegroundColor Red
+        Write-Host "  Run manually: npx tauri build" -ForegroundColor Gray
         exit 1
     }
     Write-Host "  Build OK" -ForegroundColor Green
