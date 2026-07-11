@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="app.settings">设置中心</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #f8fafc;
+      --surface: #fff;
+      --surface-hover: #f1f5f9;
+      --sidebar: #1e293b;
+      --sidebar-text: #cbd5e1;
+      --sidebar-active: #3b82f6;
+      --text: #334155;
+      --text-title: #1e293b;
+      --text-muted: #94a3b8;
+      --border: #e2e8f0;
+      --border-light: #f1f5f9;
+      --input-bg: #f8fafc;
+      --tag-active-bg: #dbeafe;
+      --tag-active-text: #2563eb;
+      --tag-archived-bg: #f3e8ff;
+      --tag-archived-text: #9333ea;
+    }
+    body.dark {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --surface-hover: #334155;
+      --sidebar: #0f172a;
+      --sidebar-text: #64748b;
+      --text: #cbd5e1;
+      --text-title: #f1f5f9;
+      --text-muted: #64748b;
+      --border: #334155;
+      --border-light: #1e293b;
+      --input-bg: #0f172a;
+      --tag-active-bg: #1e3a5f;
+      --tag-active-text: #93c5fd;
+      --tag-archived-bg: #3b0764;
+      --tag-archived-text: #c084fc;
+    }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: var(--bg);
+      font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+      font-size: 14px; color: var(--text);
+      transition: background 0.2s, color 0.2s;
+    }
+
+    /* ---- 布局 ---- */
+    .app { display: flex; width: 100%; height: 100%; }
+
+    /* ---- 侧边栏 ---- */
+    .sidebar {
+      width: 180px; flex-shrink: 0;
+      background: var(--sidebar);
+      display: flex; flex-direction: column;
+      padding: 16px 0;
+    }
+    .sidebar-header {
+      padding: 0 16px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      margin-bottom: 8px;
+    }
+    .sidebar-title {
+      font-size: 14px; font-weight: 600; color: #f1f5f9;
+    }
+    .sidebar-subtitle {
+      font-size: 11px; color: var(--sidebar-text); margin-top: 2px;
+    }
+    .nav-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 16px;
+      font-size: 13px; color: var(--sidebar-text);
+      cursor: pointer; transition: all 0.12s;
+      border-left: 2px solid transparent;
+    }
+    .nav-item:hover { color: #e2e8f0; background: rgba(255,255,255,0.04); }
+    .nav-item.active {
+      color: #fff; background: rgba(59,130,246,0.15);
+      border-left-color: var(--sidebar-active);
+    }
+    .nav-item svg { flex-shrink: 0; }
+    .sidebar-footer {
+      margin-top: auto; padding: 12px 16px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+    }
+    .theme-toggle-btn {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px; border-radius: 6px;
+      background: none; border: none; cursor: pointer;
+      color: var(--sidebar-text); font-size: 12px; font-family: inherit;
+      transition: all 0.12s;
+    }
+    .theme-toggle-btn:hover { background: rgba(255,255,255,0.06); color: #e2e8f0; }
+
+    /* ---- 内容区 ---- */
+    .content { flex: 1; overflow-y: auto; }
+    .page { display: none; height: 100%; }
+    .page.active { display: flex; flex-direction: column; }
+
+    /* ===== 便签管理页 ===== */
+    .mgr-header {
+      display: flex; align-items: center; gap: 4px;
+      padding: 10px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .mgr-tab {
+      padding: 6px 14px; font-size: 13px;
+      color: var(--text-muted); cursor: pointer;
+      border-bottom: 2px solid transparent; transition: all 0.12s;
+      user-select: none;
+    }
+    .mgr-tab:hover { color: var(--text); }
+    .mgr-tab.active {
+      color: var(--sidebar-active); border-bottom-color: var(--sidebar-active);
+      font-weight: 500;
+    }
+    .tab-count {
+      display: inline-block; background: var(--border);
+      color: var(--text-muted); font-size: 10px;
+      padding: 1px 6px; border-radius: 10px; margin-left: 4px;
+    }
+    .mgr-tab.active .tab-count { background: var(--tag-active-bg); color: var(--tag-active-text); }
+    .mgr-search { padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--border-light); }
+    .mgr-search input {
+      width: 100%; padding: 6px 10px;
+      border: 1px solid var(--border); border-radius: 6px;
+      font-size: 12px; outline: none; color: var(--text);
+      background: var(--input-bg); box-sizing: border-box;
+      transition: all 0.12s; font-family: inherit;
+    }
+    .mgr-search input:focus { border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96,165,250,0.12); }
+    .note-list { flex: 1; overflow-y: auto; padding: 6px; }
+    .note-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px; border-radius: 8px;
+      cursor: pointer; transition: background 0.12s;
+      margin-bottom: 2px; background: var(--surface);
+    }
+    .note-item:hover { background: var(--surface-hover); }
+    .note-color { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .note-text { flex: 1; min-width: 0; }
+    .note-title {
+      font-size: 12px; font-weight: 500; color: var(--text-title);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .note-preview {
+      font-size: 11px; color: var(--text-muted);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px;
+    }
+    .note-date {
+      font-size: 10px; color: var(--text-muted); flex-shrink: 0;
+      font-variant-numeric: tabular-nums; text-align: right; line-height: 1.4;
+    }
+    .note-tag {
+      display: inline-block; font-size: 10px;
+      padding: 1px 6px; border-radius: 8px;
+      font-weight: 500; vertical-align: middle; margin-left: 4px;
+    }
+    .note-tag.active { background: var(--tag-active-bg); color: var(--tag-active-text); }
+    .note-tag.archived { background: var(--tag-archived-bg); color: var(--tag-archived-text); }
+    .note-actions { display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
+    .note-item:hover .note-actions { opacity: 1; }
+    .act-btn {
+      background: none; border: none; cursor: pointer;
+      padding: 4px; border-radius: 4px; color: var(--text-muted);
+      transition: all 0.12s; display: flex; align-items: center;
+    }
+    .act-btn:hover { background: var(--border); }
+    .act-btn.archive:hover { color: #8b5cf6; }
+    .act-btn.restore:hover { color: #22c55e; }
+    .act-btn.reminder:hover { color: #f59e0b; }
+    .act-btn.delete:hover { color: #ef4444; }
+    .reminder-badge {
+      font-size: 10px; font-weight: 600;
+      background: #fef3c7; color: #d97706;
+      border-radius: 8px; padding: 1px 6px;
+      flex-shrink: 0;
+    }
+    body.dark .reminder-badge { background: #78350f; color: #fbbf24; }
+    .empty-state {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      height: 100%; color: var(--text-muted); font-size: 13px; gap: 8px;
+    }
+    .empty-state svg { color: var(--border); }
+    .note-list::-webkit-scrollbar { width: 6px; }
+    .note-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .note-list::-webkit-scrollbar-track { background: transparent; }
+
+    /* ===== 同步设置页 ===== */
+    .settings-wrap { padding: 28px 32px; max-width: 520px; }
+    .settings-wrap h2 { font-size: 18px; font-weight: 600; color: var(--text-title); margin-bottom: 4px; }
+    .settings-wrap .desc { font-size: 13px; color: var(--text-muted); margin-bottom: 24px; }
+    .status-card {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 12px; border-radius: 8px;
+      margin-bottom: 20px; font-size: 12px;
+    }
+    .status-card.ok { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
+    .status-card.err { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+    .status-card.loading { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
+    body.dark .status-card.ok { background: #052e16; color: #4ade80; border-color: #166534; }
+    body.dark .status-card.err { background: #450a0a; color: #f87171; border-color: #991b1b; }
+    body.dark .status-card.loading { background: #172554; color: #60a5fa; border-color: #1e40af; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; animation: pulse 1.5s ease infinite; }
+    .status-card.ok .status-dot { background: #22c55e; }
+    .status-card.err .status-dot { background: #ef4444; }
+    .status-card.loading .status-dot { background: #3b82f6; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .section { margin-bottom: 20px; }
+    .section-title {
+      font-size: 11px; font-weight: 600; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.8px;
+      margin-bottom: 8px; padding-left: 2px;
+    }
+    .section-card {
+      background: var(--surface); border-radius: 10px;
+      border: 1px solid var(--border); overflow: hidden;
+    }
+    .field { padding: 10px 14px; border-bottom: 1px solid var(--border-light); }
+    .field:last-child { border-bottom: none; }
+    .field-label { font-size: 12px; font-weight: 500; color: var(--text); margin-bottom: 4px; }
+    .field-input {
+      width: 100%; padding: 6px 10px;
+      border: 1px solid var(--border); border-radius: 6px;
+      font-size: 13px; outline: none; color: var(--text-title);
+      background: var(--input-bg); font-family: inherit; transition: all 0.12s;
+    }
+    .field-input:focus { border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96,165,250,0.12); }
+    .field-hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+    .field-hint a { color: #3b82f6; text-decoration: none; cursor: pointer; }
+    .field-hint a:hover { text-decoration: underline; }
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; }
+    .toggle-label { font-size: 13px; color: var(--text-title); font-weight: 500; }
+    .toggle-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+    .toggle {
+      position: relative; width: 42px; height: 24px;
+      background: var(--border); border-radius: 12px;
+      cursor: pointer; transition: background 0.2s; flex-shrink: 0;
+    }
+    .toggle.on { background: #3b82f6; }
+    .toggle::after {
+      content: ''; position: absolute; width: 20px; height: 20px;
+      border-radius: 50%; background: #fff; top: 2px; left: 2px;
+      transition: transform 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    }
+    .toggle.on::after { transform: translateX(18px); }
+    .btn-row { display: flex; gap: 10px; margin-top: 24px; }
+    .btn {
+      flex: 1; padding: 9px 0; border: none; border-radius: 8px;
+      font-size: 13px; font-weight: 500; cursor: pointer;
+      transition: all 0.12s; font-family: inherit;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    .btn-primary { background: #3b82f6; color: #fff; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-primary:active { transform: scale(0.98); }
+    .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover { background: var(--surface-hover); }
+
+    /* ===== 关于页 ===== */
+    .about-wrap { padding: 40px 32px; max-width: 520px; text-align: center; }
+    .about-logo {
+      width: 56px; height: 56px; border-radius: 14px;
+      background: #3b82f6; margin: 0 auto 16px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .about-name { font-size: 18px; font-weight: 600; color: var(--text-title); margin-bottom: 4px; }
+    .about-version { font-size: 13px; color: var(--text-muted); margin-bottom: 24px; }
+    .about-info {
+      text-align: left; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 10px;
+      padding: 16px; font-size: 12px; color: var(--text); line-height: 2;
+    }
+    .about-info strong { color: var(--text-title); }
+
+    .content::-webkit-scrollbar { width: 6px; }
+    .content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .content::-webkit-scrollbar-track { background: transparent; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <!-- Loading 遮罩 -->
+  <div id="loading-overlay" style="position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:99999;transition:opacity 0.3s;">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+      <div style="width:28px;height:28px;border:3px solid var(--border);border-top-color:#3b82f6;border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+      <span style="font-size:13px;color:var(--text-muted);" data-i18n="hub.loading">加载中...</span>
+    </div>
+  </div>
+
+  <div class="app">
+    <!-- 侧边栏 -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-title" data-i18n="app.name">AI 便签</div>
+        <div class="sidebar-subtitle" data-i18n="app.settings">设置中心</div>
+      </div>
+      <div class="nav-item active" data-page="notes">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <span data-i18n="hub.noteManager">便签管理</span>
+      </div>
+      <div class="nav-item" data-page="sync">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-9-9c2.5 0 4.7 1 6.4 2.6"/><polyline points="21 3 21 9 15 9"/></svg>
+        <span data-i18n="hub.syncSettings">同步设置</span>
+      </div>
+      <div class="nav-item" data-page="shortcuts">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/></svg>
+        <span data-i18n="hub.shortcuts">快捷键</span>
+      </div>
+      <div class="nav-item" data-page="about">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        <span data-i18n="hub.about">关于</span>
+      </div>
+      <div class="sidebar-footer">
+        <button class="theme-toggle-btn" id="lang-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          <span id="lang-label" data-i18n="hub.langSwitch">English</span>
+        </button>
+        <button class="theme-toggle-btn" id="theme-btn">
+          <svg id="icon-moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          <svg id="icon-sun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/></svg>
+          <span id="theme-label" data-i18n="hub.darkMode">深色模式</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 内容区 -->
+    <div class="content">
+      <!-- 便签管理 -->
+      <div class="page active" id="page-notes">
+        <div class="mgr-header">
+          <div class="mgr-tab active" data-tab="active"><span data-i18n="hub.activeNotes">活跃便签</span> <span class="tab-count" id="count-active">0</span></div>
+          <div class="mgr-tab" data-tab="reminders"><span data-i18n="hub.reminders">提醒</span> <span class="tab-count" id="count-reminders">0</span></div>
+          <div class="mgr-tab" data-tab="archived"><span data-i18n="hub.archived">已归档</span> <span class="tab-count" id="count-archived">0</span></div>
+        </div>
+        <div class="mgr-search">
+          <input type="text" id="search" data-i18n-placeholder="hub.searchNotes" placeholder="搜索便签..." />
+        </div>
+        <div class="note-list" id="list"></div>
+      </div>
+
+      <!-- 同步设置 -->
+      <div class="page" id="page-sync">
+        <div class="settings-wrap">
+          <h2 data-i18n="hub.syncTitle">同步设置</h2>
+          <p class="desc" data-i18n="hub.syncDesc">通过 Git 仓库在多台设备间同步便签数据</p>
+
+          <div id="git-status" class="status-card" style="display:none">
+            <div class="status-dot"></div><span id="git-status-text"></span>
+          </div>
+          <div id="sync-status" class="status-card" style="display:none">
+            <div class="status-dot"></div><span id="sync-status-text"></span>
+          </div>
+
+          <div class="section">
+            <div class="section-title" data-i18n="hub.repoConfig">仓库配置</div>
+            <div class="section-card">
+              <div class="field">
+                <div class="field-label" data-i18n="hub.repoUrl">仓库地址</div>
+                <input type="text" class="field-input" id="repo-url" placeholder="https://gitee.com/username/notes.git" data-i18n-placeholder="hub.repoUrl" />
+                <div class="field-hint" data-i18n="hub.privateRepo">在 Gitee / GitHub 创建一个<b>私有仓库</b>，填入 HTTPS 地址</div>
+              </div>
+              <div class="field">
+                <div class="field-label" data-i18n="hub.username">用户名</div>
+                <input type="text" class="field-input" id="username" data-i18n-placeholder="hub.yourUsername" placeholder="你的用户名" />
+              </div>
+              <div class="field">
+                <div class="field-label" data-i18n="hub.accessToken">访问令牌</div>
+                <input type="password" class="field-input" id="token" data-i18n-placeholder="hub.pasteToken" placeholder="粘贴访问令牌" />
+                <div class="field-hint">
+                  <a id="gitee-link" data-i18n="hub.giteeToken">Gitee 生成令牌</a> · <a id="github-link" data-i18n="hub.githubToken">GitHub 生成令牌</a>
+                </div>
+              </div>
+              <div class="field">
+                <div class="field-label" data-i18n="hub.branch">分支名</div>
+                <input type="text" class="field-input" id="branch" placeholder="main" value="main" />
+              </div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title" data-i18n="hub.syncOptions">同步选项</div>
+            <div class="section-card">
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label" data-i18n="hub.autoSync">自动同步</div>
+	                  <div class="toggle-desc" data-i18n="hub.autoSyncDesc">内容变更后自动推送，启动时自动拉取</div>
+                </div>
+                <div class="toggle" id="auto-sync"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="btn-row">
+            <button class="btn btn-secondary" id="save-btn" data-i18n="hub.saveConfig">保存配置</button>
+            <button class="btn btn-primary" id="sync-btn">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-9-9c2.5 0 4.7 1 6.4 2.6"/><polyline points="21 3 21 9 15 9"/></svg>
+              <span data-i18n="hub.syncNow">立即同步</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 快捷键设置 -->
+      <div class="page" id="page-shortcuts">
+        <div class="settings-wrap">
+          <h2 data-i18n="hub.shortcutTitle">快捷键设置</h2>
+          <p class="desc" data-i18n="hub.shortcutDesc">自定义全局快捷键，修改后即时生效</p>
+
+          <div class="section">
+            <div class="section-title" data-i18n="hub.shortcutConfig">快捷键配置</div>
+            <div class="section-card">
+              <div class="field">
+                <div class="field-label" data-i18n="hub.newNote">新建便签</div>
+                <input type="text" class="field-input" id="shortcut-new-note" placeholder="ctrl+shift+n" />
+                <div class="field-hint" data-i18n="hub.shortcutFormat">格式：ctrl+alt/shift+字母，如 ctrl+shift+n</div>
+              </div>
+              <div class="field">
+                <div class="field-label" data-i18n="hub.showAll">显示全部便签</div>
+                <input type="text" class="field-input" id="shortcut-show-all" placeholder="ctrl+shift+s" />
+                <div class="field-hint" data-i18n="hub.shortcutFormat">格式：ctrl+alt/shift+字母，如 ctrl+shift+s</div>
+              </div>
+            </div>
+          </div>
+
+          <div id="shortcut-status" class="status-card" style="display:none">
+            <div class="status-dot"></div><span id="shortcut-status-text"></span>
+          </div>
+
+          <div class="btn-row">
+            <button class="btn btn-secondary" id="shortcut-reset-btn" data-i18n="hub.resetDefault">恢复默认</button>
+            <button class="btn btn-primary" id="shortcut-save-btn" data-i18n="hub.saveShortcuts">保存快捷键</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 关于 -->
+      <div class="page" id="page-about">
+        <div class="about-wrap">
+          <div class="about-logo">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          </div>
+          <div class="about-name" data-i18n="app.name">AI 便签</div>
+          <div class="about-version">v1.0.0 · <span data-i18n="hub.desktopApp">桌面便签应用</span></div>
+          <div class="about-info">
+            <strong><span data-i18n="hub.techStack">技术栈</span>：</strong>Tauri 2.0 + Rust + TypeScript<br>
+            <strong><span data-i18n="hub.dataStorage">数据存储</span>：</strong>SQLite（本地） + Git（同步）<br>
+            <strong><span data-i18n="hub.features">功能</span>：</strong>Markdown 编辑、定时提醒、多设备同步、归档管理<br>
+            <strong><span data-i18n="hub.shortcut">快捷键</span>：</strong>Ctrl+Shift+N <span data-i18n="hub.newNote">新建便签</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/hub.ts"></script>
+</body>
+</html>

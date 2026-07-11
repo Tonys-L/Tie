@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+src-tauri/target/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Tauri dev data
+src-tauri/target/debug/data/
+
+# Uploads
+.uploads/
+
+# Trae internal
+.trae-html-share-packages/

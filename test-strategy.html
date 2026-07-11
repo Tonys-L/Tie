@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 桌面便签助手 — 测试方案</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --border: #334155;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #3b82f6;
+    --green: #22c55e;
+    --orange: #f59e0b;
+    --red: #ef4444;
+    --purple: #a855f7;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    line-height: 1.7;
+    padding: 40px 20px;
+  }
+  .container { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 28px; margin-bottom: 8px; }
+  h2 { font-size: 20px; margin: 32px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 16px; margin: 20px 0 8px; color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    margin: 12px 0;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .badge-green { background: rgba(34,197,94,0.15); color: var(--green); }
+  .badge-orange { background: rgba(245,158,11,0.15); color: var(--orange); }
+  .badge-red { background: rgba(239,68,68,0.15); color: var(--red); }
+  .badge-blue { background: rgba(59,130,246,0.15); color: var(--accent); }
+  .badge-purple { background: rgba(168,85,247,0.15); color: var(--purple); }
+  .pipeline { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0; }
+  .pipeline-step {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 16px;
+    flex: 1;
+    min-width: 160px;
+  }
+  .pipeline-step .step-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .pipeline-step .step-name { font-size: 14px; font-weight: 600; }
+  .pipeline-arrow { display: flex; align-items: center; color: var(--muted); }
+  code {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 12px;
+    color: var(--accent);
+  }
+  pre {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    overflow-x: auto;
+    margin: 12px 0;
+  }
+  pre code { background: none; border: none; padding: 0; color: var(--text); }
+  .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0; }
+  .stat { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-align: center; }
+  .stat .num { font-size: 28px; font-weight: 700; }
+  .stat .label { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .stat.green .num { color: var(--green); }
+  .stat.orange .num { color: var(--orange); }
+  .stat.blue .num { color: var(--accent); }
+  .stat.purple .num { color: var(--purple); }
+  ul { margin: 8px 0 8px 20px; }
+  li { margin: 4px 0; }
+  .trigger-table td:first-child { white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>AI 桌面便签助手 — 测试方案</h1>
+<p class="subtitle">版本 1.0 · 2026-07-06 · DDD 四层架构测试策略</p>
+
+<div class="stat-grid">
+  <div class="stat green">
+    <div class="num">35</div>
+    <div class="label">单元测试</div>
+  </div>
+  <div class="stat orange">
+    <div class="num">8</div>
+    <div class="label">集成测试</div>
+  </div>
+  <div class="stat blue">
+    <div class="num">0</div>
+    <div class="label">E2E 测试</div>
+  </div>
+  <div class="stat purple">
+    <div class="num">100%</div>
+    <div class="label">通过率</div>
+  </div>
+</div>
+
+<h2>一、测试分层架构</h2>
+
+<p>项目遵循 DDD 四层架构，测试按层级分为四类，从底到顶逐级递进：</p>
+
+<div class="pipeline">
+  <div class="pipeline-step">
+    <div class="step-label">第一层</div>
+    <div class="step-name">单元测试</div>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px">domain 层纯逻辑</div>
+  </div>
+  <div class="pipeline-arrow">→</div>
+  <div class="pipeline-step">
+    <div class="step-label">第二层</div>
+    <div class="step-name">集成测试</div>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px">infrastructure 层 SQLite</div>
+  </div>
+  <div class="pipeline-arrow">→</div>
+  <div class="pipeline-step">
+    <div class="step-label">第三层</div>
+    <div class="step-name">应用层测试</div>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px">application 层 IPC 命令</div>
+  </div>
+  <div class="pipeline-arrow">→</div>
+  <div class="pipeline-step">
+    <div class="step-label">第四层</div>
+    <div class="step-name">端到端测试</div>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px">Tauri 窗口 + IPC + UI</div>
+  </div>
+</div>
+
+<h3>1. 单元测试（Unit Test）</h3>
+<div class="card">
+  <p><strong>目标</strong>：验证 domain 层的纯业务逻辑，不依赖任何外部资源。</p>
+  <p><strong>范围</strong>：</p>
+  <table>
+    <tr><th>文件</th><th>测试内容</th><th>数量</th><th>状态</th></tr>
+    <tr><td><code>domain/note.rs</code></td><td>创建、更新内容、透明度边界、置顶、颜色、窗口状态、标题更新</td><td>8</td><td><span class="badge badge-green">已完成</span></td></tr>
+    <tr><td><code>domain/reminder.rs</code></td><td>创建、到期判断、贪睡、每日/每周/每月重复、标记完成、取消</td><td>8</td><td><span class="badge badge-green">已完成</span></td></tr>
+    <tr><td><code>domain/value_objects.rs</code></td><td>颜色解析、CSS 值、窗口默认值</td><td>3</td><td><span class="badge badge-green">已完成</span></td></tr>
+  </table>
+  <p><strong>工具</strong>：Rust 内置 <code>#[test]</code> + <code>cargo test</code></p>
+  <p><strong>特点</strong>：无外部依赖，执行速度 &lt;1ms/测试，可并行运行</p>
+</div>
+
+<h3>2. 集成测试（Integration Test）</h3>
+<div class="card">
+  <p><strong>目标</strong>：验证 infrastructure 层 SQLite 仓储的 CRUD 操作和数据库迁移。</p>
+  <p><strong>范围</strong>：</p>
+  <table>
+    <tr><th>文件</th><th>测试内容</th><th>数量</th><th>状态</th></tr>
+    <tr><td><code>sqlite_note_repo.rs</code></td><td>保存查询、批量查询、排序、更新内容/样式/窗口状态、删除、不存在查询</td><td>8</td><td><span class="badge badge-green">已完成</span></td></tr>
+    <tr><td><code>sqlite_reminder_repo.rs</code></td><td>保存查询、到期查询、未到期过滤、状态更新、贪睡、删除</td><td>6</td><td><span class="badge badge-green">已完成</span></td></tr>
+    <tr><td><code>database.rs</code></td><td>内存数据库创建、WAL 模式验证</td><td>2</td><td><span class="badge badge-green">已完成</span></td></tr>
+  </table>
+  <p><strong>工具</strong>：Rust <code>#[cfg(test)]</code> + SQLite <code>:memory:</code> 内存数据库</p>
+  <p><strong>特点</strong>：每个测试独立创建内存数据库，互不干扰，执行速度 &lt;10ms/测试</p>
+</div>
+
+<h3>3. 应用层测试（Application Test）</h3>
+<div class="card">
+  <p><strong>目标</strong>：验证 application 层的 IPC 命令和调度器逻辑。</p>
+  <p><strong>范围</strong>：</p>
+  <table>
+    <tr><th>模块</th><th>测试内容</th><th>状态</th></tr>
+    <tr><td><code>commands.rs</code></td><td>create_note、get_note、update_note_content 等 12 个 IPC 命令</td><td><span class="badge badge-orange">待开发</span></td></tr>
+    <tr><td><code>reminder_scheduler.rs</code></td><td>到期提醒轮询、通知发送、周期提醒重置</td><td><span class="badge badge-orange">待开发</span></td></tr>
+  </table>
+  <p><strong>工具</strong>：<code>tauri::test</code> + Mock State</p>
+  <p><strong>难点</strong>：Tauri 命令需要 <code>AppHandle</code> 和 <code>State</code>，需用 <code>tauri::test::mock_app</code> 构建 Mock 环境</p>
+</div>
+
+<h3>4. 端到端测试（E2E Test）</h3>
+<div class="card">
+  <p><strong>目标</strong>：验证完整用户流程——从托盘点击到窗口创建、编辑、保存、提醒触发。</p>
+  <p><strong>范围</strong>：</p>
+  <table>
+    <tr><th>场景</th><th>验证点</th><th>状态</th></tr>
+    <tr><td>新建便签流程</td><td>托盘双击 → 窗口出现 → 编辑内容 → 关闭 → 重启恢复</td><td><span class="badge badge-orange">待开发</span></td></tr>
+    <tr><td>颜色/透明度切换</td><td>点击颜色 → 背景变化 → 拖滑块 → 透明度变化 → 重启保留</td><td><span class="badge badge-orange">待开发</span></td></tr>
+    <tr><td>提醒触发</td><td>设置提醒 → 等待到期 → 系统通知弹出 → 贪睡/关闭</td><td><span class="badge badge-orange">待开发</span></td></tr>
+    <tr><td>多窗口管理</td><td>创建多个便签 → 独立移动/关闭 → 互不干扰</td><td><span class="badge badge-orange">待开发</span></td></tr>
+  </table>
+  <p><strong>工具</strong>：<code>tauri-driver</code> + WebDriverIO 或 Playwright</p>
+  <p><strong>特点</strong>：需要完整的 WebView2 环境，执行慢（秒级），适合发版前运行</p>
+</div>
+
+<h2>二、执行时机策略</h2>
+
+<h3>什么时候做什么测试？</h3>
+<table class="trigger-table">
+  <tr><th>触发场景</th><th>执行的测试</th><th>耗时</th><th>阻塞/非阻塞</th></tr>
+  <tr>
+    <td><strong>每次保存文件</strong><br><span style="color:var(--muted);font-size:12px">IDE 自动触发</span></td>
+    <td><code>cargo check</code>（编译检查）</td>
+    <td>~5s</td>
+    <td><span class="badge badge-blue">非阻塞</span></td>
+  </tr>
+  <tr>
+    <td><strong>提交代码前</strong><br><span style="color:var(--muted);font-size:12px">git pre-commit hook</span></td>
+    <td>单元测试 + 集成测试<br><code>cargo test --lib</code></td>
+    <td>~30s</td>
+    <td><span class="badge badge-red">阻塞</span></td>
+  </tr>
+  <tr>
+    <td><strong>推送到远程</strong><br><span style="color:var(--muted);font-size:12px">git pre-push hook</span></td>
+    <td>单元 + 集成 + 应用层测试</td>
+    <td>~1min</td>
+    <td><span class="badge badge-red">阻塞</span></td>
+  </tr>
+  <tr>
+    <td><strong>合并到主分支</strong><br><span style="color:var(--muted);font-size:12px">CI/CD Pipeline</span></td>
+    <td>全量回归测试（单元+集成+应用层）+ 构建</td>
+    <td>~3min</td>
+    <td><span class="badge badge-red">阻塞</span></td>
+  </tr>
+  <tr>
+    <td><strong>发版前</strong><br><span style="color:var(--muted);font-size:12px">手动触发</span></td>
+    <td>全回归 + 端到端测试 + 手动验收</td>
+    <td>~15min</td>
+    <td><span class="badge badge-red">阻塞</span></td>
+  </tr>
+  <tr>
+    <td><strong>关键功能变更后</strong><br><span style="color:var(--muted);font-size:12px">如窗口管理、提醒系统</span></td>
+    <td>对应模块的 E2E 测试</td>
+    <td>~5min</td>
+    <td><span class="badge badge-orange">建议</span></td>
+  </tr>
+</table>
+
+<h3>测试金字塔示意</h3>
+<div class="card" style="text-align:center;padding:30px">
+  <svg width="400" height="260" viewBox="0 0 400 260">
+    <!-- E2E (top) -->
+    <polygon points="170,20 230,20 260,80 140,80" fill="#a855f7" opacity="0.8"/>
+    <text x="200" y="55" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">E2E 测试</text>
+    <text x="200" y="72" text-anchor="middle" fill="#fff" font-size="10">少量 · 慢 · 覆盖全流程</text>
+
+    <!-- Application -->
+    <polygon points="140,80 260,80 290,140 110,140" fill="#3b82f6" opacity="0.8"/>
+    <text x="200" y="110" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">应用层测试</text>
+    <text x="200" y="127" text-anchor="middle" fill="#fff" font-size="10">中量 · 中速 · 验证命令</text>
+
+    <!-- Integration -->
+    <polygon points="110,140 290,140 320,200 80,200" fill="#f59e0b" opacity="0.8"/>
+    <text x="200" y="170" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">集成测试</text>
+    <text x="200" y="187" text-anchor="middle" fill="#fff" font-size="10">较多 · 较快 · 验证仓储</text>
+
+    <!-- Unit (bottom) -->
+    <polygon points="80,200 320,200 350,240 50,240" fill="#22c55e" opacity="0.8"/>
+    <text x="200" y="225" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">单元测试</text>
+    <text x="200" y="240" text-anchor="middle" fill="#fff" font-size="10">最多 · 最快 · 纯逻辑</text>
+  </svg>
+</div>
+
+<h2>三、具体命令</h2>
+
+<h3>日常开发</h3>
+<pre><code># 编译检查（最快，不运行测试）
+cargo check
+
+# 运行所有单元测试 + 集成测试
+cargo test
+
+# 只运行 domain 层测试
+cargo test domain
+
+# 只运行 infrastructure 层测试
+cargo test infrastructure
+
+# 运行单个测试
+cargo test test_save_and_find_by_id
+
+# 显示 println 输出
+cargo test -- --nocapture
+
+# 生成测试覆盖率报告（需安装 tarpaulin）
+cargo tarpaulin --out Html</code></pre>
+
+<h3>构建前验证</h3>
+<pre><code># 完整验证：测试 + 构建
+cargo test && npx tauri build --no-bundle</code></pre>
+
+<h3>端到端测试（待实现）</h3>
+<pre><code># 安装 tauri-driver
+cargo install tauri-driver
+
+# 启动 WebDriver（需 ChromeDriver）
+chromedriver --port=4444
+
+# 运行 E2E 测试
+npx playwright test</code></pre>
+
+<h2>四、当前测试覆盖详情</h2>
+
+<table>
+  <tr><th>层级</th><th>文件</th><th>测试函数</th><th>数量</th></tr>
+  <tr><td rowspan="8"><strong>domain</strong><br><span class="badge badge-green">19 个</span></td><td rowspan="8"><code>note.rs</code></td><td>test_create_note</td><td>1</td></tr>
+  <tr><td>test_update_content</td><td>1</td></tr>
+  <tr><td>test_opacity_clamp</td><td>1</td></tr>
+  <tr><td>test_toggle_pin</td><td>1</td></tr>
+  <tr><td>test_set_color</td><td>1</td></tr>
+  <tr><td>test_set_opacity_boundary</td><td>1</td></tr>
+  <tr><td>test_update_window_state</td><td>1</td></tr>
+  <tr><td>test_update_title</td><td>1</td></tr>
+  <tr><td rowspan="8"><strong>domain</strong></td><td rowspan="8"><code>reminder.rs</code></td><td>test_create_reminder</td><td>1</td></tr>
+  <tr><td>test_is_due</td><td>1</td></tr>
+  <tr><td>test_snooze</td><td>1</td></tr>
+  <tr><td>test_next_trigger_daily</td><td>1</td></tr>
+  <tr><td>test_weekly_repeat</td><td>1</td></tr>
+  <tr><td>test_monthly_repeat</td><td>1</td></tr>
+  <tr><td>test_mark_done</td><td>1</td></tr>
+  <tr><td>test_cancel</td><td>1</td></tr>
+  <tr><td rowspan="3"><strong>domain</strong></td><td rowspan="3"><code>value_objects.rs</code></td><td>test_color_from_str</td><td>1</td></tr>
+  <tr><td>test_color_css</td><td>1</td></tr>
+  <tr><td>test_window_state_default</td><td>1</td></tr>
+  <tr><td rowspan="8"><strong>infrastructure</strong><br><span class="badge badge-green">16 个</span></td><td rowspan="8"><code>sqlite_note_repo.rs</code></td><td>test_save_and_find_by_id</td><td>1</td></tr>
+  <tr><td>test_find_all</td><td>1</td></tr>
+  <tr><td>test_find_all_ordering</td><td>1</td></tr>
+  <tr><td>test_update_content</td><td>1</td></tr>
+  <tr><td>test_update_style</td><td>1</td></tr>
+  <tr><td>test_update_window_state</td><td>1</td></tr>
+  <tr><td>test_delete</td><td>1</td></tr>
+  <tr><td>test_find_by_id_not_exist</td><td>1</td></tr>
+  <tr><td rowspan="6"><strong>infrastructure</strong></td><td rowspan="6"><code>sqlite_reminder_repo.rs</code></td><td>test_save_and_find_by_note_id</td><td>1</td></tr>
+  <tr><td>test_find_due</td><td>1</td></tr>
+  <tr><td>test_find_due_not_due</td><td>1</td></tr>
+  <tr><td>test_update_status</td><td>1</td></tr>
+  <tr><td>test_snooze</td><td>1</td></tr>
+  <tr><td>test_delete</td><td>1</td></tr>
+  <tr><td rowspan="2"><strong>infrastructure</strong></td><td rowspan="2"><code>database.rs</code></td><td>test_memory_db</td><td>1</td></tr>
+  <tr><td>test_wal_mode</td><td>1</td></tr>
+  <tr><td><strong>application</strong><br><span class="badge badge-orange">待开发</span></td><td><code>commands.rs</code></td><td>—</td><td>0</td></tr>
+  <tr><td><strong>application</strong></td><td><code>reminder_scheduler.rs</code></td><td>—</td><td>0</td></tr>
+  <tr><td><strong>presentation</strong><br><span class="badge badge-orange">待开发</span></td><td><code>main.ts</code></td><td>—</td><td>0</td></tr>
+</table>
+
+<h2>五、Git Hook 配置</h2>
+
+<h3>pre-commit（提交前运行单元+集成测试）</h3>
+<pre><code># .git/hooks/pre-commit
+#!/bin/sh
+cd src-tauri && cargo test --lib 2>&1
+if [ $? -ne 0 ]; then
+  echo "❌ 测试未通过，提交被阻止"
+  exit 1
+fi
+echo "✅ 全部测试通过"
+exit 0</code></pre>
+
+<h3>pre-push（推送前增加应用层测试）</h3>
+<pre><code># .git/hooks/pre-push
+#!/bin/sh
+cd src-tauri && cargo test 2>&1
+if [ $? -ne 0 ]; then
+  echo "❌ 测试未通过，推送被阻止"
+  exit 1
+fi
+echo "✅ 全部测试通过，允许推送"
+exit 0</code></pre>
+
+<h2>六、待完善项</h2>
+
+<div class="card">
+  <h3>短期（Sprint 2-3）</h3>
+  <ul>
+    <li><strong>应用层测试</strong>：用 <code>tauri::test::mock_app</code> 构建测试环境，覆盖 12 个 IPC 命令</li>
+    <li><strong>提醒调度器测试</strong>：Mock 时间，验证到期轮询、通知发送、周期重置</li>
+    <li><strong>前端单元测试</strong>：用 Vitest 测试 <code>main.ts</code> 的渲染逻辑、事件绑定</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>中期（Sprint 4-5）</h3>
+  <ul>
+    <li><strong>端到端测试框架</strong>：集成 <code>tauri-driver</code> + Playwright，覆盖核心用户流程</li>
+    <li><strong>CI/CD 集成</strong>：GitHub Actions 自动运行测试矩阵</li>
+    <li><strong>覆盖率监控</strong>：集成 <code>cargo-tarpaulin</code>，目标 &gt;80%</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>长期（Sprint 6+）</h3>
+  <ul>
+    <li><strong>性能测试</strong>：窗口创建耗时、DB 写入延迟基准</li>
+    <li><strong>压力测试</strong>：100+ 便签同时恢复、大量提醒并发触发</li>
+    <li><strong>兼容性测试</strong>：Windows 10/11、不同 DPI 缩放</li>
+  </ul>
+</div>
+
+<h2>七、测试结果（最近一次）</h2>
+
+<div class="card">
+<pre><code>$ cargo test
+
+running 35 tests
+test domain::note::tests::test_create_note ... ok
+test domain::note::tests::test_update_content ... ok
+test domain::note::tests::test_opacity_clamp ... ok
+test domain::note::tests::test_toggle_pin ... ok
+test domain::note::tests::test_set_color ... ok
+test domain::note::tests::test_set_opacity_boundary ... ok
+test domain::note::tests::test_update_window_state ... ok
+test domain::note::tests::test_update_title ... ok
+test domain::reminder::tests::test_create_reminder ... ok
+test domain::reminder::tests::test_is_due ... ok
+test domain::reminder::tests::test_snooze ... ok
+test domain::reminder::tests::test_next_trigger_daily ... ok
+test domain::reminder::tests::test_weekly_repeat ... ok
+test domain::reminder::tests::test_monthly_repeat ... ok
+test domain::reminder::tests::test_mark_done ... ok
+test domain::reminder::tests::test_cancel ... ok
+test domain::value_objects::tests::test_color_from_str ... ok
+test domain::value_objects::tests::test_color_css ... ok
+test domain::value_objects::tests::test_window_state_default ... ok
+test infrastructure::database::tests::test_memory_db ... ok
+test infrastructure::database::tests::test_wal_mode ... ok
+test infrastructure::sqlite_note_repo::tests::test_save_and_find_by_id ... ok
+test infrastructure::sqlite_note_repo::tests::test_find_all ... ok
+test infrastructure::sqlite_note_repo::tests::test_find_all_ordering ... ok
+test infrastructure::sqlite_note_repo::tests::test_update_content ... ok
+test infrastructure::sqlite_note_repo::tests::test_update_style ... ok
+test infrastructure::sqlite_note_repo::tests::test_update_window_state ... ok
+test infrastructure::sqlite_note_repo::tests::test_delete ... ok
+test infrastructure::sqlite_note_repo::tests::test_find_by_id_not_exist ... ok
+test infrastructure::sqlite_reminder_repo::tests::test_save_and_find_by_note_id ... ok
+test infrastructure::sqlite_reminder_repo::tests::test_find_due ... ok
+test infrastructure::sqlite_reminder_repo::tests::test_find_due_not_due ... ok
+test infrastructure::sqlite_reminder_repo::tests::test_update_status ... ok
+test infrastructure::sqlite_reminder_repo::tests::test_snooze ... ok
+test infrastructure::sqlite_reminder_repo::tests::test_delete ... ok
+
+test result: ok. 35 passed; 0 failed; 0 ignored</code></pre>
+</div>
+
+</div>
+</body>
+</html>
