@@ -38,12 +38,6 @@ pub trait ReminderRepository: Send + Sync {
     /// 根据便签 ID 查找提醒
     fn find_by_note_id(&self, note_id: &str) -> Result<Vec<Reminder>, String>;
 
-    /// 更新提醒状态
-    fn update_status(&self, id: &str, status: &str) -> Result<(), String>;
-
-    /// 贪睡
-    fn snooze(&self, id: &str, snoozed_until: &str) -> Result<(), String>;
-
     /// 删除提醒
     fn delete(&self, id: &str) -> Result<(), String>;
 

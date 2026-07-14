@@ -33,10 +33,15 @@ export const deleteReminder = (id: string) => invoke('delete_reminder', { id });
 
 export const getSyncConfig = () => invoke<SyncConfig>('get_sync_config');
 export const saveSyncConfig = (config: SyncConfig) => invoke('save_sync_config', { config });
-export const syncNotes = () => invoke<string>('sync_notes');
+export const syncNotes = (createBranch?: boolean) => invoke<string>('sync_notes', { createBranch });
 export const checkGit = () => invoke<boolean>('check_git');
 
 // ---- 快捷键 ----
 
 export const getShortcutConfig = () => invoke<ShortcutConfig>('get_shortcut_config');
 export const saveShortcutConfig = (config: ShortcutConfig) => invoke('save_shortcut_config', { config });
+
+// ---- 数据目录 ----
+
+export const getDataDir = () => invoke<string>('get_data_dir');
+export const openDataDir = () => invoke('open_data_dir');

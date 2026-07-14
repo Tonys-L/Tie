@@ -61,7 +61,6 @@ impl Database {
                 note_title    TEXT NOT NULL DEFAULT '',
                 remind_at     TEXT NOT NULL,
                 repeat_type   TEXT NOT NULL DEFAULT 'once',
-                repeat_config TEXT NOT NULL DEFAULT '',
                 status        TEXT NOT NULL DEFAULT 'pending',
                 snoozed_until TEXT,
                 created_at    TEXT NOT NULL,
@@ -96,6 +95,29 @@ impl Database {
 
         if !has_is_archived {
             conn.execute_batch("ALTER TABLE notes ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0;")
+                .map_err(|e| e.to_string())?;
+        }
+
+        // 旧数据库升级：检查 reminders 表是否还有 repeat_config 列，有则删除
+        let has_repeat_config: bool = {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(reminders)")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|e| e.to_string())?;
+            let mut found = false;
+            for row in rows {
+                if row.map_err(|e| e.to_string())? == "repeat_config" {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+
+        if has_repeat_config {
+            conn.execute_batch("ALTER TABLE reminders DROP COLUMN repeat_config;")
                 .map_err(|e| e.to_string())?;
         }
 

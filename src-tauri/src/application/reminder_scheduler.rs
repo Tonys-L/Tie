@@ -97,3 +97,70 @@ fn parse_instant(iso_time: &str) -> Instant {
 
     Instant::now() + duration
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_instant_future_time() {
+        // 未来 10 秒的时间
+        let future = (chrono::Utc::now() + chrono::Duration::seconds(10)).to_rfc3339();
+        let instant = parse_instant(&future);
+        // Instant 应该在未来（大于当前 Instant）
+        assert!(instant > Instant::now());
+        // 但不超过 10 秒（允许微小误差）
+        assert!(instant <= Instant::now() + Duration::from_secs(11));
+    }
+
+    #[test]
+    fn test_parse_instant_past_time() {
+        // 过去的时间 → 应立即触发（约 100ms 后）
+        let past = "2020-01-01T00:00:00Z";
+        let instant = parse_instant(past);
+        // 应该非常接近现在（100ms 内）
+        let now = Instant::now();
+        assert!(instant >= now);
+        assert!(instant <= now + Duration::from_millis(500));
+    }
+
+    #[test]
+    fn test_parse_instant_invalid_format() {
+        // 无效格式 → fallback 到 now → 立即触发
+        let instant = parse_instant("not-a-date");
+        let now = Instant::now();
+        assert!(instant >= now);
+        assert!(instant <= now + Duration::from_millis(500));
+    }
+
+    #[test]
+    fn test_parse_instant_with_timezone() {
+        // 带时区偏移的时间（+08:00）
+        let future_local = (chrono::Utc::now() + chrono::Duration::seconds(5))
+            .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+            .to_rfc3339();
+        let instant = parse_instant(&future_local);
+        assert!(instant > Instant::now());
+        assert!(instant <= Instant::now() + Duration::from_secs(6));
+    }
+
+    #[test]
+    fn test_parse_instant_far_future() {
+        // 很远的未来（1 小时后）
+        let far_future = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+        let instant = parse_instant(&far_future);
+        assert!(instant > Instant::now());
+        assert!(instant <= Instant::now() + Duration::from_secs(3601));
+    }
+
+    #[test]
+    fn test_notify_schedule_recalc() {
+        // 验证 ReminderScheduler 可正常创建和通知
+        let scheduler = ReminderScheduler::new();
+        let notify = scheduler.notify();
+        // notify_one 不应阻塞
+        scheduler.schedule_recalc();
+        // 验证 Arc 引用计数正确
+        assert_eq!(Arc::strong_count(&notify), 2); // scheduler 内部 1 + notify 变量 1
+    }
+}

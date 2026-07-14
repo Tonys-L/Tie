@@ -301,6 +301,10 @@
         <div class="sidebar-title" data-i18n="app.name">AI 便签</div>
         <div class="sidebar-subtitle" data-i18n="app.settings">设置中心</div>
       </div>
+      <div class="nav-item" data-page="general">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.32l.06.07a2 2 0 0 1-2.83 2.83l-.07-.06a1.65 1.65 0 0 0-1.32-.33 1.65 1.65 0 0 0-1 1.32V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.32.33l-.07.06a2 2 0 0 1-2.83-2.83l.06-.07A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.32-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.32l-.06-.07a2 2 0 0 1 2.83-2.83l.07.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.32V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.32 1.65 1.65 0 0 0 1.32-.33l.07-.06a2 2 0 0 1 2.83 2.83l-.06.07A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.32 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.32 1z"/></svg>
+        <span data-i18n="hub.general">通用</span>
+      </div>
       <div class="nav-item active" data-page="notes">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
         <span data-i18n="hub.noteManager">便签管理</span>
@@ -332,6 +336,40 @@
 
     <!-- 内容区 -->
     <div class="content">
+      <!-- 通用设置 -->
+      <div class="page" id="page-general">
+        <div class="settings-wrap">
+          <h2 data-i18n="hub.general">通用</h2>
+          <p class="desc" data-i18n="hub.generalDesc">基础应用设置</p>
+
+          <div class="section">
+            <div class="section-title" data-i18n="hub.startup">启动</div>
+            <div class="section-card">
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label" data-i18n="hub.autoStart">开机自启</div>
+                  <div class="toggle-desc" data-i18n="hub.autoStartDesc">系统启动时自动运行 Tie</div>
+                </div>
+                <div class="toggle" id="auto-start"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title" data-i18n="hub.dataStorage">数据存储</div>
+            <div class="section-card">
+              <div class="toggle-row">
+                <div style="flex:1;min-width:0;">
+                  <div class="toggle-label" data-i18n="hub.dataDir">数据目录</div>
+                  <div class="toggle-desc" id="data-dir-path" style="word-break:break-all;font-family:monospace;font-size:12px;opacity:0.7;margin-top:4px;">...</div>
+                </div>
+                <button id="open-data-dir" style="padding:6px 16px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--text-body);cursor:pointer;font-size:13px;white-space:nowrap;flex-shrink:0;" data-i18n="hub.openFolder">打开文件夹</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 便签管理 -->
       <div class="page active" id="page-notes">
         <div class="mgr-header">

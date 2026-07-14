@@ -127,6 +127,7 @@ fn handle_hub(app: &AppHandle) {
         .transparent(false)
         .resizable(true)
         .always_on_top(false)
+        .disable_drag_drop_handler()
         .build();
 
     if _window.is_err() {
@@ -140,7 +141,7 @@ fn handle_sync(app: &AppHandle) {
     let app_clone = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_clone.state::<crate::AppState>();
-        match super::note_service::sync_notes(state.note_repo.as_ref(), state.reminder_repo.as_ref(), &state.git_sync) {
+        match super::note_service::sync_notes(state.note_repo.as_ref(), state.reminder_repo.as_ref(), &state.git_sync, false) {
             Ok(msg) => {
                 eprintln!("[同步] 完成: {}", msg);
                 let _ = app_clone.notification().builder()

@@ -89,7 +89,7 @@
 
 - 前端通过 `@tauri-apps/api/core` 的 `invoke` 调用后端命令
 - 后端通过 `window.emit` / `emit_to` 向前端发送事件（如 `flash-window`、`reminder-triggered`）
-- 24 个命令集中在 `application/commands.rs`
+- 27 个命令集中在 `application/commands.rs`
 - 可能并发的命令必须 `async` 避免死锁
 
 ### 前端多页面边界
@@ -162,3 +162,6 @@
 | 2026-07-10 | 补全 schedule_auto_sync 调用链，12 个写操作命令触发自动同步防抖 | — | #REFACTOR-012 |
 | 2026-07-11 | 快捷键可配置（ShortcutManager + shortcut_config.json）；提醒到期已开窗口通过 emit_to 显示横幅；Hub 加 Loading/提醒 tab | — | #FEAT-001 |
 | 2026-07-11 | 提醒调度器从 30 秒轮询改为事件驱动（单定时器 + Arc<Notify>）；前端事件监听改为窗口级 getCurrentWindow().listen | — | #FEAT-002 |
+| 2026-07-13 | IPC 命令数修正为 25；删除 ReminderRepository partial update 方法；reminder_service 窗口操作委托 window_manager；移除 tauri-plugin-store | — | #REFACTOR-013 |
+| 2026-07-13 | 新增 get_data_dir/open_data_dir 命令；通用设置页新增数据存储卡片；sync_notes 新增 create_branch 参数 | — | #FEAT-003 |
+| 2026-07-14 | 删除 Reminder.repeat_config 字段；新增 git_sync 集成测试和 reminder_scheduler 单元测试；新增 INV-016/017 | — | #REFACTOR-014 |

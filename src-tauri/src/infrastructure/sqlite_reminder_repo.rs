@@ -24,7 +24,6 @@ fn row_to_reminder(row: &Row) -> rusqlite::Result<Reminder> {
         note_title: row.get("note_title")?,
         remind_at: row.get("remind_at")?,
         repeat_type: RepeatType::from_str(&row.get::<_, String>("repeat_type")?),
-        repeat_config: row.get("repeat_config")?,
         status: ReminderStatus::from_str(&row.get::<_, String>("status")?),
         snoozed_until: row.get("snoozed_until")?,
         created_at: row.get("created_at")?,
@@ -32,22 +31,21 @@ fn row_to_reminder(row: &Row) -> rusqlite::Result<Reminder> {
     })
 }
 
-const SELECT_COLS: &str = "id, note_id, note_title, remind_at, repeat_type, repeat_config, status, snoozed_until, created_at, updated_at";
+const SELECT_COLS: &str = "id, note_id, note_title, remind_at, repeat_type, status, snoozed_until, created_at, updated_at";
 
 impl ReminderRepository for SqliteReminderRepository {
     fn save(&self, reminder: &Reminder) -> Result<(), String> {
         let conn = self.db.lock()?;
         conn.execute(
             "INSERT OR REPLACE INTO reminders
-                (id, note_id, note_title, remind_at, repeat_type, repeat_config, status, snoozed_until, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                (id, note_id, note_title, remind_at, repeat_type, status, snoozed_until, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 reminder.id,
                 reminder.note_id,
                 reminder.note_title,
                 reminder.remind_at,
                 reminder.repeat_type.as_str(),
-                reminder.repeat_config,
                 reminder.status.as_str(),
                 reminder.snoozed_until,
                 reminder.created_at,
@@ -111,26 +109,6 @@ impl ReminderRepository for SqliteReminderRepository {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
         Ok(reminders)
-    }
-
-    fn update_status(&self, id: &str, status: &str) -> Result<(), String> {
-        let conn = self.db.lock()?;
-        conn.execute(
-            "UPDATE reminders SET status = ?2, updated_at = ?3 WHERE id = ?1",
-            params![id, status, chrono::Utc::now().to_rfc3339()],
-        )
-        .map_err(|e| e.to_string())?;
-        Ok(())
-    }
-
-    fn snooze(&self, id: &str, snoozed_until: &str) -> Result<(), String> {
-        let conn = self.db.lock()?;
-        conn.execute(
-            "UPDATE reminders SET snoozed_until = ?2, status = 'pending', updated_at = ?3 WHERE id = ?1",
-            params![id, snoozed_until, chrono::Utc::now().to_rfc3339()],
-        )
-        .map_err(|e| e.to_string())?;
-        Ok(())
     }
 
     fn delete(&self, id: &str) -> Result<(), String> {
@@ -227,33 +205,6 @@ mod tests {
 
         let due = repo.find_due("2026-07-03T00:00:00Z").unwrap();
         assert_eq!(due.len(), 0);
-    }
-
-    #[test]
-    fn test_update_status() {
-        let repo = setup();
-        let reminder = make_reminder("2026-07-03T10:00:00Z", "once");
-        let reminder_id = reminder.id.clone();
-        repo.save(&reminder).unwrap();
-
-        repo.update_status(&reminder_id, "triggered").unwrap();
-        let found = repo.find_by_note_id("note-1").unwrap();
-        assert_eq!(found[0].status, ReminderStatus::Triggered);
-    }
-
-    #[test]
-    fn test_snooze() {
-        let repo = setup();
-        let reminder = make_reminder("2026-07-03T10:00:00Z", "once");
-        let reminder_id = reminder.id.clone();
-        repo.save(&reminder).unwrap();
-
-        repo.snooze(&reminder_id, "2026-07-03T10:10:00Z").unwrap();
-        let found = repo.find_by_note_id("note-1").unwrap();
-        assert!(found[0].snoozed_until.is_some());
-        assert_eq!(found[0].snoozed_until.as_deref(), Some("2026-07-03T10:10:00Z"));
-        // 贪睡后状态仍为 pending
-        assert_eq!(found[0].status, ReminderStatus::Pending);
     }
 
     #[test]

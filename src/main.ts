@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { marked } from 'marked';
 import type { Note, Reminder } from './types';
@@ -19,12 +19,23 @@ marked.setOptions({
   gfm: true,
 });
 
-// 渲染 Markdown 为 HTML，支持待办清单
+// 图片目录路径，启动时异步获取
+let imageDir = '';
+invoke<string>('get_image_dir').then(dir => { imageDir = dir; }).catch(() => {});
+
+// 渲染 Markdown 为 HTML，支持待办清单和图片
 function renderMarkdown(content: string): string {
   if (!content.trim()) {
     return `<span class="placeholder">${t('note.placeholder')}</span>`;
   }
-  let html = marked.parse(content) as string;
+  // 将 img:filename 替换为 asset 协议 URL，再交给 marked 渲染
+  let processed = content;
+  if (imageDir) {
+    processed = processed.replace(/img:([^\s)]+)/g, (_, filename) => {
+      return convertFileSrc(imageDir + '\\' + filename);
+    });
+  }
+  let html = marked.parse(processed) as string;
   // 将 GFM task list 的 checkbox 美化
   html = html.replace(/<li><input[^>]*disabled[^>]*>\s*/g, '<li class="task-item">');
   html = html.replace(/<input type="checkbox"[^>]*>/g, '');
@@ -145,8 +156,18 @@ function setupNoteEvents(note: Note) {
   const contentView = app.querySelector('[data-content-view]') as HTMLElement;
   const textarea = app.querySelector('[data-content]') as HTMLTextAreaElement;
 
-  // 点击查看区 → 进入编辑模式
-  contentView.addEventListener('click', () => {
+  // 点击查看区 → 进入编辑模式（链接除外）
+  contentView.addEventListener('click', (e) => {
+    // 拦截链接点击：在系统浏览器打开，不进入编辑模式
+    const link = (e.target as HTMLElement).closest('a');
+    if (link) {
+      e.preventDefault();
+      const href = link.getAttribute('href');
+      if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+        invoke('open_url', { url: href }).catch(err => console.error('打开链接失败:', err));
+      }
+      return;
+    }
     contentView.style.display = 'none';
     textarea.style.display = 'block';
     textarea.focus();
@@ -174,6 +195,66 @@ function setupNoteEvents(note: Note) {
       textarea.selectionStart = textarea.selectionEnd = start + 2;
     }
   });
+
+  // 粘贴图片：保存为文件，插入 Markdown 引用
+  textarea.addEventListener('paste', (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const blob = item.getAsFile();
+        if (!blob) continue;
+        const ext = blob.type.split('/')[1] || 'png';
+        blob.arrayBuffer().then(async (buffer) => {
+          const data = Array.from(new Uint8Array(buffer));
+          const filename = await invoke<string>('save_image', { data, ext });
+          const md = `![](img:${filename})`;
+          const start = textarea.selectionStart;
+          const end = textarea.selectionEnd;
+          textarea.value = textarea.value.slice(0, start) + md + textarea.value.slice(end);
+          textarea.selectionStart = textarea.selectionEnd = start + md.length;
+          textarea.dispatchEvent(new Event('input'));
+        });
+        return;
+      }
+    }
+  });
+
+  // 拖拽图片文件：保存为文件，插入 Markdown 引用
+  const handleDrop = (e: DragEvent) => {
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    if (!file.type.startsWith('image/')) return;
+    e.preventDefault();
+    const ext = file.name.split('.').pop()?.toLowerCase() || file.type.split('/')[1] || 'png';
+    file.arrayBuffer().then(async (buffer) => {
+      const data = Array.from(new Uint8Array(buffer));
+      const filename = await invoke<string>('save_image', { data, ext });
+      const md = `![](img:${filename})`;
+      // 如果不在编辑模式，先切换到编辑模式
+      if (textarea.style.display === 'none') {
+        contentView.style.display = 'none';
+        textarea.style.display = 'block';
+      }
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      textarea.value = textarea.value.slice(0, start) + md + textarea.value.slice(end);
+      textarea.selectionStart = textarea.selectionEnd = start + md.length;
+      textarea.focus();
+    });
+  };
+
+  // 阻止拖拽默认行为（防止浏览器打开文件）
+  const preventDragOver = (e: DragEvent) => {
+    e.preventDefault();
+  };
+
+  textarea.addEventListener('drop', handleDrop);
+  textarea.addEventListener('dragover', preventDragOver);
+  contentView.addEventListener('drop', handleDrop);
+  contentView.addEventListener('dragover', preventDragOver);
 
   // ---- 标题双击编辑逻辑在下方拖拽处理中 ----
 

@@ -117,10 +117,15 @@ fn clear_dir_json(dir: &Path) -> Result<(), String> {
 pub fn extract_updated_at(json: &str) -> String {
     if let Some(idx) = json.find("\"updated_at\"") {
         let rest = &json[idx..];
-        if let Some(start) = rest.find('"') {
-            let after_key = &rest[start + 1..];
-            if let Some(val_start) = after_key.find('"') {
-                let val_rest = &after_key[val_start + 1..];
+        // rest = `"updated_at":"value",...`
+        // 跳过键名，找到冒号
+        if let Some(colon_idx) = rest.find(':') {
+            let after_colon = &rest[colon_idx + 1..];
+            // after_colon = `"value",...` 或 ` "value",...`
+            // 找到值的开始引号
+            if let Some(open_quote) = after_colon.find('"') {
+                let val_rest = &after_colon[open_quote + 1..];
+                // val_rest = `value",...`
                 if let Some(val_end) = val_rest.find('"') {
                     return val_rest[..val_end].to_string();
                 }
@@ -128,4 +133,165 @@ pub fn extract_updated_at(json: &str) -> String {
         }
     }
     String::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::mock_repo::{InMemoryNoteRepository, InMemoryReminderRepository};
+    use crate::domain::{Note, Reminder};
+
+    /// 创建临时目录
+    fn temp_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "tie_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_export_import_roundtrip() {
+        let dir = temp_dir();
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+
+        // 准备数据
+        let note = Note::new("测试".to_string(), "amber".to_string());
+        note_repo.save(&note).unwrap();
+
+        let reminder = Reminder::new(
+            note.id.clone(),
+            "测试便签".to_string(),
+            "2026-07-13T10:00:00Z".to_string(),
+            "once".to_string(),
+        );
+        reminder_repo.save(&reminder).unwrap();
+
+        // 导出
+        export_to_json(&dir, &note_repo, &reminder_repo).unwrap();
+
+        // 导入到新仓储
+        let note_repo2 = InMemoryNoteRepository::new();
+        let reminder_repo2 = InMemoryReminderRepository::new();
+        let imported = import_from_json(&dir, &note_repo2, &reminder_repo2).unwrap();
+
+        assert_eq!(imported, 2); // 1 note + 1 reminder
+
+        // 验证便签
+        let found_note = note_repo2.find_by_id(&note.id).unwrap();
+        assert!(found_note.is_some());
+        assert_eq!(found_note.unwrap().color.as_str(), "amber");
+
+        // 验证提醒
+        let found_reminder = reminder_repo2.find_by_id(&reminder.id).unwrap();
+        assert!(found_reminder.is_some());
+        assert_eq!(found_reminder.unwrap().note_title, "测试便签");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_import_updated_at_arbitration() {
+        let dir = temp_dir();
+
+        // 本地有一条旧数据
+        let note_repo = InMemoryNoteRepository::new();
+        let mut old_note = Note::new("测试".to_string(), "amber".to_string());
+        old_note.update_content("旧内容".to_string());
+        old_note.updated_at = "2026-07-01T00:00:00Z".to_string();
+        note_repo.save(&old_note).unwrap();
+
+        // JSON 文件中有一条更新的数据
+        let mut new_note = old_note.clone();
+        new_note.update_content("新内容".to_string());
+        new_note.updated_at = "2026-07-02T00:00:00Z".to_string();
+        let notes_dir = dir.join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        let json = serde_json::to_string_pretty(&new_note).unwrap();
+        std::fs::write(notes_dir.join(format!("{}.json", new_note.id)), json).unwrap();
+
+        // 导入：远程更新 → 覆盖本地
+        let reminder_repo = InMemoryReminderRepository::new();
+        let imported = import_from_json(&dir, &note_repo, &reminder_repo).unwrap();
+        assert_eq!(imported, 1);
+
+        let found = note_repo.find_by_id(&old_note.id).unwrap().unwrap();
+        assert_eq!(found.content, "新内容");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_import_older_data_skipped() {
+        let dir = temp_dir();
+
+        // 本地有新数据
+        let note_repo = InMemoryNoteRepository::new();
+        let mut new_note = Note::new("测试".to_string(), "amber".to_string());
+        new_note.update_content("新内容".to_string());
+        new_note.updated_at = "2026-07-02T00:00:00Z".to_string();
+        note_repo.save(&new_note).unwrap();
+
+        // JSON 文件中是旧数据
+        let mut old_note = new_note.clone();
+        old_note.update_content("旧内容".to_string());
+        old_note.updated_at = "2026-07-01T00:00:00Z".to_string();
+        let notes_dir = dir.join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        let json = serde_json::to_string_pretty(&old_note).unwrap();
+        std::fs::write(notes_dir.join(format!("{}.json", old_note.id)), json).unwrap();
+
+        // 导入：本地更新 → 跳过
+        let reminder_repo = InMemoryReminderRepository::new();
+        let imported = import_from_json(&dir, &note_repo, &reminder_repo).unwrap();
+        assert_eq!(imported, 0); // 本地更新，不覆盖
+
+        let found = note_repo.find_by_id(&new_note.id).unwrap().unwrap();
+        assert_eq!(found.content, "新内容");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_extract_updated_at() {
+        let json = r#"{"id":"abc","updated_at":"2026-07-13T10:00:00Z","content":"test"}"#;
+        let extracted = extract_updated_at(json);
+        assert_eq!(extracted, "2026-07-13T10:00:00Z");
+    }
+
+    #[test]
+    fn test_extract_updated_at_not_found() {
+        let json = r#"{"id":"abc","content":"test"}"#;
+        let extracted = extract_updated_at(json);
+        assert_eq!(extracted, "");
+    }
+
+    #[test]
+    fn test_export_clears_old_files() {
+        let dir = temp_dir();
+        let notes_dir = dir.join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+
+        // 写入一个旧 JSON 文件
+        std::fs::write(notes_dir.join("old-deleted.json"), r#"{"id":"old-deleted"}"#).unwrap();
+
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+        let note = Note::new("测试".to_string(), "amber".to_string());
+        note_repo.save(&note).unwrap();
+
+        // 导出：应清除旧文件
+        export_to_json(&dir, &note_repo, &reminder_repo).unwrap();
+
+        assert!(!notes_dir.join("old-deleted.json").exists());
+        assert!(notes_dir.join(format!("{}.json", note.id)).exists());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

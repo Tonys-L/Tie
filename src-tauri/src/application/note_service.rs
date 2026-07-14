@@ -106,8 +106,9 @@ pub fn sync_notes(
     note_repo: &dyn NoteRepository,
     reminder_repo: &dyn ReminderRepository,
     git_sync: &GitSync,
+    create_branch: bool,
 ) -> Result<String, String> {
-    git_sync.sync(note_repo, reminder_repo)
+    git_sync.sync(note_repo, reminder_repo, create_branch)
 }
 
 #[cfg(test)]

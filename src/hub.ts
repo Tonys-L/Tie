@@ -1,4 +1,5 @@
 import { open } from '@tauri-apps/plugin-shell';
+import { enable as enableAutoStart, disable as disableAutoStart, isEnabled as isAutoStartEnabled } from '@tauri-apps/plugin-autostart';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
 import type { Reminder, ShortcutConfig } from './types';
@@ -40,6 +41,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
     const page = document.getElementById('page-' + item.getAttribute('data-page'));
     if (page) page.classList.add('active');
     if (item.getAttribute('data-page') === 'notes') loadNotes();
+    if (item.getAttribute('data-page') === 'general') loadGeneralSettings();
     if (item.getAttribute('data-page') === 'sync') loadSyncConfig();
     if (item.getAttribute('data-page') === 'shortcuts') loadShortcutConfig();
   });
@@ -345,9 +347,37 @@ async function loadSyncConfig() {
       const result = await api.syncNotes() as string;
       console.log('[同步] 结果:', result);
       showSyncStatus(result, 'ok');
-    } catch (e) {
+    } catch (e: any) {
       console.error('[同步] 失败:', e);
+      const errMsg = String(e);
+      // 检测分支不存在错误，提示用户是否创建分支
+      if (errMsg.startsWith('BRANCH_NOT_FOUND:')) {
+        const existingBranches = errMsg.substring('BRANCH_NOT_FOUND:'.length);
+        const branchInput = document.getElementById('branch') as HTMLInputElement;
+        const branchName = branchInput?.value || 'main';
+        // 移除蒙层和恢复按钮
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        btn.style.opacity = ''; btn.style.pointerEvents = '';
+        showBranchCreateDialog(branchName, existingBranches, async () => {
+          // 用户确认创建分支
+          const overlay2 = document.createElement('div');
+          overlay2.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.25);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;z-index:9999;';
+          overlay2.innerHTML = `<span style="color:var(--text-title);font-size:14px;font-weight:500;background:var(--surface);padding:12px 24px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.15);">${t('hub.syncing')}</span>`;
+          document.body.appendChild(overlay2);
+          btn.style.opacity = '0.6'; btn.style.pointerEvents = 'none';
+          try {
+            const result2 = await api.syncNotes(true) as string;
+            showSyncStatus(result2, 'ok');
+          } catch (e2: any) {
+            showSyncStatus(t('hub.syncFailed') + ': ' + e2, 'err');
+          } finally {
+            if (overlay2.parentNode) overlay2.parentNode.removeChild(overlay2);
+            btn.style.opacity = ''; btn.style.pointerEvents = '';
+          }
+        });
+      } else {
 	      showSyncStatus(t('hub.syncFailed') + ': ' + e, 'err');
+      }
     } finally {
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
       btn.style.opacity = ''; btn.style.pointerEvents = '';
@@ -360,6 +390,29 @@ async function loadSyncConfig() {
     document.getElementById('sync-status-text')!.textContent = msg;
     (el as HTMLElement).style.display = 'flex';
     if (type !== 'loading') setTimeout(() => { (el as HTMLElement).style.display = 'none'; }, 5000);
+  }
+
+  function showBranchCreateDialog(branch: string, existingBranches: string, onConfirm: () => void) {
+    const dialog = document.createElement('div');
+    dialog.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:10000;';
+    dialog.innerHTML = `
+      <div style="background:var(--surface);border-radius:12px;padding:28px 32px;max-width:440px;box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+        <div style="font-size:16px;font-weight:600;color:var(--text-title);margin-bottom:12px;">${t('hub.branchNotFoundTitle')}</div>
+        <div style="font-size:13px;color:var(--text-body);line-height:1.6;margin-bottom:8px;">
+          ${t('hub.branchNotFoundMsg').replace('{branch}', branch).replace('{existing}', existingBranches)}
+        </div>
+        <div style="font-size:13px;color:var(--text-body);line-height:1.6;margin-bottom:20px;">
+          ${t('hub.branchCreateConfirm')}
+        </div>
+        <div style="display:flex;gap:12px;justify-content:flex-end;">
+          <button id="bc-cancel" style="padding:8px 20px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--text-body);cursor:pointer;font-size:13px;">${t('hub.branchCancel')}</button>
+          <button id="bc-ok" style="padding:8px 20px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-size:13px;">${t('hub.branchCreate')}</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(dialog);
+    dialog.querySelector('#bc-cancel')!.addEventListener('click', () => { dialog.remove(); });
+    dialog.querySelector('#bc-ok')!.addEventListener('click', () => { dialog.remove(); onConfirm(); });
   }
 }
 
@@ -407,6 +460,45 @@ async function loadShortcutConfig() {
   document.getElementById('shortcut-reset-btn')?.addEventListener('click', () => {
     (document.getElementById('shortcut-new-note') as HTMLInputElement).value = 'ctrl+shift+n';
     (document.getElementById('shortcut-show-all') as HTMLInputElement).value = 'ctrl+shift+s';
+  });
+}
+
+// ===== 通用设置 =====
+let generalSettingsLoaded = false;
+async function loadGeneralSettings() {
+  if (generalSettingsLoaded) return;
+  generalSettingsLoaded = true;
+
+  try {
+    const enabled = await isAutoStartEnabled();
+    if (enabled) document.getElementById('auto-start')!.classList.add('on');
+  } catch (e) { console.error('获取自启状态失败:', e); }
+
+  document.getElementById('auto-start')?.addEventListener('click', async () => {
+    const el = document.getElementById('auto-start')!;
+    const turningOn = !el.classList.contains('on');
+    try {
+      if (turningOn) {
+        await enableAutoStart();
+        el.classList.add('on');
+      } else {
+        await disableAutoStart();
+        el.classList.remove('on');
+      }
+    } catch (e) { console.error('设置自启失败:', e); }
+  });
+
+  // 数据目录路径
+  try {
+    const dir = await api.getDataDir();
+    const dirEl = document.getElementById('data-dir-path');
+    if (dirEl) dirEl.textContent = dir;
+  } catch (e) { console.error('获取数据目录失败:', e); }
+
+  document.getElementById('open-data-dir')?.addEventListener('click', async () => {
+    try {
+      await api.openDataDir();
+    } catch (e) { console.error('打开数据目录失败:', e); }
   });
 }
 

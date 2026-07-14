@@ -30,6 +30,10 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .on_window_event(|window, event| {
             match event {
                 tauri::WindowEvent::CloseRequested { .. } => {
@@ -140,6 +144,11 @@ pub fn run() {
             commands::get_shortcut_config,
             commands::save_shortcut_config,
             commands::set_locale,
+            commands::get_data_dir,
+            commands::open_data_dir,
+            commands::open_url,
+            commands::save_image,
+            commands::get_image_dir,
         ])
         .build(tauri::generate_context!())
         .expect("启动应用失败");

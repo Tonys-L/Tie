@@ -14,6 +14,11 @@
 | LES-004 | Vite 多页面入口需显式配置 | 前端构建 | 低 | 已修复 | 2026-07-08 |
 | LES-005 | 空便签跳过导致启动不恢复 | 业务逻辑 | 低 | 已修复 | 2026-07-08 |
 | LES-006 | 全局 listen 导致所有便签窗口收到同一事件 | 编码规范 | 高 | 已修复 | 2026-07-11 |
+| LES-007 | Windows 子进程弹出控制台窗口 | 数据同步 | 中 | 已修复 | 2026-07-13 |
+| LES-008 | Git fetch 远程分支不存在仍返回成功 | 数据同步 | 高 | 已修复 | 2026-07-13 |
+| LES-009 | extract_updated_at 解析逻辑 bug 导致冲突解决失效 | 数据同步 | 高 | 已修复 | 2026-07-13 |
+| LES-010 | Git 子进程未设 stdin null 导致测试挂起 | 数据同步 | 中 | 已修复 | 2026-07-14 |
+| LES-011 | repeat_config 空置字段违反 YAGNI 原则 | 编码规范 | 低 | 已修复 | 2026-07-14 |
 
 ---
 
@@ -21,8 +26,8 @@
 
 按业务分类匹配：
 
-- **编码规范**: LES-001, LES-002, LES-006
-- **数据同步**: LES-003
+- **编码规范**: LES-001, LES-002, LES-006, LES-011
+- **数据同步**: LES-003, LES-007, LES-008, LES-009, LES-010
 - **前端构建**: LES-004
 - **业务逻辑**: LES-005
 
@@ -126,6 +131,76 @@
 
 ---
 
+## LES-007: Windows 子进程弹出控制台窗口
+
+**问题**: 在 Windows 上执行 Git 同步时，每次调用 `git` 命令都会弹出一个黑色的控制台窗口（cmd.exe），闪烁后消失，严重影响用户体验。
+
+**原因**: Rust 的 `std::process::Command::new("git")` 在 Windows 上默认会创建新的控制台窗口。Tauri 应用是 GUI 程序，没有附加控制台，因此每个子进程调用都会创建一个新窗口。
+
+**解决方案**: 使用 `std::os::windows::process::CommandExt` 的 `creation_flags(CREATE_NO_WINDOW)` 标志（0x08000000）隐藏控制台窗口。通过 `#[cfg(target_os = "windows")]` 条件编译确保跨平台兼容。
+
+**影响文件**: `src-tauri/src/application/git_ops.rs`
+
+**预防**: 在 Windows 上执行任何子进程调用时，必须设置 `CREATE_NO_WINDOW` 标志。详见 INV-014。
+
+---
+
+## LES-008: Git fetch 远程分支不存在仍返回成功
+
+**问题**: 用户配置同步分支为 `main`，但远程仓库实际分支为 `master`。同步操作没有报错，而是静默在远程创建了一个新的 `main` 分支，导致数据分散在两个分支中。
+
+**原因**: `git fetch origin main` 在远程不存在 `main` 分支时，exit code 仍为 0（成功），只是没有获取到任何数据。代码用 `fetch_result.is_ok()` 判断 `has_remote`，导致误认为远程有数据，最终 push 创建了新分支。
+
+**解决方案**: fetch 后用 `git rev-parse origin/<branch>` 验证 ref 是否真实存在。如果不存在，用 `list_remote_branches` 检查远程仓库是否有任何分支：有则报错提示分支名不匹配，无则视为首次推送。
+
+**影响文件**: `src-tauri/src/application/git_sync.rs`, `src-tauri/src/application/git_ops.rs`
+
+**预防**: `git fetch` 的 exit code 不能用于判断远程分支是否存在，必须用 `git rev-parse` 验证 ref。详见 INV-015。
+
+---
+
+## LES-009: extract_updated_at 解析逻辑 bug 导致冲突解决失效
+
+**问题**: Git 同步冲突解决（last-write-wins）始终选择 ours 版本，忽略了 theirs 的 updated_at 时间戳。在多设备同步场景下，较新的数据可能被较旧的数据覆盖。
+
+**原因**: `extract_updated_at` 函数的引号匹配逻辑有误：在找到 `"updated_at"` 后，第一次 `find('"')` 匹配到的是键名的开始引号，而非值的开始引号。函数最终返回 `:` 而非时间戳值，导致所有比较都是 `:` == `:`，永远取 ours。
+
+**解决方案**: 改为先找冒号 `:` 分隔键值，再在冒号后找值的开始引号和结束引号。添加单元测试 `test_extract_updated_at` 覆盖正常和异常场景。
+
+**影响文件**: `src-tauri/src/application/sync_json_io.rs`
+
+**预防**: 纯字符串解析函数必须有单元测试覆盖。冲突解决逻辑的测试应验证"theirs 更新时取 theirs"场景，而非仅验证无冲突场景。
+
+---
+
+## LES-010: Git 子进程未设 stdin null 导致测试挂起
+
+**问题**: git_sync 集成测试运行超过 60 秒仍未完成，进程卡死无响应。
+
+**原因**: `git_ops::run_git` 使用 `Command::new("git").output()` 执行 git 命令，未设置 `stdin(Stdio::null())`。当 git 遇到需要用户输入的场景（如凭证请求、merge 冲突编辑器调用）时，会等待 stdin 输入，导致进程永久挂起。
+
+**解决方案**: 所有 `Command::new("git")` 调用添加 `.stdin(Stdio::null())`，包括 `run_git`、`check_git_installed`、`list_remote_branches`。
+
+**影响文件**: `src-tauri/src/application/git_ops.rs`
+
+**预防**: 所有子进程调用必须设置 `stdin(Stdio::null())`，即使预期不需要输入。详见 INV-016。
+
+---
+
+## LES-011: repeat_config 空置字段违反 YAGNI 原则
+
+**问题**: `Reminder` 结构体的 `repeat_config` 字段在构造函数中始终为 `String::new()`，无任何业务逻辑读写此字段。数据库表也保留了对应的列。
+
+**原因**: 该字段可能为"未来精确日历月重复"（如每月 15 号）预留，但当前 Monthly 重复简化为 +30 天。根据 YAGNI 原则，不应为猜测中的需求提前实现。
+
+**解决方案**: 从 `Reminder` 结构体删除 `repeat_config` 字段，同步修改 SQLite 仓储的 `SELECT_COLS`/`INSERT` SQL 和建表语句。旧数据库通过 `ALTER TABLE reminders DROP COLUMN repeat_config` 自动迁移。
+
+**影响文件**: `src-tauri/src/domain/reminder.rs`, `src-tauri/src/infrastructure/sqlite_reminder_repo.rs`, `src-tauri/src/infrastructure/database.rs`
+
+**预防**: domain 层结构体不应包含无业务逻辑使用的字段。抽象来源于真实变化，而非未来可能的需求。三次法则：第一次直接实现，不预留扩展字段。
+
+---
+
 ## 变更记录
 
 | 日期 | 变更内容 | 变更人 | 关联变更 |
@@ -133,3 +208,5 @@
 | 2026-07-08 | 初始版本，5 条教训 | — | — |
 | 2026-07-09 | 按模板重构，补充业务分类和检索指引 | — | — |
 | 2026-07-11 | 新增 LES-006（全局 listen 事件广播问题） | — | #FEAT-002 |
+| 2026-07-13 | 新增 LES-007/008/009（Windows 控制台窗口、git fetch 分支验证、extract_updated_at bug） | — | #REFACTOR-013 |
+| 2026-07-14 | 新增 LES-010/011（git stdin null 挂起、repeat_config YAGNI 清理） | — | #REFACTOR-014 |

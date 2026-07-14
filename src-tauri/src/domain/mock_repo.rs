@@ -105,26 +105,6 @@ impl ReminderRepository for InMemoryReminderRepository {
             .collect())
     }
 
-    fn update_status(&self, id: &str, status: &str) -> Result<(), String> {
-        let mut reminders = self.reminders.lock().unwrap();
-        if let Some(r) = reminders.get_mut(id) {
-            r.status = super::ReminderStatus::from_str(status);
-            Ok(())
-        } else {
-            Err(format!("提醒不存在: {}", id))
-        }
-    }
-
-    fn snooze(&self, id: &str, snoozed_until: &str) -> Result<(), String> {
-        let mut reminders = self.reminders.lock().unwrap();
-        if let Some(r) = reminders.get_mut(id) {
-            r.snoozed_until = Some(snoozed_until.to_string());
-            Ok(())
-        } else {
-            Err(format!("提醒不存在: {}", id))
-        }
-    }
-
     fn delete(&self, id: &str) -> Result<(), String> {
         self.reminders
             .lock()

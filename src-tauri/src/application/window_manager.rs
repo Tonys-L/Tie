@@ -2,6 +2,18 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::domain::Note;
 
+/// 闪烁提示：临时置顶 300ms 后恢复原状态
+fn flash_window(window: &tauri::WebviewWindow, restore_on_top: bool) {
+    let _ = window.set_always_on_top(true);
+    let win_clone = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let _ = win_clone.set_always_on_top(restore_on_top);
+        // 发送事件让前端闪烁
+        let _ = win_clone.emit("flash-window", ());
+    });
+}
+
 /// 为便签创建并显示独立窗口
 pub fn open_note_window(app: &AppHandle, note: &Note) -> Result<(), String> {
     open_note_window_with_url(app, note, "index.html")
@@ -17,16 +29,8 @@ pub fn open_note_window_with_url(app: &AppHandle, note: &Note, url: &str) -> Res
         eprintln!("[窗口] 窗口已存在, 聚焦并闪烁");
         let _ = window.set_focus();
         let _ = window.show();
-        // 闪烁：临时置顶 → 延时恢复原状态
         let was_on_top = window.is_always_on_top().unwrap_or(false);
-        let _ = window.set_always_on_top(true);
-        let win_clone = window.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(300));
-            let _ = win_clone.set_always_on_top(was_on_top);
-            // 发送事件让前端闪烁
-            let _ = win_clone.emit("flash-window", ());
-        });
+        flash_window(&window, was_on_top);
         return Ok(());
     }
 
@@ -45,6 +49,7 @@ pub fn open_note_window_with_url(app: &AppHandle, note: &Note, url: &str) -> Res
         .skip_taskbar(false)
         .resizable(true)
         .visible(false)
+        .disable_drag_drop_handler()
         .build()
         .map_err(|e| {
             eprintln!("[窗口] 创建失败: {}", e);
@@ -54,18 +59,39 @@ pub fn open_note_window_with_url(app: &AppHandle, note: &Note, url: &str) -> Res
     eprintln!("[窗口] 创建成功: {}", label);
 
     // 新建窗口需要显式置顶+显示，确保出现在最前面
-    let is_pinned = note.is_pinned;
     if let Some(win) = app.get_webview_window(&label) {
-        let _ = win.set_always_on_top(true);
         let _ = win.show();
-        let win_clone = win.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(300));
-            let _ = win_clone.set_always_on_top(is_pinned);
-        });
+        flash_window(&win, note.is_pinned);
     }
 
     Ok(())
+}
+
+/// 提醒触发时激活便签窗口
+///
+/// - 窗口已存在：显示+聚焦+发送 reminder-triggered 事件+闪烁
+/// - 窗口不存在：创建新窗口（URL 带 reminder 参数）
+pub fn activate_note_for_reminder(app: &AppHandle, note: &Note) -> Result<(), String> {
+    let label = format!("note-{}", note.id);
+
+    if let Some(window) = app.get_webview_window(&label) {
+        // 窗口已存在 → 显示+聚焦+发送事件+闪烁
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = app.emit_to(&label, "reminder-triggered", ());
+        eprintln!("[调度器] 窗口已存在，发送 reminder-triggered 事件: note_id={}", note.id);
+        flash_window(&window, note.is_pinned);
+        Ok(())
+    } else {
+        // 窗口不存在 → 创建新窗口（URL 带 reminder 参数）
+        match open_note_window_with_url(app, note, "index.html?reminder=1") {
+            Ok(_) => {
+                eprintln!("[调度器] 便签窗口已弹出: note_id={}", note.id);
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
 }
 
 /// 打开所有已保存便签的窗口（启动时恢复）

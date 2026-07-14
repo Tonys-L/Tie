@@ -138,6 +138,8 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 - 模块间通过接口通信，禁止直接访问其他模块内部实现
 - 所有 `#[tauri::command]` 集中在 `application/commands.rs`
 - 窗口/托盘/快捷键/调度器各自独立模块，互不直接调用
+- `reminder_service` 的窗口操作（显示/聚焦/闪烁）必须委托 `window_manager`，禁止直接操作窗口属性
+- 闪烁提示逻辑（临时置顶 300ms + 恢复）统一由 `window_manager::flash_window` 提供，禁止在其他模块重复实现
 
 ---
 
@@ -146,6 +148,7 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 - **可能并发调用的命令必须标记为 `async`**，让 Tauri 在线程池执行，避免阻塞主线程导致死锁
 - 同步命令（`pub fn`）仅在主线程执行，与窗口创建/IPC 事件并发时会产生死锁
 - 耗时操作命令（如 `sync_notes` 执行 Git 子进程+网络）已改为 async，不阻塞主线程
+- 多窗口并发调用的命令（`get_note`、`open_note_with_flag`、`update_note_content`、`update_note_title`、`update_note_style`、`update_note_window_state`、`check_git`）也已改为 async，避免多窗口初始化或子进程调用阻塞主线程
 - 命令参数中 `State` 的生命周期标注必须用 `State<'_, AppState>`（async 命令）或 `State<AppState>`（同步命令）
 - **写操作命令必须调用 `schedule_auto_sync`**：所有修改便签或提醒数据的命令，在业务逻辑完成后必须调用 `state.git_sync.schedule_auto_sync(app)`，确保自动同步防抖机制生效
 
@@ -191,6 +194,10 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | INV-011 | 冲突解决：last-write-wins，按 updated_at 取最新 | `git_sync.rs` resolve_json_conflict |
 | INV-012 | push 策略：--force-with-lease | `git_sync.rs` |
 | INV-013 | 自动同步防抖：30 秒延迟 | `git_sync.rs` schedule_auto_sync + `commands.rs` 写操作命令调用 |
+| INV-014 | Windows 子进程必须设置 CREATE_NO_WINDOW 标志，禁止弹出控制台窗口 | `git_ops.rs` run_git / check_git_installed / list_remote_branches |
+| INV-015 | Git 同步前必须验证远程分支存在（`git rev-parse origin/<branch>`），分支不存在时返回 `BRANCH_NOT_FOUND:<已有分支>` 由前端提示用户选择是否创建 | `git_sync.rs` sync 方法 |
+| INV-016 | 所有 git 子进程必须设置 `stdin(Stdio::null())`，防止交互式提示导致进程挂起 | `git_ops.rs` run_git / check_git_installed / list_remote_branches |
+| INV-017 | Git 同步初始化后必须验证本地分支名与配置一致，不一致时自动重命名 | `git_sync.rs` sync 方法 |
 
 ### 已知策略缺口
 
@@ -214,6 +221,11 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 - 禁止因为"未来可能"而创建 Factory/Strategy/Registry
 - 禁止一步到位抽象（只有一种实现时直接实现）
 - 禁止在前端通过 `listen` 事件触发窗口创建（前端关闭后无法接收事件）
+- 禁止仓储层提供 partial update 方法（所有写入经 domain 方法 + save，NoteRepository 和 ReminderRepository 均适用）
+- 禁止 `reminder_service` 直接操作窗口属性，必须委托 `window_manager`
+- 禁止在 Windows 上执行子进程时不设 CREATE_NO_WINDOW 标志（会导致控制台窗口弹出）
+- 禁止子进程调用不设 `stdin(Stdio::null())`（可能导致交互式提示挂起进程）
+- 禁止在 domain 层结构体中保留无业务逻辑使用的字段（YAGNI 原则）
 
 ### 编码禁止
 
@@ -289,3 +301,5 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | 2026-07-09 | 删除 NoteRepository 4 个 partial update 方法，所有写入经 domain 方法 + save；修复 INV-001 仓储绕过漏洞；更新 INV-001/INV-003 检查位置 | — | #REFACTOR-007 |
 | 2026-07-10 | 补全 schedule_auto_sync 调用链：12 个写操作命令追加调用；新增写操作命令必须触发自动同步规则；更新 INV-013 检查位置 | — | #REFACTOR-012 |
 | 2026-07-11 | AppState 新增 ShortcutManager 字段；提醒触发已存在窗口通过 emit_to 发送 reminder-triggered 事件 | — | #FEAT-001 |
+| 2026-07-13 | 7 个同步命令改 async；删除 ReminderRepository update_status/snooze 方法；reminder_service 窗口操作委托 window_manager；新增 INV-014/INV-015；新增模块边界和禁止事项 | — | #REFACTOR-013 |
+| 2026-07-14 | 删除 Reminder.repeat_config 字段（YAGNI）；新增 INV-016（stdin null）/INV-017（分支名验证）；git 子进程全部加 stdin(Stdio::null()) | — | #REFACTOR-014 |

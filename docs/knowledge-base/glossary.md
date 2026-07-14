@@ -19,7 +19,7 @@
 
 ### AppState
 
-应用全局状态，在 setup 中创建并通过 Tauri State 管理器注入到各命令。包含 `note_repo`、`reminder_repo`、`git_sync` 三个成员。是组合根的具体实现。
+应用全局状态，在 setup 中创建并通过 Tauri State 管理器注入到各命令。包含 `note_repo`、`reminder_repo`、`git_sync`、`shortcut_manager`、`scheduler` 五个成员。是组合根的具体实现。
 
 ---
 
@@ -61,7 +61,7 @@
 
 ### 调度器 (Scheduler)
 
-`reminder_scheduler` 模块，启动后等 5 秒，每 30 秒轮询 `find_due` 查询到期提醒，触发通知 + 创建便签窗口。
+`reminder_scheduler` 模块，事件驱动调度。启动后等 5 秒，使用单定时器 + `Arc<Notify>` 机制，提醒数据变更时通知调度器重新计算下次触发时间，触发通知 + 弹出便签窗口。
 
 ### 防抖 (Debounce)
 
@@ -154,3 +154,4 @@ SQLite 作为本地运行时存储（事务/并发安全），JSON 文件作为 
 |------|----------|--------|----------|
 | 2026-07-08 | 初始版本 | — | — |
 | 2026-07-09 | 按模板重构，改为字母排序，补充缩写表 | — | — |
+| 2026-07-13 | 更新 AppState（5 成员）和调度器（事件驱动）词条 | — | #REFACTOR-008 |
