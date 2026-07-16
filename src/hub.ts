@@ -53,6 +53,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
     if (item.getAttribute('data-page') === 'calendar') loadCalendar();
     if (item.getAttribute('data-page') === 'general') loadGeneralSettings();
     if (item.getAttribute('data-page') === 'sync') loadSyncConfig();
+    if (item.getAttribute('data-page') === 'ai') loadAiConfig();
     if (item.getAttribute('data-page') === 'shortcuts') loadShortcutConfig();
   });
 });
@@ -337,13 +338,16 @@ function showReminderDialog(noteId: string, noteTitle: string) {
     });
   });
 
+  // AI 自然语言解析已移至便签保存后的自动嗅探气泡，此处仅保留手动表单
+  const reminderTitle = noteTitle;
+
   // 保存
   dialog.querySelector('#rm-save')!.addEventListener('click', async () => {
     const input = dialog.querySelector('#rm-datetime') as HTMLInputElement;
     const dt = new Date(input.value);
     if (isNaN(dt.getTime())) return;
     try {
-      await api.createReminder(noteId, noteTitle, dt.toISOString(), selectedRepeat);
+      await api.createReminder(noteId, reminderTitle, dt.toISOString(), selectedRepeat);
       overlay.remove();
       loadNotes();
     } catch (e) { console.error('创建提醒失败:', e); }
@@ -934,6 +938,95 @@ async function loadGeneralSettings() {
     try {
       await api.openDataDir();
     } catch (e) { console.error('打开数据目录失败:', e); }
+  });
+}
+
+// ===== AI 配置 =====
+let aiConfigLoaded = false;
+
+function showToast(msg: string, type: 'ok' | 'err' = 'ok') {
+  const toast = document.createElement('div');
+  const bg = type === 'ok' ? '#22c55e' : '#ef4444';
+  toast.style.cssText = `position:fixed;top:24px;left:50%;transform:translateX(-50%);padding:10px 20px;border-radius:8px;background:${bg};color:#fff;font-size:13px;font-weight:500;z-index:100000;box-shadow:0 4px 16px rgba(0,0,0,0.2);font-family:inherit;max-width:80vw;`;
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+  setTimeout(() => {
+    toast.style.transition = 'opacity 0.3s';
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 300);
+  }, 2500);
+}
+
+async function loadAiConfig() {
+  // 每次进入页面都刷新表单（配置可能在其他地方被修改）
+  try {
+    const config = await api.getAiConfig();
+    (document.getElementById('ai-base-url') as HTMLInputElement).value = config.base_url || '';
+    (document.getElementById('ai-api-key') as HTMLInputElement).value = config.api_key || '';
+    (document.getElementById('ai-model') as HTMLInputElement).value = config.model || '';
+    // 嗅探开关：sniff_enabled 默认 true（后端 serde default 保证）
+    const sniffEl = document.getElementById('ai-sniff-enabled');
+    if (sniffEl) {
+      if (config.sniff_enabled) sniffEl.classList.add('on');
+      else sniffEl.classList.remove('on');
+    }
+  } catch (e) { console.error('加载 AI 配置失败:', e); }
+
+  // 事件只绑定一次
+  if (aiConfigLoaded) return;
+  aiConfigLoaded = true;
+
+  // 嗅探开关切换（仅切换视觉状态，保存时读取）
+  document.getElementById('ai-sniff-enabled')?.addEventListener('click', () => {
+    document.getElementById('ai-sniff-enabled')!.classList.toggle('on');
+  });
+
+  function showAiStatus(msg: string, type: string) {
+    const el = document.getElementById('ai-test-status')!;
+    el.className = 'status-card ' + type;
+    document.getElementById('ai-test-status-text')!.textContent = msg;
+    (el as HTMLElement).style.display = 'flex';
+    if (type !== 'loading') setTimeout(() => { (el as HTMLElement).style.display = 'none'; }, 5000);
+  }
+
+  document.getElementById('ai-save-btn')?.addEventListener('click', async () => {
+    const baseUrl = (document.getElementById('ai-base-url') as HTMLInputElement).value.trim();
+    const apiKey = (document.getElementById('ai-api-key') as HTMLInputElement).value.trim();
+    const model = (document.getElementById('ai-model') as HTMLInputElement).value.trim();
+    const sniffEnabled = document.getElementById('ai-sniff-enabled')!.classList.contains('on');
+    try {
+      await api.saveAiConfig(baseUrl, apiKey, model, sniffEnabled);
+      showToast(t('hub.aiConfigSaved'), 'ok');
+    } catch (e) {
+      showToast(t('hub.saveFailed') + ': ' + e, 'err');
+    }
+  });
+
+  document.getElementById('ai-test-btn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('ai-test-btn') as HTMLButtonElement;
+    const baseUrl = (document.getElementById('ai-base-url') as HTMLInputElement).value.trim();
+    const apiKey = (document.getElementById('ai-api-key') as HTMLInputElement).value.trim();
+    const model = (document.getElementById('ai-model') as HTMLInputElement).value.trim();
+    const sniffEnabled = document.getElementById('ai-sniff-enabled')!.classList.contains('on');
+    if (!apiKey) {
+      showToast(t('hub.aiNotConfigured'), 'err');
+      return;
+    }
+    btn.textContent = t('hub.testing');
+    btn.disabled = true;
+    try {
+      // 先保存当前表单值，测试连接使用最新配置
+      await api.saveAiConfig(baseUrl, apiKey, model, sniffEnabled);
+      const result = await api.testAiConnection();
+      showAiStatus(t('hub.connectionSuccess') + ': ' + result, 'ok');
+      showToast(t('hub.connectionSuccess'), 'ok');
+    } catch (e) {
+      showAiStatus(t('hub.connectionFailed') + ': ' + e, 'err');
+      showToast(t('hub.connectionFailed'), 'err');
+    } finally {
+      btn.textContent = t('hub.testConnection');
+      btn.disabled = false;
+    }
   });
 }
 

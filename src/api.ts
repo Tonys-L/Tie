@@ -1,7 +1,7 @@
 // ============ API 层：统一封装所有 invoke 调用 ============
 
 import { invoke } from '@tauri-apps/api/core';
-import type { Note, Reminder, SyncConfig, ShortcutConfig } from './types';
+import type { Note, Reminder, SyncConfig, ShortcutConfig, AiConfig, ReminderDraft, Suggestion } from './types';
 
 // ---- 便签 ----
 
@@ -60,3 +60,14 @@ export const saveShortcutConfig = (config: ShortcutConfig) => invoke('save_short
 
 export const getDataDir = () => invoke<string>('get_data_dir');
 export const openDataDir = () => invoke('open_data_dir');
+
+// ---- AI ----
+
+export const getAiConfig = () => invoke<AiConfig>('get_ai_config');
+export const saveAiConfig = (baseUrl: string, apiKey: string, model: string, sniffEnabled: boolean) =>
+  invoke('save_ai_config', { baseUrl, apiKey, model, sniffEnabled });
+export const testAiConnection = () => invoke<string>('test_ai_connection');
+export const parseReminderNatural = (text: string) =>
+  invoke<ReminderDraft>('parse_reminder_natural', { text });
+export const sniffSuggestions = (content: string) =>
+  invoke<Suggestion[]>('sniff_suggestions', { content });

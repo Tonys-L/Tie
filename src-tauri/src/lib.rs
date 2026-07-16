@@ -155,6 +155,11 @@ pub fn run() {
             commands::open_url,
             commands::save_image,
             commands::get_image_dir,
+            commands::get_ai_config,
+            commands::save_ai_config,
+            commands::test_ai_connection,
+            commands::parse_reminder_natural,
+            commands::sniff_suggestions,
         ])
         .build(tauri::generate_context!())
         .expect("启动应用失败");

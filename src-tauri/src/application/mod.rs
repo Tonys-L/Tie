@@ -1,9 +1,13 @@
+pub mod ai_config;
+pub mod ai_service;
 pub mod commands;
 pub mod git_ops;
 pub mod git_sync;
 pub mod locale_manager;
 pub mod lunar_calendar;
 pub mod note_service;
+pub mod prompts;
+pub mod reminder_parser;
 pub mod reminder_scheduler;
 pub mod reminder_service;
 pub mod shortcut_manager;

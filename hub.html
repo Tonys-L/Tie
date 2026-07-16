@@ -461,6 +461,10 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-9-9c2.5 0 4.7 1 6.4 2.6"/><polyline points="21 3 21 9 15 9"/></svg>
         <span data-i18n="hub.syncSettings">同步设置</span>
       </div>
+      <div class="nav-item" data-page="ai">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        <span data-i18n="hub.aiConfig">AI 配置</span>
+      </div>
       <div class="nav-item" data-page="shortcuts">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/></svg>
         <span data-i18n="hub.shortcuts">快捷键</span>
@@ -650,6 +654,49 @@
         </div>
       </div>
 
+      <!-- AI 配置 -->
+      <div class="page" id="page-ai">
+        <div class="settings-wrap">
+          <h2 data-i18n="hub.aiConfig">AI 配置</h2>
+          <p class="desc" data-i18n="hub.aiConfigDesc">配置 OpenAI 兼容模型以启用自然语言提醒解析</p>
+
+          <div id="ai-test-status" class="status-card" style="display:none">
+            <div class="status-dot"></div><span id="ai-test-status-text"></span>
+          </div>
+
+          <div class="section">
+            <div class="section-title" data-i18n="hub.aiModelConfig">模型配置</div>
+            <div class="section-card">
+              <div class="field">
+                <div class="field-label" data-i18n="hub.baseUrl">API 地址</div>
+                <input type="text" class="field-input" id="ai-base-url" placeholder="https://api.openai.com/v1" />
+                <div class="field-hint" data-i18n="hub.aiConfigDesc">配置 OpenAI 兼容模型以启用自然语言提醒解析</div>
+              </div>
+              <div class="field">
+                <div class="field-label" data-i18n="hub.apiKey">API 密钥</div>
+                <input type="password" class="field-input" id="ai-api-key" data-i18n-placeholder="hub.pasteToken" placeholder="粘贴 API 密钥" />
+              </div>
+              <div class="field">
+                <div class="field-label" data-i18n="hub.model">模型名</div>
+                <input type="text" class="field-input" id="ai-model" placeholder="gpt-4o-mini" />
+              </div>
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label" data-i18n="hub.sniffEnabled">AI 嗅探</div>
+                  <div class="toggle-desc" data-i18n="hub.sniffEnabledHint">保存便签时 AI 自动分析并给出建议</div>
+                </div>
+                <div class="toggle" id="ai-sniff-enabled"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="btn-row">
+            <button class="btn btn-secondary" id="ai-test-btn" data-i18n="hub.testConnection">测试连接</button>
+            <button class="btn btn-primary" id="ai-save-btn" data-i18n="hub.saveAiConfig">保存配置</button>
+          </div>
+        </div>
+      </div>
+
       <!-- 快捷键设置 -->
       <div class="page" id="page-shortcuts">
         <div class="settings-wrap">
@@ -690,12 +737,22 @@
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
           </div>
           <div class="about-name" data-i18n="app.name">AI 便签</div>
-          <div class="about-version">v1.0.0 · <span data-i18n="hub.desktopApp">桌面便签应用</span></div>
+          <div class="about-version">v0.5.0 · <span data-i18n="hub.desktopApp">桌面便签应用</span></div>
           <div class="about-info">
-            <strong><span data-i18n="hub.techStack">技术栈</span>：</strong>Tauri 2.0 + Rust + TypeScript<br>
-            <strong><span data-i18n="hub.dataStorage">数据存储</span>：</strong>SQLite（本地） + Git（同步）<br>
-            <strong><span data-i18n="hub.features">功能</span>：</strong>Markdown 编辑、定时提醒、多设备同步、归档管理<br>
-            <strong><span data-i18n="hub.shortcut">快捷键</span>：</strong>Ctrl+Shift+N <span data-i18n="hub.newNote">新建便签</span>
+            <strong data-i18n="hub.aboutFeatures">功能</strong><br>
+            <span data-i18n="hub.aboutF1">· Markdown 编辑，支持图片拖入、待办清单</span><br>
+            <span data-i18n="hub.aboutF2">· 定时提醒：一次 / 每天 / 每周 / 每月 / 农历每月</span><br>
+            <span data-i18n="hub.aboutF3">· 日历视图：月历+年历，直观查看提醒分布</span><br>
+            <span data-i18n="hub.aboutF4">· 标签管理、置顶、颜色、透明度、归档</span><br>
+            <span data-i18n="hub.aboutF5">· Git 多设备同步，数据完全本地存储</span><br>
+            <br>
+            <strong data-i18n="hub.aboutUsage">使用方式</strong><br>
+            <span data-i18n="hub.aboutU1">· 双击托盘图标 → 新建便签</span><br>
+            <span data-i18n="hub.aboutU2">· 输入 - [ ] 任务 → 查看模式显示可点击 checkbox</span><br>
+            <span data-i18n="hub.aboutU3">· 拖入图片 → 自动保存到本地并插入引用</span><br>
+            <span data-i18n="hub.aboutU4">· 右键便签内容 → 置顶 / 归档 / 删除 / 换色</span><br>
+            <span data-i18n="hub.aboutU5">· Ctrl+S 保存 · Esc 退出编辑 · Ctrl+N 新建</span><br>
+            <span data-i18n="hub.aboutU6">· Ctrl+Shift+N 全局新建 · Ctrl+Shift+S 显示全部</span>
           </div>
         </div>
       </div>

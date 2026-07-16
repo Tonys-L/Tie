@@ -106,6 +106,34 @@
 - 两个页面独立加载，共享 CSS 变量（`--surface`、`--text-title` 等）
 - Vite 多页面入口需在 `vite.config.ts` 的 `rollupOptions.input` 中显式配置（当前：index.html + hub.html）
 
+### AI 嗅探
+
+**能力定义**: 扫描便签正文，调用 AI 返回多种编辑建议，辅助用户完善便签内容。
+
+**业务规则**:
+- 未配置 AI（api_key 为空）或用户关闭嗅探（`sniff_enabled=false`）时静默跳过，返回空列表
+- AI 一次分析可返回多条建议，前端按 `type` 字段分发处理
+- 各类型在数据为空时跳过（不返回空建议）
+- 未知类型跳过，不影响其他合法建议
+
+**支持的建议类型**:
+| 类型 | 说明 | data 结构 |
+|------|------|-----------|
+| reminder | 检测到时间/提醒信息 | `{ detected, time_text, start_time, title, repeat_type, repeat_day }` |
+| todo_split | 可拆分为待办清单 | `Vec<String>`（todos 数组） |
+| tidy | 口语化文本可规整 | `String`（tidy_text） |
+| style | 文风可改善（正式场景） | `{ style_type, styled_text }` |
+| tag_suggest | 推荐标签（最多 3 个） | `Vec<String>`（tags 数组） |
+
+**变化点**:
+- 建议类型可扩展（在 `sniff_suggestions` 的 match 分支追加新类型）
+- Prompt 模板可调整（`prompts/sniff.rs`）
+
+**对应代码**:
+- `src-tauri/src/application/reminder_parser.rs`（`sniff_suggestions` 函数 + `Suggestion` 结构）
+- `src-tauri/src/application/prompts/sniff.rs`（嗅探 Prompt 模板）
+- `src-tauri/src/application/commands.rs`（`sniff_suggestions` 命令入口）
+
 ---
 
 ## 外部依赖能力
@@ -149,6 +177,7 @@
 | 快捷键 | 可配置（2 个动作） | 可能新增动作 | `shortcut_manager.rs` + `shortcut_config.json` |
 | 标签管理 | 手动标签 + 数量/长度限制 | 可能自动标签/标签颜色 | `domain/note.rs` tags 字段 |
 | 搜索方式 | SQLite LIKE 查询 | 可能引入 FTS5 全文索引 | `sqlite_note_repo.rs` search_notes |
+| AI 嗅探建议类型 | reminder/todo_split/tidy/style/tag_suggest 5 种 | 可能新增更多建议类型 | `reminder_parser.rs` match 分支 + `prompts/sniff.rs` |
 
 ---
 
@@ -177,3 +206,4 @@
 | 2026-07-15 | 迭代二 v0.3.0：待办清单/复选框交互（GFM task list checkbox 可点击切换状态，自动保存） | — | #FEAT-003 |
 | 2026-07-15 | 迭代三 v0.4.0：Monthly 改精确日历月；新增 LunarMonthly 重复类型 + tyme4rs 农历库；新增日历视图（Hub 月历展示提醒分布）；ReminderRepository 新增 find_pending_by_date_range；新增 get_reminders_by_month 命令 | — | #FEAT-004 同步更新 constraints.md/glossary.md |
 | 2026-07-15 | 迭代三 v0.4.1：日历视图 7 项增强——显示提醒标题/农历日期/状态区分色/便签活动蓝点/今天本周高亮/点击日期创建提醒/年视图切换；find_pending_by_date_range 改为 find_by_date_range（含所有状态）；新增 get_lunar_dates/get_notes_activity_by_month 命令；NoteRepository 新增 find_activity_by_month | — | #FEAT-005 同步更新 constraints.md |
+| 2026-07-16 | AI 嗅探扩展 4 种建议类型（todo_split/tidy/style/tag_suggest）；新增"AI 嗅探"支撑能力描述；扩展点分析表新增 AI 嗅探建议类型扩展点 | — | #FEAT-006 |

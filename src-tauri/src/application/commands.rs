@@ -489,3 +489,58 @@ pub fn get_image_dir() -> Result<String, String> {
         .map(|s| s.to_string())
         .ok_or("路径转换失败".to_string())
 }
+
+// ============ AI 命令 ============
+
+/// 获取 AI 配置（未配置时返回空值，前端用密码框显示 API Key）
+#[tauri::command]
+pub async fn get_ai_config() -> Result<super::ai_config::AiConfig, String> {
+    let path = super::ai_config::AiConfig::default_path();
+    super::ai_config::AiConfig::load(&path)
+}
+
+/// 保存 AI 配置到本地用户目录（不随 Git 同步）
+#[tauri::command]
+pub async fn save_ai_config(base_url: String, api_key: String, model: String, sniff_enabled: bool) -> Result<(), String> {
+    let path = super::ai_config::AiConfig::default_path();
+    let config = super::ai_config::AiConfig {
+        base_url,
+        api_key,
+        model,
+        sniff_enabled,
+    };
+    config.save(&path)
+}
+
+/// 测试 AI 连接是否可用（发送 ping 请求）
+#[tauri::command]
+pub async fn test_ai_connection() -> Result<String, String> {
+    let path = super::ai_config::AiConfig::default_path();
+    let config = super::ai_config::AiConfig::load(&path)?;
+    let service = super::ai_service::AiService::new(config);
+    service.test_connection().await.map_err(|e| e.to_string())
+}
+
+/// 自然语言解析提醒（返回 ReminderDraft 供前端预填表单）
+#[tauri::command]
+pub async fn parse_reminder_natural(text: String) -> Result<super::reminder_parser::ReminderDraft, String> {
+    let path = super::ai_config::AiConfig::default_path();
+    let config = super::ai_config::AiConfig::load(&path)?;
+    super::reminder_parser::parse_reminder_natural(&text, &config)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 嗅探便签正文，返回通用建议列表
+///
+/// 当前只识别 reminder 类型建议（检测到时间信息时返回"添加提醒"建议）。
+/// 返回空 vec 表示无建议或未配置 AI/关闭嗅探（静默跳过）。
+/// 架构支持未来扩展 todo_split / tidy 等类型。
+#[tauri::command]
+pub async fn sniff_suggestions(content: String) -> Result<Vec<super::reminder_parser::Suggestion>, String> {
+    let path = super::ai_config::AiConfig::default_path();
+    let config = super::ai_config::AiConfig::load(&path)?;
+    super::reminder_parser::sniff_suggestions(&content, &config)
+        .await
+        .map_err(|e| e.to_string())
+}

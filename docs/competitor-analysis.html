@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>便签软件竞品对比分析报告</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface-2: #232838;
+    --border: #2d3344;
+    --text: #e4e7ec;
+    --text-dim: #8b92a5;
+    --accent: #6c8cff;
+    --accent-2: #4fd1c5;
+    --green: #48bb78;
+    --yellow: #ecc94b;
+    --red: #fc8181;
+    --orange: #ed8936;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 0;
+  }
+  .header {
+    background: linear-gradient(135deg, #1a1d27 0%, #2d1b4e 100%);
+    padding: 48px 40px;
+    border-bottom: 1px solid var(--border);
+  }
+  .header h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+  .header .subtitle { color: var(--text-dim); font-size: 15px; }
+  .header .meta { margin-top: 16px; display: flex; gap: 24px; flex-wrap: wrap; }
+  .header .meta span {
+    font-size: 13px; color: var(--text-dim);
+    background: var(--surface-2); padding: 4px 12px; border-radius: 4px;
+  }
+  .container { max-width: 1200px; margin: 0 auto; padding: 32px 40px; }
+  section { margin-bottom: 48px; }
+  h2 {
+    font-size: 22px; font-weight: 700; margin-bottom: 20px;
+    padding-bottom: 8px; border-bottom: 2px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+  }
+  h2 .num {
+    background: var(--accent); color: #fff; font-size: 14px;
+    width: 28px; height: 28px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+  }
+  h3 { font-size: 17px; font-weight: 600; margin: 24px 0 12px; color: var(--accent-2); }
+  p { margin-bottom: 12px; color: var(--text); }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin-bottom: 16px;
+  }
+  .card-title { font-weight: 600; font-size: 16px; margin-bottom: 8px; }
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .summary-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+  }
+  .summary-card .label { font-size: 13px; color: var(--text-dim); margin-bottom: 4px; }
+  .summary-card .value { font-size: 15px; font-weight: 600; }
+  .summary-card.green .value { color: var(--green); }
+  .summary-card.yellow .value { color: var(--yellow); }
+  .summary-card.red .value { color: var(--red); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    background: var(--surface);
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  th, td {
+    padding: 10px 12px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    background: var(--surface-2);
+    font-weight: 600;
+    color: var(--text);
+    position: sticky;
+    top: 0;
+  }
+  th:first-child, td:first-child {
+    text-align: left;
+    font-weight: 500;
+    min-width: 140px;
+  }
+  td:first-child { color: var(--text-dim); }
+  tr:hover { background: var(--surface-2); }
+  .yes { color: var(--green); font-weight: 600; }
+  .partial { color: var(--yellow); font-weight: 600; }
+  .no { color: var(--red); font-weight: 600; }
+  .ours-col { background: rgba(108,140,255,0.08); }
+  .gap-list { list-style: none; }
+  .gap-list li {
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    border-radius: 4px;
+  }
+  .gap-list li.high { border-left-color: var(--red); }
+  .gap-list li.mid { border-left-color: var(--yellow); }
+  .gap-list li.low { border-left-color: var(--accent-2); }
+  .gap-list .title { font-weight: 600; margin-bottom: 4px; }
+  .gap-list .desc { font-size: 13px; color: var(--text-dim); }
+  .gap-list .priority {
+    display: inline-block;
+    font-size: 11px; font-weight: 600;
+    padding: 2px 8px; border-radius: 3px;
+    margin-left: 8px; vertical-align: middle;
+  }
+  .priority.high { background: rgba(252,129,129,0.15); color: var(--red); }
+  .priority.mid { background: rgba(236,201,75,0.15); color: var(--yellow); }
+  .priority.low { background: rgba(79,209,197,0.15); color: var(--accent-2); }
+  .swot-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .swot-box {
+    border-radius: 8px;
+    padding: 16px 20px;
+    min-height: 120px;
+  }
+  .swot-box h4 { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+  .swot-box ul { list-style: none; }
+  .swot-box li { font-size: 13px; margin-bottom: 4px; padding-left: 12px; position: relative; }
+  .swot-box li::before { content: "•"; position: absolute; left: 0; }
+  .swot-s { background: rgba(72,187,120,0.1); border: 1px solid rgba(72,187,120,0.3); }
+  .swot-s h4 { color: var(--green); }
+  .swot-w { background: rgba(252,129,129,0.1); border: 1px solid rgba(252,129,129,0.3); }
+  .swot-w h4 { color: var(--red); }
+  .swot-o { background: rgba(108,140,255,0.1); border: 1px solid rgba(108,140,255,0.3); }
+  .swot-o h4 { color: var(--accent); }
+  .swot-t { background: rgba(237,137,54,0.1); border: 1px solid rgba(237,137,54,0.3); }
+  .swot-t h4 { color: var(--orange); }
+  .playbook-tier {
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
+    border: 1px solid var(--border);
+  }
+  .playbook-tier h4 {
+    font-size: 16px; font-weight: 700; margin-bottom: 12px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .playbook-tier .items { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .playbook-tier .item {
+    background: var(--surface-2);
+    padding: 10px 14px;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  .playbook-tier .item strong { display: block; margin-bottom: 2px; }
+  .playbook-tier .item span { color: var(--text-dim); }
+  .catchup { background: rgba(252,129,129,0.06); border-color: rgba(252,129,129,0.2); }
+  .catchup h4 { color: var(--red); }
+  .differentiate { background: rgba(72,187,120,0.06); border-color: rgba(72,187,120,0.2); }
+  .differentiate h4 { color: var(--green); }
+  .innovate { background: rgba(108,140,255,0.06); border-color: rgba(108,140,255,0.2); }
+  .innovate h4 { color: var(--accent); }
+  .legend { display: flex; gap: 20px; margin: 12px 0; font-size: 13px; }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .legend .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .note { font-size: 12px; color: var(--text-dim); margin-top: 8px; font-style: italic; }
+  .source-list { font-size: 12px; color: var(--text-dim); }
+  .source-list a { color: var(--accent); text-decoration: none; }
+  .source-list a:hover { text-decoration: underline; }
+  .source-list li { margin-bottom: 4px; }
+  @media (max-width: 768px) {
+    .container { padding: 16px; }
+    .header { padding: 24px 16px; }
+    table { font-size: 11px; }
+    th, td { padding: 6px 4px; }
+    .swot-grid { grid-template-columns: 1fr; }
+    .playbook-tier .items { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>便签软件竞品对比分析报告</h1>
+  <div class="subtitle">Tie 项目 vs 主流便签软件 — 功能差距与差异化建议</div>
+  <div class="meta">
+    <span>分析日期：2026-07-15</span>
+    <span>数据截止：2026年7月公开信息</span>
+    <span>竞品数量：5 款</span>
+    <span>对比维度：10 大类</span>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- 1. 执行摘要 -->
+<section>
+  <h2><span class="num">1</span>执行摘要</h2>
+  <div class="summary-grid">
+    <div class="summary-card green">
+      <div class="label">Tie 已有核心功能</div>
+      <div class="value">便签CRUD · 悬浮窗 · 提醒 · Git同步</div>
+    </div>
+    <div class="summary-card yellow">
+      <div class="label">主要功能差距</div>
+      <div class="value">8 项（高优先级 4 项）</div>
+    </div>
+    <div class="summary-card green">
+      <div class="label">Tie 独特优势</div>
+      <div class="value">Git去中心化同步 · 隐私优先 · 无需账号</div>
+    </div>
+    <div class="summary-card red">
+      <div class="label">最大短板</div>
+      <div class="value">无移动端 · 无搜索 · 无分类标签</div>
+    </div>
+  </div>
+  <p>Tie 作为桌面级便签应用，在<strong>悬浮窗口体验</strong>和<strong>本地优先架构</strong>上具有差异化优势。与主流便签软件相比，Tie 的核心差距集中在三个领域：<strong>内容编辑能力</strong>（缺少富文本/图片附件管理）、<strong>信息组织能力</strong>（缺少搜索/分类/标签）、<strong>多端覆盖</strong>（仅桌面端）。建议优先补齐搜索功能和分类标签系统，这两项是用户日常高频使用的核心能力。</p>
+</section>
+
+<!-- 2. 竞品概览 -->
+<section>
+  <h2><span class="num">2</span>竞品概览</h2>
+
+  <div class="card">
+    <div class="card-title">微软 Sticky Notes</div>
+    <p>Windows 内置便签工具，深度整合微软生态。支持基础文字记录、颜色切换、OneDrive 同步、墨迹书写。<span class="note">定位：零门槛轻量便签，Windows 用户开箱即用。</span></p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">敬业签</div>
+    <p>国产多端云同步便签，功能最全面。支持 Windows/iOS/Android/Web 多端实时同步、公历农历提醒、时间轴日志、日历月视图、图片/声音附件、多渠道通知（微信/钉钉/短信/邮箱）。<span class="note">定位：全功能时间管理工具，覆盖便签+待办+日程。</span></p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">小黄条 (YYNote)</div>
+    <p>跨平台透明桌面待办工具。支持全透明桌面嵌入、待办清单、便签、日历、倒数日、多标签分类、一键导出、多端同步。<span class="note">定位：极简透明桌面待办，与 Tie 定位最接近。</span></p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Google Keep</div>
+    <p>Google 旗下轻量笔记应用。支持笔记标签、颜色分类、图片附件、语音转文字、位置提醒、循环提醒、导出到 Google Docs。<span class="note">定位：Google 生态轻量笔记，移动端为主。</span></p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">飞书便签</div>
+    <p>字节跳动旗下飞书办公套件内置便签。深度融入飞书生态，支持多格式内容、团队协同、生态联动。<span class="note">定位：团队协同办公场景便签。</span></p>
+  </div>
+</section>
+
+<!-- 3. 功能对比矩阵 -->
+<section>
+  <h2><span class="num">3</span>功能对比矩阵</h2>
+  <div class="legend">
+    <span><span class="dot" style="background:var(--green)"></span>✅ 完整支持</span>
+    <span><span class="dot" style="background:var(--yellow)"></span>⚠️ 部分支持</span>
+    <span><span class="dot" style="background:var(--red)"></span>❌ 不支持</span>
+  </div>
+
+  <h3>3.1 便签基础与窗口显示</h3>
+  <table>
+    <tr>
+      <th>功能</th>
+      <th class="ours-col">Tie</th>
+      <th>Sticky Notes</th>
+      <th>敬业签</th>
+      <th>小黄条</th>
+      <th>Google Keep</th>
+    </tr>
+    <tr>
+      <td>创建/编辑/删除</td>
+      <td class="ours-col yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+    </tr>
+    <tr>
+      <td>归档/恢复</td>
+      <td class="ours-col yes">✅</td>
+      <td class="no">❌</td>
+      <td class="yes">✅</td>
+      <td class="partial">⚠️ 仅完成/归档</td>
+      <td class="partial">⚠️ 仅归档</td>
+    </tr>
+    <tr>
+      <td>桌面悬浮窗口</td>
+      <td class="ours-col yes">✅ 独立窗口</td>
+      <td class="yes">✅ 独立窗口</td>
+      <td class="yes">✅ 云游悬浮</td>
+      <td class="yes">✅ 透明嵌入桌面</td>
+      <td class="no">❌ 应用内</td>
+    </tr>
+    <tr>
+      <td>透明度调节</td>
+      <td class="ours-col yes">✅ 0.3~1.0</td>
+      <td class="no">❌</td>
+      <td class="yes">✅ 10%~100%</td>
+      <td class="yes">✅ 全透明</td>
+      <td class="no">❌</td>
+    </tr>
+    <tr>
+      <td>颜色选择</td>
+      <td class="ours-col yes">✅ 多色</td>
+      <td class="yes">✅ 多色</td>
+      <td class="yes">✅ 多色</td>
+      <td class="partial">⚠️ 主题色</td>
+      <td class="yes">✅ 多色</td>
+    </tr>
+    <tr>
+      <td>窗口置顶</td>
+      <td class="ours-col yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="no">❌</td>
+    </tr>
+  </table>
+
+  <h3>3.2 编辑能力</h3>
+  <table>
+    <tr>
+      <th>功能</th>
+      <th class="ours-col">Tie</th>
+      <th>Sticky Notes</th>
+      <th>敬业签</th>
+      <th>小黄条</th>
+      <th>Google Keep</th>
+    </tr>
+    <tr>
+      <td>Markdown 渲染</td>
+      <td class="ours-col yes">✅</td>
+      <td class="no">❌</td>
+      <td class="partial">⚠️ 部分格式</td>
+      <td class="no">❌</td>
+      <td class="no">❌</td>
+    </tr>
+    <tr>
+      <td>富文本编辑</td>
+      <td class="ours-col no">❌</td>
+      <td class="partial">⚠️ 基础格式</td>
+      <td class="yes">✅</td>
+      <td class="partial">⚠️ 基础</td>
+      <td class="yes">✅</td>
+    </tr>
+    <tr>
+      <td>图片插入</td>
+      <td class="ours-col partial">⚠️ 拖拽支持</td>
+      <td class="no">❌</td>
+      <td class="yes">✅ 图片+声音</td>
+      <td class="no">❌</td>
+      <td class="yes">✅</td>
+    </tr>
+    <tr>
+      <td>语音输入/转文字</td>
+      <td class="ours-col no">❌</td>
+      <td class="no">❌</td>
+      <td class="no">❌</td>
+      <td class="no">❌</td>
+      <td class="yes">✅</td>
+    </tr>
+    <tr>
+      <td>墨迹/手写</td>
+      <td class="ours-col no">❌</td>
+      <td class="yes">✅</td>
+      <td class="no">❌</td>
+      <td class="no">❌</td>
+      <td class="no">❌</td>
+    </tr>
+    <tr>
+      <td>待办清单/复选框</td>
+      <td class="ours-col no">❌</td>
+      <td class="no">❌</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+    </tr>
+  </table>
+
+  <h3>3.3 提醒功能</h3>
+  <table>
+    <tr>
+      <th>功能</th>
+      <th class="ours-col">Tie</th>
+      <th>Sticky Notes</th>
+      <th>敬业签</th>
+      <th>小黄条</th>
+      <th>Google Keep</th>
+    </tr>
+    <tr>
+      <td>一次性提醒</td>
+      <td class="ours-col yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+    </tr>
+    <tr>
+      <td>周期/循环提醒</td>
+      <td class="ours-col yes">✅ Daily/Weekly/Monthly</td>
+      <td class="no">❌</td>
+      <td class="yes">✅ 全类型</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+    </tr>
+    <tr>
+      <td>农历提醒</td>
+      <td class="ours-col no">❌</td>
+      <td class="no">❌</td>
+      <td class="yes">✅ 公农历</td>
+      <td class="no">❌</td>
+      <td class="no">❌</td>
+    </tr>
+    <tr>
+      <td>位置提醒</td>
+      <td class="ours-col no">❌</td>
+      <td class="no">❌</td>
+      <td class="no">❌</td>
+      <td class="no">❌</td>
+      <td class="yes">✅</td>
+    </tr>
+    <tr>
+      <td>贪睡/延后</td>
+      <td class="ours-col yes">✅</td>
+      <td class="no">❌</td>
+      <td class="yes">✅</td>
+      <td class="partial">⚠️</td>
+      <td class="no">❌</td>
+    </tr>
+    <tr>
+      <td>多渠道通知</td>
+      <td class="ours-col partial">⚠️ 通知+弹窗</td>
+      <td class="partial">⚠️ 通知</td>
+      <td class="yes">✅ 微信/钉钉/短信/邮箱</td>
+      <td class="partial">⚠️ 通知</td>
+      <td class="partial">⚠️ 通知</td>
+    </tr>
+    <tr>
+      <td>日历视图</td>
+      <td class="ours-col no">❌</td>
+      <td class="no">❌</td>
+      <td class="yes">✅ 月视图</td>
+      <td class="yes">✅ 日历</td>
+      <td class="no">❌</td>
+    </tr>
+    <tr>
+      <td>倒数日/纪念日</td>
+      <td class="ours-col no">❌</td>
+      <td class="no">❌</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="no">❌</td>
+    </tr>
+  </table>
+
+  <h3>3.4 数据同步与平台</h3>
+  <table>
+    <tr>
+      <th>功能</th>
+      <th class="ours-col">Tie</th>
+      <th>Sticky Notes</th>
+      <th>敬业签</th>
+      <th>小黄条</th>
+      <th>Google Keep</th>
+    </tr>
+    <tr>
+      <td>多设备同步</td>
+      <td class="ours-col yes">✅ Git</td>
+      <td class="yes">✅ OneDrive</td>
+      <td class="yes">✅ 云端</td>
+      <td class="yes">✅ 云端</td>
+      <td class="yes">✅ Google</td>
+    </tr>
+    <tr>
+      <td>同步方式</td>
+      <td class="ours-col yes">✅ Git 仓库</td>
+      <td class="yes">✅ 云端</td>
+      <td class="yes">✅ 云端实时</td>
+      <td class="yes">✅ 云端</td>
+      <td class="yes">✅ 云端实时</td>
+    </tr>
+    <tr>
+      <td>无需账号/隐私优先</td>
+      <td class="ours-col yes">✅ 自托管Git</td>
+      <td class="no">❌ 需微软账号</td>
+      <td class="no">❌ 需注册</td>
+      <td class="no">❌ 需注册</td>
+      <td class="no">❌ 需Google账号</td>
+    </tr>
+    <tr>
+      <td>Windows</td>
+      <td class="ours-col yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅ Web</td>
+    </tr>
+    <tr>
+      <td>macOS</td>
+      <td class="ours-col no">❌</td>
+      <td class="no">❌</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅ Web</td>
+    </tr>
+    <tr>
+      <td>iOS / Android</td>
+      <td class="ours-col no">❌</td>
+      <td class="no">❌ / ❌</td>
+      <td class="yes">✅ / ✅</td>
+      <td class="yes">✅ / ✅</td>
+      <td class="yes">✅ / ✅</td>
+    </tr>
+    <tr>
+      <td>Web 端</td>
+      <td class="ours-col no">❌</td>
+      <td class="no">❌</td>
+      <td class="yes">✅</td>
+      <td class="no">❌</td>
+      <td class="yes">✅</td>
+    </tr>
+  </table>
+
+  <h3>3.5 信息组织与管理</h3>
+  <table>
+    <tr>
+      <th>功能</th>
+      <th class="ours-col">Tie</th>
+      <th>Sticky Notes</th>
+      <th>敬业签</th>
+      <th>小黄条</th>
+      <th>Google Keep</th>
+    </tr>
+    <tr>
+      <td>分类/分组</td>
+      <td class="ours-col no">❌</td>
+      <td class="yes">✅ 分组</td>
+      <td class="yes">✅ 分类</td>
+      <td class="yes">✅ 多标签</td>
+      <td class="yes">✅ 标签</td>
+    </tr>
+    <tr>
+      <td>全局搜索</td>
+      <td class="ours-col no">❌</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+    </tr>
+    <tr>
+      <td>排序</td>
+      <td class="ours-col no">❌</td>
+      <td class="partial">⚠️ 拖拽</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+    </tr>
+    <tr>
+      <td>时间轴/操作历史</td>
+      <td class="ours-col no">❌</td>
+      <td class="no">❌</td>
+      <td class="yes">✅ 完整时间轴</td>
+      <td class="no">❌</td>
+      <td class="partial">⚠️ 删除恢复</td>
+    </tr>
+    <tr>
+      <td>已完成列表</td>
+      <td class="ours-col no">❌</td>
+      <td class="no">❌</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="no">❌</td>
+    </tr>
+    <tr>
+      <td>导出</td>
+      <td class="ours-col no">❌</td>
+      <td class="no">❌</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅ 一键导出</td>
+      <td class="yes">✅ → Google Docs</td>
+    </tr>
+    <tr>
+      <td>本地备份/恢复</td>
+      <td class="ours-col partial">⚠️ Git版本历史</td>
+      <td class="partial">⚠️ OneDrive</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅ 自动备份</td>
+      <td class="partial">⚠️ 云端</td>
+    </tr>
+  </table>
+
+  <h3>3.6 桌面集成</h3>
+  <table>
+    <tr>
+      <th>功能</th>
+      <th class="ours-col">Tie</th>
+      <th>Sticky Notes</th>
+      <th>敬业签</th>
+      <th>小黄条</th>
+      <th>Google Keep</th>
+    </tr>
+    <tr>
+      <td>系统托盘常驻</td>
+      <td class="ours-col yes">✅</td>
+      <td class="no">❌</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="no">❌</td>
+    </tr>
+    <tr>
+      <td>全局快捷键</td>
+      <td class="ours-col yes">✅ 可配置</td>
+      <td class="no">❌</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="no">❌</td>
+    </tr>
+    <tr>
+      <td>开机自启</td>
+      <td class="ours-col yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="no">❌</td>
+    </tr>
+    <tr>
+      <td>启动恢复窗口</td>
+      <td class="ours-col yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="yes">✅</td>
+      <td class="no">❌</td>
+    </tr>
+  </table>
+</section>
+
+<!-- 4. Tie 功能差距分析 -->
+<section>
+  <h2><span class="num">4</span>Tie 功能差距分析</h2>
+  <p>以下按优先级排列 Tie 相比主流竞品缺失的核心功能。优先级判定依据：用户使用频率 × 竞品普及度 × 实现可行性。</p>
+
+  <h3>4.1 高优先级差距（建议优先补齐）</h3>
+  <ul class="gap-list">
+    <li class="high">
+      <div class="title">全局搜索<span class="priority high">P0</span></div>
+      <div class="desc">所有 4 款竞品均支持搜索便签内容。当便签数量增长后，无法搜索是最大可用性瓶颈。实现：SQLite FTS5 全文检索 + 前端搜索栏。</div>
+    </li>
+    <li class="high">
+      <div class="title">分类/标签系统<span class="priority high">P0</span></div>
+      <div class="desc">4 款竞品均有分类或标签功能。Tie 目前仅有归档/非归档两种状态，无法按主题/项目组织便签。实现：Note 新增 tags 字段 + 前端标签栏。</div>
+    </li>
+    <li class="high">
+      <div class="title">待办清单/复选框<span class="priority high">P0</span></div>
+      <div class="desc">敬业签、小黄条、Google Keep 均支持在便签内添加待办事项。便签+待办是用户高频组合场景。实现：Markdown 扩展 `- [ ]` 语法渲染 + 状态持久化。</div>
+    </li>
+    <li class="high">
+      <div class="title">便签排序/列表管理<span class="priority high">P1</span></div>
+      <div class="desc">竞品均支持便签列表排序（按时间/标题/颜色/自定义）。Tie 缺少集中管理所有便签的列表视图（当前仅有 Hub 设置页）。实现：Hub 新增便签列表 tab + 排序。</div>
+    </li>
+  </ul>
+
+  <h3>4.2 中优先级差距（建议中期规划）</h3>
+  <ul class="gap-list">
+    <li class="mid">
+      <div class="title">富文本编辑<span class="priority mid">P2</span></div>
+      <div class="desc">敬业签和 Google Keep 支持富文本。Tie 目前仅 Markdown 渲染。可考虑引入轻量富文本编辑器（如 contentEditable + 工具栏），或增强 Markdown 编辑体验。</div>
+    </li>
+    <li class="mid">
+      <div class="title">日历视图<span class="priority mid">P2</span></div>
+      <div class="desc">敬业签和小黄条提供日历月视图查看提醒。Tie 的提醒散落在各便签中，缺少集中视图。实现：Hub 新增日历 tab，从 DB 查询所有 reminder 渲染月视图。</div>
+    </li>
+    <li class="mid">
+      <div class="title">导出功能<span class="priority mid">P2</span></div>
+      <div class="desc">敬业签、小黄条、Google Keep 均支持数据导出。Tie 数据在 SQLite 中，用户无法导出为通用格式。实现：导出为 Markdown/JSON/HTML。</div>
+    </li>
+    <li class="mid">
+      <div class="title">时间轴/操作历史<span class="priority mid">P2</span></div>
+      <div class="desc">敬业签的时间轴记录所有增删改操作。Tie 仅靠 Git 版本历史，缺少应用内可视化的操作记录。实现：新增 operation_log 表记录变更。</div>
+    </li>
+    <li class="mid">
+      <div class="title">农历提醒<span class="priority mid">P3</span></div>
+      <div class="desc">敬业签支持公农历提醒，适合中国用户节假日/生日场景。实现：引入 chrono 农历扩展或 lunar-calendar crate。</div>
+    </li>
+  </ul>
+
+  <h3>4.3 低优先级差距（长期/视需求规划）</h3>
+  <ul class="gap-list">
+    <li class="low">
+      <div class="title">移动端支持<span class="priority low">P4</span></div>
+      <div class="desc">敬业签、小黄条、Google Keep 均有 iOS/Android 客户端。Tie 基于 Tauri 仅桌面端，移动端需完全重写前端。成本极高，建议评估需求后再规划。</div>
+    </li>
+    <li class="low">
+      <div class="title">多渠道通知<span class="priority low">P4</span></div>
+      <div class="desc">敬业签支持微信/钉钉/短信/邮箱通知。Tie 仅系统通知+弹窗。可考虑 webhook 通知扩展点，让用户自行配置通知渠道。</div>
+    </li>
+    <li class="low">
+      <div class="title">倒数日/纪念日<span class="priority low">P4</span></div>
+      <div class="desc">敬业签和小黄条支持倒数日功能。可在提醒系统上扩展，增加"倒数日"展示模式。</div>
+    </li>
+    <li class="low">
+      <div class="title">语音输入<span class="priority low">P5</span></div>
+      <div class="desc">Google Keep 支持语音转文字。可通过 Web Speech API 实现，成本较低但场景有限。</div>
+    </li>
+    <li class="low">
+      <div class="title">位置提醒<span class="priority low">P5</span></div>
+      <div class="desc">Google Keep 支持基于位置的提醒。桌面端场景有限，移动端才有价值。</div>
+    </li>
+  </ul>
+</section>
+
+<!-- 5. SWOT 分析 -->
+<section>
+  <h2><span class="num">5</span>SWOT 分析（Tie 视角）</h2>
+  <div class="swot-grid">
+    <div class="swot-box swot-s">
+      <h4>优势 (Strengths)</h4>
+      <ul>
+        <li>Git 去中心化同步，数据自主可控，无需注册账号</li>
+        <li>桌面悬浮窗口体验成熟（独立窗口+透明度+无边框）</li>
+        <li>本地优先架构，SQLite 存储，离线可用，隐私安全</li>
+        <li>Markdown 原生支持，竞品中少有</li>
+        <li>事件驱动提醒调度，低资源占用</li>
+      </ul>
+    </div>
+    <div class="swot-box swot-w">
+      <h4>劣势 (Weaknesses)</h4>
+      <ul>
+        <li>无全局搜索，便签多后难以定位</li>
+        <li>无分类/标签，信息组织能力弱</li>
+        <li>仅 Windows 桌面端，无移动端覆盖</li>
+        <li>无富文本编辑，内容表达受限</li>
+        <li>无日历视图，提醒缺乏集中管理</li>
+      </ul>
+    </div>
+    <div class="swot-box swot-o">
+      <h4>机会 (Opportunities)</h4>
+      <ul>
+        <li>隐私优先趋势上升，用户对云服务数据安全关注增加</li>
+        <li>Git 同步方案对开发者群体有天然吸引力</li>
+        <li>开源生态可吸引社区贡献和自托管用户</li>
+        <li>Tauri 2.0 支持移动端，未来可低成本扩展</li>
+      </ul>
+    </div>
+    <div class="swot-box swot-t">
+      <h4>威胁 (Threats)</h4>
+      <ul>
+        <li>敬业签功能全面且持续更新，竞争壁垒高</li>
+        <li>微软 Sticky Notes 零成本预装，用户习惯已形成</li>
+        <li>Google Keep 生态整合深度，跨平台无缝</li>
+        <li>用户对云同步的便利性期望越来越高</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 6. 差异化建议 -->
+<section>
+  <h2><span class="num">6</span>差异化策略建议</h2>
+
+  <div class="playbook-tier catchup">
+    <h4>🔴 追赶层 — 补齐竞品普遍拥有但 Tie 缺失的功能</h4>
+    <div class="items">
+      <div class="item">
+        <strong>全局搜索</strong>
+        <span>SQLite FTS5 全文索引 + 前端搜索栏。预估 2-3 天。</span>
+      </div>
+      <div class="item">
+        <strong>分类/标签系统</strong>
+        <span>Note 新增 tags 字段，前端标签栏 + 筛选。预估 3-4 天。</span>
+      </div>
+      <div class="item">
+        <strong>待办清单/复选框</strong>
+        <span>Markdown `- [ ]` 语法渲染 + 状态持久化。预估 2-3 天。</span>
+      </div>
+      <div class="item">
+        <strong>便签列表管理</strong>
+        <span>Hub 新增便签列表 tab + 排序/筛选。预估 2-3 天。</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="playbook-tier differentiate">
+    <h4>🟢 差异化层 — 强化 Tie 已有优势</h4>
+    <div class="items">
+      <div class="item">
+        <strong>Git 同步隐私优势</strong>
+        <span>强化"数据自主可控"定位，主打开发者/隐私敏感用户。无需云服务账号，数据不经过第三方服务器。</span>
+      </div>
+      <div class="item">
+        <strong>Markdown 原生支持</strong>
+        <span>竞品中唯一原生 Markdown 便签，强化技术用户群体吸引力。可扩展代码高亮、LaTeX 公式。</span>
+      </div>
+      <div class="item">
+        <strong>独立窗口架构</strong>
+        <span>每张便签独立窗口，可分别置顶/调透明度/定位，优于竞品的统一列表模式。</span>
+      </div>
+      <div class="item">
+        <strong>事件驱动调度</strong>
+        <span>低资源占用的提醒调度，不轮询不空转，适合长期后台运行。</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="playbook-tier innovate">
+    <h4>🔵 创新层 — 竞品均未覆盖的蓝海机会</h4>
+    <div class="items">
+      <div class="item">
+        <strong>Webhook 通知扩展</strong>
+        <span>用户可自定义 webhook URL，提醒触发时推送任意平台（企业微信/Telegram/Bark）。竞品均为固定通知渠道。</span>
+      </div>
+      <div class="item">
+        <strong>便签模板系统</strong>
+        <span>预设模板（会议记录/待办清单/日记），快速创建。竞品均无此功能。</span>
+      </div>
+      <div class="item">
+        <strong>Git 版本可视化</strong>
+        <span>利用已有的 Git 同步基础设施，在应用内展示便签的版本历史 diff。竞品无此能力。</span>
+      </div>
+      <div class="item">
+        <strong>本地 AI 摘要</strong>
+        <span>集成本地小模型，自动为便签生成摘要/标签建议。差异化明显。</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 7. 信息来源 -->
+<section>
+  <h2><span class="num">7</span>信息来源</h2>
+  <ul class="source-list">
+    <li>[1] [行业报道] 2026待办软件综合测评：多场景办公适配度完整对比 — <a href="http://m.toutiao.com/group/7659627975326925364/" target="_blank">toutiao.com</a></li>
+    <li>[2] [行业报道] 2026备忘录软件TOP5榜单：高效人士必备精选 — <a href="http://m.toutiao.com/group/7591438939924283931/" target="_blank">toutiao.com</a></li>
+    <li>[3] [行业报道] 2026桌面便签软件推荐：5款Windows好用便签测评 — <a href="http://m.toutiao.com/group/7598491150088962606/" target="_blank">toutiao.com</a></li>
+    <li>[4] [行业报道] 2026待办便签软件前5强推荐：透明贴附/多标签分类/一键导出 — <a href="http://m.toutiao.com/group/7594741448516354579/" target="_blank">toutiao.com</a></li>
+    <li>[5] [行业报道] 2026高效率办公：三款桌面记事本便签工具评测 — <a href="http://m.toutiao.com/group/7602919944787673635/" target="_blank">toutiao.com</a></li>
+    <li>[6] [官方] 小黄条官网 — <a href="https://www.yynote.cn/" target="_blank">yynote.cn</a></li>
+    <li>[7] [百科] 敬业签百科 — <a href="https://m.baike.com/wiki/敬业签/11783488" target="_blank">baike.com</a></li>
+    <li>[8] [行业报道] 敬业签：灵活提醒规则搭配多端同步 — <a href="https://m.sohu.com/a/986012944_362225/" target="_blank">sohu.com</a></li>
+    <li>[9] [行业报道] 备忘录测评：多重提醒+云端同步实测 — <a href="http://m.toutiao.com/group/7660048638101488154/" target="_blank">toutiao.com</a></li>
+    <li>[10] [官方] Google Keep 功能介绍 — <a href="https://docs.feishu.cn/v/wiki/VmPbwzaF2i1KA0kUjaZc5LmCnYf/a2" target="_blank">feishu.cn/docs</a></li>
+    <li>[11] [行业报道] Google Keep 3.1.08 更新，加入重复提醒和标签功能 — <a href="http://m.toutiao.com/group/4136449701/" target="_blank">toutiao.com</a></li>
+    <li>[12] [知识库] Tie 项目 boundaries.md — 能力边界文档（内部）</li>
+    <li>[13] [知识库] Tie 项目 constraints.md — 约束文档（内部）</li>
+  </ul>
+  <p class="note">数据截至 2026年7月公开信息。竞品功能可能随版本更新变化，建议定期复核。信息来源以行业媒体报道为主（P2级），部分功能细节未经官方文档逐条确认，标记为参考性数据。</p>
+</section>
+
+</div>
+</body>
+</html>

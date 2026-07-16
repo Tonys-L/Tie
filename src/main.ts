@@ -1,7 +1,7 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { marked } from 'marked';
-import type { Note, Reminder } from './types';
+import type { Note, Reminder, SniffResult, Suggestion, AiConfig } from './types';
 import { COLORS, escapeHtml, localISO, repeatLabel } from './utils';
 import { initLocale, t, applyLocale, getLocaleTag } from './i18n';
 import './styles.css';
@@ -141,6 +141,7 @@ function renderNote(note: Note) {
         ).join('')}
       </div>
       <input type="range" class="opacity-slider" data-opacity min="0.3" max="1" step="0.05" value="${note.opacity}">
+      <button class="icon-btn ai-btn" data-ai-sniff title="${t('hub.aiAssistant')}" disabled><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v1.3h6V16.7c0-.8.4-1.5 1-2A7 7 0 0 0 12 2z"/></svg></button>
       <button class="icon-btn reminder-btn" data-reminder title="${t('note.setReminder')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></button>
 	      <button class="icon-btn archive-btn" data-archive title="${t('note.archive')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg></button>
 	      <button class="icon-btn del-btn" data-delete title="${t('note.delete')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg></button>
@@ -365,6 +366,7 @@ function setupNoteEvents(note: Note) {
       contentView.innerHTML = renderMarkdown(note.content);
       // 自动保存
       invoke('update_note_content', { id: note.id, content: note.content });
+      // checkbox 切换不触发嗅探（只是状态变化，内容主体未变）
       return;
     }
     // 拦截链接点击：在系统浏览器打开，不进入编辑模式
@@ -392,6 +394,8 @@ function setupNoteEvents(note: Note) {
     textarea.style.display = 'none';
     contentView.style.display = 'block';
     invoke('update_note_content', { id: note.id, content });
+    // 嗅探：失焦保存后异步识别时间关键词
+    sniffAfterSave(note);
   });
 
   // ---- 快捷键 ----
@@ -554,6 +558,9 @@ function setupNoteEvents(note: Note) {
     showReminderPanel(note, app);
   });
 
+  // ---- AI 手动嗅探 ----
+  setupAiSniffButton(note, app);
+
   // ---- 窗口拖拽 + 标题双击编辑 ----
   const titleBar = app.querySelector('[data-drag]') as HTMLElement;
   const titleText = app.querySelector('[data-title]') as HTMLElement;
@@ -692,6 +699,9 @@ function showReminderPanel(note: Note, app: HTMLElement) {
     });
   });
 
+  // AI 自然语言解析已移至便签保存后的自动嗅探气泡，此处仅保留手动表单
+  const reminderTitle = note.title || t('app.note');
+
   // 保存
   overlay.querySelector('[data-save-reminder]')!.addEventListener('click', async () => {
     const input = overlay.querySelector('[data-remind-at]') as HTMLInputElement;
@@ -701,7 +711,7 @@ function showReminderPanel(note: Note, app: HTMLElement) {
     try {
       await invoke('create_reminder', {
         noteId: note.id,
-        noteTitle: note.title || t('app.note'),
+        noteTitle: reminderTitle,
         remindAt,
         repeatType: selectedRepeat,
       });
@@ -759,6 +769,315 @@ async function loadReminders(noteId: string, container: HTMLElement) {
   } catch (e) {
     console.error('加载提醒失败:', e);
   }
+}
+
+// ============ AI 建议面板：便签保存后自动嗅探并给出建议 ============
+
+// 每个便签最近一次嗅探时间戳（noteId → ts），10 秒内不重复嗅探同一便签
+const sniffDebounceMap = new Map<string, number>();
+const sniffContentMap = new Map<string, string>();
+const SNIFF_DEBOUNCE_MS = 10_000;
+
+// 当前面板自动消失定时器
+let sniffPanelTimer: number | null = null;
+
+/**
+ * 初始化 AI 手动嗅探按钮：
+ * - 异步检查 AI 配置，未配置时保持置灰并提示
+ * - 已配置时启用按钮，点击触发 force 嗅探
+ * - 加载中按钮禁用并显示"⏳ 处理中..."
+ */
+function setupAiSniffButton(note: Note, app: HTMLElement): void {
+  const btn = app.querySelector('[data-ai-sniff]') as HTMLButtonElement;
+  if (!btn) return;
+
+  // 异步检查 AI 配置
+  invoke<AiConfig>('get_ai_config')
+    .then(config => {
+      if (config && config.api_key && config.api_key.length > 0) {
+        btn.disabled = false;
+        btn.title = t('hub.aiAssistant');
+      } else {
+        btn.disabled = true;
+        btn.title = t('hub.aiNotConfigured');
+      }
+    })
+    .catch(() => {
+      // 读取配置失败：保持置灰
+      btn.disabled = true;
+      btn.title = t('hub.aiNotConfigured');
+    });
+
+  btn.addEventListener('click', () => {
+    if (btn.disabled) return;
+    // 加载状态：禁止重复点击
+    btn.disabled = true;
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = `<span style="font-size:11px;">${t('hub.sniffLoading')}</span>`;
+
+    sniffAfterSave(note, true, (suggestions) => {
+      // 恢复按钮
+      btn.innerHTML = originalHTML;
+      // 重新检查配置状态以决定是否启用（配置可能在加载时已就绪）
+      invoke<AiConfig>('get_ai_config')
+        .then(config => {
+          btn.disabled = !(config && config.api_key && config.api_key.length > 0);
+        })
+        .catch(() => { btn.disabled = false; });
+
+      // 无建议时给一个轻提示
+      if (suggestions.length === 0) {
+        showSniffEmptyHint(app);
+      }
+    });
+  });
+}
+
+/**
+ * 嗅探无建议时的轻量提示（2 秒后自动消失）。
+ */
+function showSniffEmptyHint(app: HTMLElement): void {
+  const existing = app.querySelector('.sniff-empty-hint');
+  if (existing) existing.remove();
+  const hint = document.createElement('div');
+  hint.className = 'sniff-empty-hint';
+  hint.textContent = t('hub.sniffNoSuggestions');
+  app.appendChild(hint);
+  setTimeout(() => hint.remove(), 2000);
+}
+
+/**
+ * 便签保存后调用嗅探：异步、防抖、静默失败。
+ * 命中建议则显示右侧 AI 建议面板。
+ * 仅在内容变化时触发，避免无谓 AI 调用。
+ *
+ * force=true 时绕过防抖和内容变化检查（手动触发），
+ * 失败时通过可选回调通知调用方。
+ */
+function sniffAfterSave(note: Note, force: boolean = false, onDone?: (suggestions: Suggestion[]) => void): void {
+  if (!force) {
+    // 内容未变则跳过
+    const lastContent = sniffContentMap.get(note.id);
+    if (lastContent === note.content) return;
+    // 防抖：10 秒内不重复嗅探同一便签
+    const now = Date.now();
+    const last = sniffDebounceMap.get(note.id) || 0;
+    if (now - last < SNIFF_DEBOUNCE_MS) return;
+    sniffDebounceMap.set(note.id, now);
+    sniffContentMap.set(note.id, note.content);
+  }
+
+  // 嗅探完全异步，不阻塞保存流程；失败静默
+  invoke<Suggestion[]>('sniff_suggestions', { content: note.content })
+    .then(suggestions => {
+      if (suggestions && suggestions.length > 0) {
+        showSuggestionPanel(note, suggestions);
+      }
+      if (onDone) onDone(suggestions || []);
+    })
+    .catch(err => {
+      console.error('嗅探失败:', err);
+      if (onDone) onDone([]);
+    });
+}
+
+/**
+ * 在便签窗口右侧显示 AI 建议面板（半透明浮层，不占主编辑区）。
+ * 同一时间只保留一个面板；10 秒后自动消失。
+ */
+function showSuggestionPanel(note: Note, suggestions: Suggestion[]): void {
+  // 移除已有面板
+  const existing = document.querySelector('.sniff-panel');
+  if (existing) existing.remove();
+  if (sniffPanelTimer !== null) {
+    clearTimeout(sniffPanelTimer);
+    sniffPanelTimer = null;
+  }
+
+  const panel = document.createElement('div');
+  panel.className = 'sniff-panel';
+  panel.innerHTML = `
+    <div class="sniff-panel-header">
+      <span class="sniff-panel-title">${t('hub.aiSuggestions')}</span>
+      <button class="sniff-panel-close" data-panel-close title="${t('note.close')}">&times;</button>
+    </div>
+    <div class="sniff-panel-list">
+      ${suggestions.map((s, i) => `
+        <div class="sniff-item" data-item-index="${i}">
+          <div class="sniff-item-title">${escapeHtml(s.title)}</div>
+          <div class="sniff-item-desc">${escapeHtml(s.description)}</div>
+          <button class="sniff-item-exec" data-exec-index="${i}">${t('hub.execute')}</button>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  document.body.appendChild(panel);
+
+  const removePanel = () => {
+    panel.remove();
+    if (sniffPanelTimer !== null) {
+      clearTimeout(sniffPanelTimer);
+      sniffPanelTimer = null;
+    }
+  };
+
+  // 关闭按钮
+  panel.querySelector('[data-panel-close]')!.addEventListener('click', removePanel);
+
+  // 执行按钮分发
+  suggestions.forEach((suggestion, i) => {
+    const execBtn = panel.querySelector(`[data-exec-index="${i}"]`) as HTMLButtonElement;
+    execBtn.addEventListener('click', async () => {
+      const item = panel.querySelector(`[data-item-index="${i}"]`) as HTMLElement;
+      execBtn.disabled = true;
+      try {
+        await executeSuggestion(note, suggestion);
+        // 成功：该项变为绿色"已执行"状态，2 秒后面板消失
+        item.classList.add('executed');
+        item.innerHTML = `
+          <div class="sniff-item-title">${escapeHtml(suggestion.title)}</div>
+          <div class="sniff-item-done">${t('hub.executed')}</div>
+        `;
+        // 执行成功后不消失，用户可能还要执行其他建议
+      } catch (e) {
+        // 失败：该项显示红色错误提示，恢复按钮可点击
+        console.error('执行建议失败:', e);
+        item.classList.add('failed');
+        const errDiv = document.createElement('div');
+        errDiv.className = 'sniff-item-error';
+        errDiv.textContent = String(e);
+        // 避免重复追加错误提示
+        if (!item.querySelector('.sniff-item-error')) {
+          item.appendChild(errDiv);
+        }
+        execBtn.disabled = false;
+      }
+    });
+  });
+
+  // 不自动消失：只在用户点击关闭、再次分析、或关闭便签时消失
+  if (sniffPanelTimer !== null) {
+    clearTimeout(sniffPanelTimer);
+    sniffPanelTimer = null;
+  }
+}
+
+/**
+ * 根据 suggestion.type 分发执行建议。
+ * - reminder：调用 create_reminder，从 data 提取 start_time/title/repeat_type
+ *   - start_time 格式 "YYYY-MM-DD HH:mm" → ISO
+ *   - repeat_type === 'once' 映射为 'none'（后端要求）
+ *   - 标题优先用 data.title，兜底 note.title
+ * - todo_split：把字符串数组转为待办清单 Markdown，替换便签正文
+ * - tidy：用规整后的文本替换便签正文
+ * - style：用切换后的文本替换便签正文
+ * - tag_suggest：把推荐标签追加到便签（去重，domain 层兜底限制）
+ */
+async function executeSuggestion(note: Note, suggestion: Suggestion): Promise<void> {
+  switch (suggestion.type) {
+    case 'reminder':
+      await executeReminder(note, suggestion.data as SniffResult);
+      break;
+    case 'todo_split':
+      await executeTodoSplit(note, suggestion.data as string[]);
+      break;
+    case 'tidy':
+      await executeTidy(note, suggestion.data as string);
+      break;
+    case 'style':
+      await executeStyle(note, suggestion.data as { style_type: string; styled_text: string });
+      break;
+    case 'tag_suggest':
+      await executeTagSuggest(note, suggestion.data as string[]);
+      break;
+    default:
+      throw new Error(`${t('hub.executeFailed')}: ${suggestion.type}`);
+  }
+}
+
+/**
+ * 更新便签正文：同步内存/textarea/查看区/后端。
+ * 用于 todo_split/tidy/style 三种建议的正文替换。
+ */
+function updateNoteContent(note: Note, newContent: string): void {
+  note.content = newContent;
+  const textarea = document.querySelector('[data-content]') as HTMLTextAreaElement | null;
+  const contentView = document.querySelector('[data-content-view]') as HTMLElement | null;
+  if (textarea) textarea.value = newContent;
+  if (contentView) contentView.innerHTML = renderMarkdown(newContent);
+  invoke('update_note_content', { id: note.id, content: newContent });
+}
+
+/**
+ * reminder：调用 create_reminder 创建提醒。
+ * - start_time 格式 "YYYY-MM-DD HH:mm" → ISO
+ * - repeat_type === 'once' 映射为 'none'（后端要求）
+ * - 标题优先用 data.title，兜底 note.title
+ */
+async function executeReminder(note: Note, data: SniffResult): Promise<void> {
+  const dt = new Date(data.start_time.replace(' ', 'T'));
+  if (isNaN(dt.getTime())) {
+    throw new Error('invalid start_time: ' + data.start_time);
+  }
+  const noteTitle = data.title || note.title || t('app.note');
+  const repeatType = data.repeat_type === 'once' ? 'none' : data.repeat_type;
+  await invoke('create_reminder', {
+    noteId: note.id,
+    noteTitle,
+    remindAt: dt.toISOString(),
+    repeatType,
+  });
+}
+
+/**
+ * todo_split：把字符串数组转为 GFM 待办清单 Markdown，替换便签正文。
+ */
+async function executeTodoSplit(note: Note, todos: string[]): Promise<void> {
+  if (!Array.isArray(todos) || todos.length === 0) {
+    throw new Error('empty todos');
+  }
+  const newContent = todos.map(todo => `- [ ] ${todo}`).join('\n');
+  updateNoteContent(note, newContent);
+}
+
+/**
+ * tidy：用规整后的文本替换便签正文。
+ */
+async function executeTidy(note: Note, tidyText: string): Promise<void> {
+  if (typeof tidyText !== 'string' || !tidyText.trim()) {
+    throw new Error('empty tidy text');
+  }
+  updateNoteContent(note, tidyText);
+}
+
+/**
+ * style：用切换文风后的文本替换便签正文。
+ */
+async function executeStyle(note: Note, data: { style_type: string; styled_text: string }): Promise<void> {
+  if (!data || !data.styled_text || !data.styled_text.trim()) {
+    throw new Error('empty styled text');
+  }
+  updateNoteContent(note, data.styled_text);
+}
+
+/**
+ * tag_suggest：把推荐标签追加到便签（前端去重，domain 层兜底限制数量/长度）。
+ */
+async function executeTagSuggest(note: Note, tags: string[]): Promise<void> {
+  if (!Array.isArray(tags) || tags.length === 0) {
+    throw new Error('empty tags');
+  }
+  // 前端去重：过滤掉便签已有的标签
+  const existing = new Set(note.tags);
+  const newTags = tags.filter(tag => tag && !existing.has(tag));
+  if (newTags.length === 0) {
+    // 全部已存在：无需调用后端，视为成功
+    return;
+  }
+  const merged = [...note.tags, ...newTags];
+  note.tags = merged;
+  refreshTagBar(note);
+  await invoke('update_note_tags', { id: note.id, tags: merged });
 }
 
 // ============ 删除确认弹窗 ============

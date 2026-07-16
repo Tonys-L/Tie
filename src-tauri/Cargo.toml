@@ -1,6 +1,6 @@
 [package]
 name = "tie"
-version = "0.1.0"
+version = "0.5.0"
 description = "Tie"
 authors = ["you"]
 edition = "2021"
@@ -26,6 +26,11 @@ log = "0.4"
 tauri-plugin-shell = "2.3.5"
 tauri-plugin-autostart = "2"
 tyme4rs = "1"
+reqwest = { version = "0.12", features = ["json"] }
+dirs = "5"
+
+[dev-dependencies]
+mockito = "1"
 
 [profile.release]
 panic = "abort"
