@@ -51,6 +51,7 @@ impl Database {
                 height      INTEGER NOT NULL DEFAULT 220,
                 is_pinned   INTEGER NOT NULL DEFAULT 0,
                 is_archived INTEGER NOT NULL DEFAULT 0,
+                tags        TEXT NOT NULL DEFAULT '[]',
                 created_at  TEXT NOT NULL,
                 updated_at  TEXT NOT NULL
             );
@@ -118,6 +119,29 @@ impl Database {
 
         if has_repeat_config {
             conn.execute_batch("ALTER TABLE reminders DROP COLUMN repeat_config;")
+                .map_err(|e| e.to_string())?;
+        }
+
+        // 已有数据库升级：检查 notes 表是否有 tags 列，没有则添加
+        let has_tags: bool = {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(notes)")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|e| e.to_string())?;
+            let mut found = false;
+            for row in rows {
+                if row.map_err(|e| e.to_string())? == "tags" {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+
+        if !has_tags {
+            conn.execute_batch("ALTER TABLE notes ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';")
                 .map_err(|e| e.to_string())?;
         }
 

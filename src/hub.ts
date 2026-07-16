@@ -2,12 +2,21 @@ import { open } from '@tauri-apps/plugin-shell';
 import { enable as enableAutoStart, disable as disableAutoStart, isEnabled as isAutoStartEnabled } from '@tauri-apps/plugin-autostart';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type { Reminder, ShortcutConfig } from './types';
 import * as api from './api';
 import { COLOR_MAP, escapeHtml, formatDate, localISO, quickDate, repeatLabel } from './utils';
 import { initLocale, t, applyLocale, getLocale, setLocale, getLocaleTag } from './i18n';
 
 initLocale();
+
+// ===== 通知点击 → 激活对应便签 =====
+listen('tauri://notification', (event: any) => {
+  const noteId = event?.payload?.data?.note_id || event?.payload?.note_id;
+  if (noteId) {
+    invoke('activate_note_by_id', { noteId }).catch(err => console.error('激活便签失败:', err));
+  }
+});
 
 // ===== 主题 =====
 const savedTheme = localStorage.getItem('theme') || 'light';
@@ -41,6 +50,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
     const page = document.getElementById('page-' + item.getAttribute('data-page'));
     if (page) page.classList.add('active');
     if (item.getAttribute('data-page') === 'notes') loadNotes();
+    if (item.getAttribute('data-page') === 'calendar') loadCalendar();
     if (item.getAttribute('data-page') === 'general') loadGeneralSettings();
     if (item.getAttribute('data-page') === 'sync') loadSyncConfig();
     if (item.getAttribute('data-page') === 'shortcuts') loadShortcutConfig();
@@ -52,21 +62,55 @@ let currentTab = 'active';
 let activeNotes: any[] = [];
 let archivedNotes: any[] = [];
 let searchQuery = '';
+let searchResults: any[] | null = null; // 后端搜索结果缓存
+let selectedTag: string | null = null;
+let sortBy: 'updated' | 'created' | 'title' = 'updated';
 const listEl = document.getElementById('list')!;
 const searchInput = document.getElementById('search') as HTMLInputElement;
+const sortSelect = document.getElementById('sort-select') as HTMLSelectElement;
+const tagListEl = document.getElementById('tag-list')!;
 
 document.querySelectorAll('.mgr-tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.mgr-tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     currentTab = tab.getAttribute('data-tab') || 'active';
-    if (searchInput) { searchInput.value = ''; searchQuery = ''; }
+    if (searchInput) { searchInput.value = ''; searchQuery = ''; searchResults = null; }
     renderList();
   });
 });
 
+// 搜索防抖
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
 searchInput?.addEventListener('input', () => {
-  searchQuery = searchInput.value.toLowerCase().trim();
+  searchQuery = searchInput.value.trim();
+  if (searchTimer) clearTimeout(searchTimer);
+  if (!searchQuery) {
+    searchResults = null;
+    renderList();
+    return;
+  }
+  searchTimer = setTimeout(async () => {
+    try {
+      const results = await api.searchNotes(searchQuery);
+      // 补充提醒数量缓存
+      await Promise.allSettled(results.map(async (n: any) => {
+        if (n._reminderCount === undefined) {
+          try {
+            const reminders = await api.getReminders(n.id);
+            n._reminderCount = (reminders as any[]).filter(r => r.status === 'pending').length;
+          } catch { n._reminderCount = 0; }
+        }
+      }));
+      searchResults = results;
+      renderList();
+    } catch(e) { console.error('搜索失败:', e); }
+  }, 300);
+});
+
+// 排序选择
+sortSelect?.addEventListener('change', () => {
+  sortBy = sortSelect.value as 'updated' | 'created' | 'title';
   renderList();
 });
 
@@ -75,6 +119,18 @@ async function loadNotes() {
     const [active, archived] = await Promise.all([api.getAllNotes(), api.getArchivedNotes()]);
     activeNotes = active as any[];
     archivedNotes = archived as any[];
+    // 保留已有搜索结果的提醒缓存
+    if (searchResults) {
+      const cached = new Map<string, number>();
+      [...activeNotes, ...archivedNotes].forEach(n => {
+        if (n._reminderCount !== undefined) cached.set(n.id, n._reminderCount);
+      });
+      searchResults.forEach(n => {
+        if (n._reminderCount === undefined && cached.has(n.id)) {
+          n._reminderCount = cached.get(n.id);
+        }
+      });
+    }
     // 并行加载每条便签的提醒数量
     const allNotes = [...activeNotes, ...archivedNotes];
     await Promise.allSettled(allNotes.map(async (n: any) => {
@@ -89,32 +145,75 @@ async function loadNotes() {
     if (ca) ca.textContent = String(activeNotes.length);
     if (cb) cb.textContent = String(archivedNotes.length);
     if (cr) cr.textContent = String([...activeNotes, ...archivedNotes].filter(n => n._reminderCount > 0).length);
+    renderTagSidebar();
     renderList();
   } catch(e) { console.error('加载失败:', e); }
+}
+
+// ===== 标签侧边栏 =====
+
+function renderTagSidebar() {
+  const allNotes = [...activeNotes, ...archivedNotes];
+  const tagMap = new Map<string, number>();
+  allNotes.forEach(n => {
+    (n.tags || []).forEach((tag: string) => {
+      tagMap.set(tag, (tagMap.get(tag) || 0) + 1);
+    });
+  });
+  if (tagMap.size === 0) {
+    tagListEl.innerHTML = `<div class="tag-sidebar-empty">${t('hub.noTags')}</div>`;
+    return;
+  }
+  // 按便签数量降序排列
+  const sorted = [...tagMap.entries()].sort((a, b) => b[1] - a[1]);
+  tagListEl.innerHTML = sorted.map(([tag, count]) =>
+    `<div class="tag-sidebar-item ${selectedTag === tag ? 'active' : ''}" data-tag-filter="${escapeHtml(tag)}"><span>${escapeHtml(tag)}</span><span class="tag-count">${count}</span></div>`
+  ).join('');
+  // 标签筛选点击
+  tagListEl.querySelectorAll('[data-tag-filter]').forEach(item => {
+    item.addEventListener('click', () => {
+      const tag = (item as HTMLElement).dataset.tagFilter!;
+      selectedTag = selectedTag === tag ? null : tag;
+      renderTagSidebar();
+      renderList();
+    });
+  });
 }
 
 function renderList() {
   let notes: any[];
   let isSearchMode = false;
-  if (searchQuery) {
+  if (searchQuery && searchResults) {
     isSearchMode = true;
-    notes = [...activeNotes, ...archivedNotes].filter(n =>
-      (n.title || '').toLowerCase().includes(searchQuery) ||
-      (n.content || '').toLowerCase().includes(searchQuery)
-    );
+    notes = searchResults;
   } else if (currentTab === 'reminders') {
     notes = [...activeNotes, ...archivedNotes].filter(n => (n._reminderCount || 0) > 0);
   } else {
     notes = currentTab === 'active' ? activeNotes : archivedNotes;
   }
+  // 标签筛选
+  if (selectedTag) {
+    notes = notes.filter(n => (n.tags || []).includes(selectedTag));
+  }
   if (notes.length === 0) {
     const emptyText = searchQuery ? t('hub.noMatch')
+      : selectedTag ? t('hub.noMatch')
       : currentTab === 'reminders' ? t('hub.noReminders')
       : currentTab === 'active' ? t('hub.noActive') : t('hub.noArchived');
     listEl.innerHTML = `<div class="empty-state"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>${emptyText}</span></div>`;
     return;
   }
-  const sorted = [...notes].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+  // 排序
+  const sorted = [...notes].sort((a, b) => {
+    if (sortBy === 'title') {
+      const ta = (a.title || t('hub.noTitle')).toLowerCase();
+      const tb = (b.title || t('hub.noTitle')).toLowerCase();
+      return ta.localeCompare(tb);
+    } else if (sortBy === 'created') {
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    }
+    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+  });
   listEl.innerHTML = sorted.map(n => {
     const color = COLOR_MAP[n.color] || COLOR_MAP.amber;
     const title = n.title || t('hub.noTitle');
@@ -123,11 +222,14 @@ function renderList() {
     const showTag = isSearchMode || currentTab === 'reminders';
     const tag = showTag ? (isArchived ? `<span class="note-tag archived">${t('hub.archived')}</span>` : `<span class="note-tag active">${t('hub.activeNotes')}</span>`) : '';
     const dateStr = formatDate(n.updated_at);
+    const tagsHtml = (n.tags && n.tags.length > 0)
+      ? `<div class="note-tags">${n.tags.slice(0, 3).map((tg: string) => `<span class="note-tag-pill">${escapeHtml(tg)}</span>`).join('')}${n.tags.length > 3 ? `<span class="note-tag-pill">+${n.tags.length - 3}</span>` : ''}</div>`
+      : '';
     const actionBtn = isArchived
 	      ? `<button class="act-btn restore" data-restore="${n.id}" title="${t('hub.restore')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button>`
 	      : `<button class="act-btn reminder" data-reminder="${n.id}" data-title="${escapeHtml(title)}" title="${t('hub.reminders')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></button><button class="act-btn archive" data-archive="${n.id}" title="${t('note.archive')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg></button>`;
     const reminderBadge = n._reminderCount > 0 ? `<span class="reminder-badge">${n._reminderCount}</span>` : '';
-    return `<div class="note-item" data-id="${n.id}"><div class="note-color" style="background:${color}"></div><div class="note-text"><div class="note-title">${escapeHtml(title)} ${tag}</div><div class="note-preview">${escapeHtml(preview)}</div></div>${reminderBadge}<span class="note-date">${dateStr}</span><div class="note-actions">${actionBtn}<button class="act-btn delete" data-delete="${n.id}" title="${t('note.delete')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button></div></div>`;
+    return `<div class="note-item" data-id="${n.id}"><div class="note-color" style="background:${color}"></div><div class="note-text"><div class="note-title">${escapeHtml(title)} ${tag}</div><div class="note-preview">${escapeHtml(preview)}</div>${tagsHtml}</div>${reminderBadge}<span class="note-date">${dateStr}</span><div class="note-actions">${actionBtn}<button class="act-btn delete" data-delete="${n.id}" title="${t('note.delete')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button></div></div>`;
   }).join('');
 }
 
@@ -303,7 +405,16 @@ async function loadSyncConfig() {
 
   const gitInstalled = await api.checkGit();
   const gitEl = document.getElementById('git-status')!;
-  if (gitInstalled) { gitEl.className = 'status-card ok'; document.getElementById('git-status-text')!.textContent = t('hub.gitInstalled'); }
+  if (gitInstalled) {
+    gitEl.className = 'status-card ok';
+    try {
+      const config = await api.getSyncConfig();
+      const branch = config.branch || 'main';
+      document.getElementById('git-status-text')!.textContent = `${t('hub.gitInstalled')} [${branch}]`;
+    } catch {
+      document.getElementById('git-status-text')!.textContent = t('hub.gitInstalled');
+    }
+  }
   else { gitEl.className = 'status-card err'; document.getElementById('git-status-text')!.textContent = t('hub.gitNotInstalled'); }
   (gitEl as HTMLElement).style.display = 'flex';
 
@@ -346,7 +457,8 @@ async function loadSyncConfig() {
       await api.saveSyncConfig(getSyncConfig());
       const result = await api.syncNotes() as string;
       console.log('[同步] 结果:', result);
-      showSyncStatus(result, 'ok');
+      const branch = (document.getElementById('branch') as HTMLInputElement)?.value || 'main';
+      showSyncStatus(`${result} [${branch}]`, 'ok');
     } catch (e: any) {
       console.error('[同步] 失败:', e);
       const errMsg = String(e);
@@ -461,6 +573,329 @@ async function loadShortcutConfig() {
     (document.getElementById('shortcut-new-note') as HTMLInputElement).value = 'ctrl+shift+n';
     (document.getElementById('shortcut-show-all') as HTMLInputElement).value = 'ctrl+shift+s';
   });
+}
+
+// ===== 日历视图 =====
+let calLoaded = false;
+let calYear = new Date().getFullYear();
+let calMonth = new Date().getMonth() + 1;
+let calReminders: Reminder[] = [];
+let calSelectedDate: string | null = null;
+let calView: 'month' | 'year' = 'month';
+let calLunarMap = new Map<number, string>();
+let calNoteActivityDays = new Set<number>();
+let calCreateRepeat = 'none';
+
+async function loadCalendar() {
+  if (!calLoaded) {
+    calLoaded = true;
+    document.getElementById('cal-prev')?.addEventListener('click', () => {
+      if (calView === 'year') {
+        calYear--;
+      } else {
+        if (calMonth === 1) { calMonth = 12; calYear--; } else calMonth--;
+        calSelectedDate = null;
+      }
+      renderCalendar();
+    });
+    document.getElementById('cal-next')?.addEventListener('click', () => {
+      if (calView === 'year') {
+        calYear++;
+      } else {
+        if (calMonth === 12) { calMonth = 1; calYear++; } else calMonth++;
+        calSelectedDate = null;
+      }
+      renderCalendar();
+    });
+    document.querySelectorAll('.cal-view-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const v = (btn as HTMLElement).dataset.view as 'month' | 'year';
+        calView = v;
+        document.querySelectorAll('.cal-view-btn').forEach(b => b.classList.toggle('active', b === btn));
+        renderCalendar();
+      });
+    });
+    document.getElementById('cal-modal-cancel')?.addEventListener('click', closeCreateReminderModal);
+    document.getElementById('cal-modal-create')?.addEventListener('click', createReminderFromCalendar);
+  }
+  await renderCalendar();
+}
+
+async function renderCalendar() {
+  const titleEl = document.getElementById('cal-title');
+  const monthView = document.getElementById('cal-month-view');
+  const yearView = document.getElementById('cal-year-view');
+  if (calView === 'year') {
+    if (titleEl) titleEl.textContent = getLocale() === 'zh' ? `${calYear}年` : `${calYear}`;
+    if (monthView) monthView.style.display = 'none';
+    if (yearView) yearView.style.display = 'block';
+    await renderYearView();
+  } else {
+    if (titleEl) titleEl.textContent = getLocale() === 'zh' ? `${calYear}年${calMonth}月` : `${calMonth}/${calYear}`;
+    if (monthView) monthView.style.display = 'flex';
+    if (yearView) yearView.style.display = 'none';
+    await renderMonthView();
+  }
+}
+
+async function renderMonthView() {
+  const weekdaysEl = document.getElementById('cal-weekdays');
+  if (weekdaysEl) {
+    const isZh = getLocale() === 'zh';
+    const names = isZh ? ['日','一','二','三','四','五','六'] : ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    weekdaysEl.innerHTML = names.map(n => `<span>${n}</span>`).join('');
+  }
+
+  // 并行加载提醒、农历、便签活动
+  try {
+    const [reminders, lunarDates, noteDays] = await Promise.all([
+      api.getRemindersByMonth(calYear, calMonth),
+      api.getLunarDates(calYear, calMonth),
+      api.getNotesActivityByMonth(calYear, calMonth),
+    ]);
+    calReminders = reminders;
+    calLunarMap = new Map(lunarDates.map(d => [d.day, d.lunar_text]));
+    calNoteActivityDays = new Set(noteDays);
+  } catch (e) {
+    console.error('加载日历数据失败:', e);
+    calReminders = [];
+    calLunarMap = new Map();
+    calNoteActivityDays = new Set();
+  }
+
+  const remindersByDay = new Map<number, Reminder[]>();
+  calReminders.forEach(r => {
+    const d = new Date(r.remind_at);
+    if (d.getFullYear() === calYear && d.getMonth() + 1 === calMonth) {
+      const day = d.getDate();
+      if (!remindersByDay.has(day)) remindersByDay.set(day, []);
+      remindersByDay.get(day)!.push(r);
+    }
+  });
+
+  const gridEl = document.getElementById('cal-grid');
+  if (!gridEl) return;
+
+  const startWeekday = new Date(calYear, calMonth - 1, 1).getDay();
+  const daysInMonth = new Date(calYear, calMonth, 0).getDate();
+  const today = new Date();
+  const isCurrentMonth = today.getFullYear() === calYear && today.getMonth() + 1 === calMonth;
+
+  // 本周范围
+  const dow = today.getDay();
+  const weekStart = new Date(today); weekStart.setDate(today.getDate() - dow); weekStart.setHours(0,0,0,0);
+  const weekEnd = new Date(weekStart); weekEnd.setDate(weekStart.getDate() + 6); weekEnd.setHours(23,59,59,999);
+
+  let html = '';
+  const prevMonthDays = new Date(calYear, calMonth - 1, 0).getDate();
+  for (let i = startWeekday - 1; i >= 0; i--) {
+    html += `<div class="cal-day other-month"><div class="cal-day-top"><span class="cal-day-num">${prevMonthDays - i}</span></div></div>`;
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    const isToday = isCurrentMonth && d === today.getDate();
+    const isSelected = calSelectedDate === `${calYear}-${calMonth}-${d}`;
+    const dateObj = new Date(calYear, calMonth - 1, d);
+    const isThisWeek = dateObj >= weekStart && dateObj <= weekEnd;
+    const dayReminders = remindersByDay.get(d) || [];
+    const lunarText = calLunarMap.get(d) || '';
+    const hasNote = calNoteActivityDays.has(d);
+
+    const remindersHtml = dayReminders.slice(0, 2).map(r => {
+      const time = new Date(r.remind_at).toLocaleTimeString(getLocaleTag(), { hour: '2-digit', minute: '2-digit' });
+      const status = r.status || 'pending';
+      return `<div class="cal-day-reminder ${status}">${time} ${escapeHtml(r.note_title)}</div>`;
+    }).join('') + (dayReminders.length > 2 ? `<div class="cal-day-more">+${dayReminders.length - 2}</div>` : '');
+
+    html += `<div class="cal-day${isToday ? ' today' : ''}${isThisWeek ? ' this-week' : ''}${isSelected ? ' selected' : ''}" data-day="${d}">
+      <div class="cal-day-top"><span class="cal-day-num">${d}</span><span class="cal-day-lunar">${lunarText}</span></div>
+      <div class="cal-day-reminders">${remindersHtml}</div>
+      ${hasNote ? '<div class="cal-day-note-dot"></div>' : ''}
+    </div>`;
+  }
+  const remaining = 42 - (startWeekday + daysInMonth);
+  for (let d = 1; d <= remaining; d++) {
+    html += `<div class="cal-day other-month"><div class="cal-day-top"><span class="cal-day-num">${d}</span></div></div>`;
+  }
+  gridEl.innerHTML = html;
+
+  gridEl.querySelectorAll('.cal-day[data-day]').forEach(el => {
+    el.addEventListener('click', () => {
+      const day = parseInt((el as HTMLElement).dataset.day!);
+      calSelectedDate = `${calYear}-${calMonth}-${day}`;
+      renderMonthView();
+      showDayDetail(day);
+    });
+  });
+
+  if (calSelectedDate) {
+    const day = parseInt(calSelectedDate.split('-')[2]);
+    showDayDetail(day);
+  }
+}
+
+async function renderYearView() {
+  const gridEl = document.getElementById('cal-year-grid');
+  if (!gridEl) return;
+
+  // 并行加载全年提醒
+  const monthData = await Promise.all(
+    Array.from({ length: 12 }, (_, i) =>
+      api.getRemindersByMonth(calYear, i + 1).catch(() => [])
+    )
+  );
+
+  const today = new Date();
+  let html = '';
+  for (let m = 1; m <= 12; m++) {
+    const reminders = monthData[m - 1];
+    const reminderDays = new Set<number>();
+    reminders.forEach(r => {
+      const d = new Date(r.remind_at);
+      if (d.getFullYear() === calYear && d.getMonth() + 1 === m) reminderDays.add(d.getDate());
+    });
+    const startWd = new Date(calYear, m - 1, 1).getDay();
+    const daysInM = new Date(calYear, m, 0).getDate();
+    const isCurrentMonth = today.getFullYear() === calYear && today.getMonth() + 1 === m;
+
+    let daysHtml = '';
+    for (let i = 0; i < startWd; i++) daysHtml += '<div class="cal-year-month-day"></div>';
+    for (let d = 1; d <= daysInM; d++) {
+      const isToday = isCurrentMonth && d === today.getDate();
+      const hasR = reminderDays.has(d);
+      daysHtml += `<div class="cal-year-month-day${isToday ? ' today' : ''}${hasR ? ' has-reminder' : ''}">${d}</div>`;
+    }
+
+    html += `<div class="cal-year-month" data-month="${m}">
+      <div class="cal-year-month-title">${getLocale() === 'zh' ? `${m}月` : monthNamesEn[m - 1]}</div>
+      <div class="cal-year-month-grid">${daysHtml}</div>
+    </div>`;
+  }
+  gridEl.innerHTML = html;
+
+  gridEl.querySelectorAll('.cal-year-month').forEach(el => {
+    el.addEventListener('click', () => {
+      calMonth = parseInt((el as HTMLElement).dataset.month!);
+      calView = 'month';
+      document.querySelectorAll('.cal-view-btn').forEach(b => b.classList.toggle('active', (b as HTMLElement).dataset.view === 'month'));
+      renderCalendar();
+    });
+  });
+}
+
+const monthNamesEn = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function showDayDetail(day: number) {
+  const detailEl = document.getElementById('cal-detail');
+  if (!detailEl) return;
+  const dayReminders = calReminders.filter(r => {
+    const d = new Date(r.remind_at);
+    return d.getDate() === day && d.getMonth() + 1 === calMonth && d.getFullYear() === calYear;
+  });
+  const lunarText = calLunarMap.get(day) || '';
+  const dateHeader = getLocale() === 'zh' ? `${calMonth}/${day} ${lunarText}` : `${calMonth}/${day}`;
+  if (dayReminders.length === 0) {
+    detailEl.innerHTML = `<div class="cal-detail-title">${dateHeader}</div><div class="cal-empty">${t('hub.noRemindersOnDay')}</div>`;
+  } else {
+    const items = dayReminders.map(r => {
+      const dt = new Date(r.remind_at).toLocaleTimeString(getLocaleTag(), { hour: '2-digit', minute: '2-digit' });
+      const repeat = r.repeat_type !== 'once' && r.repeat_type !== 'none' ? ` · ${repeatLabel(r.repeat_type)}` : '';
+      const status = r.status || 'pending';
+      return `<div class="cal-reminder-item"><span class="cal-reminder-status ${status}"></span><span class="cal-reminder-time">${dt}</span><span class="cal-reminder-title">${escapeHtml(r.note_title)}</span><span class="cal-reminder-repeat">${repeat}</span></div>`;
+    }).join('');
+    detailEl.innerHTML = `<div class="cal-detail-title">${dateHeader}</div>${items}`;
+  }
+  // 添加"创建提醒"按钮
+  const createBtn = document.createElement('button');
+  createBtn.className = 'btn-secondary cal-create-btn';
+  createBtn.style.cssText = 'margin-top:8px;padding:4px 12px;font-size:11px;width:100%;';
+  createBtn.textContent = '+ ' + t('hub.createReminder');
+  createBtn.addEventListener('click', () => openCreateReminderModal(day));
+  detailEl.appendChild(createBtn);
+  detailEl.classList.add('show');
+}
+
+async function openCreateReminderModal(day: number) {
+  const modal = document.getElementById('cal-create-modal') as HTMLElement;
+  const dateEl = document.getElementById('cal-modal-date');
+  const selectEl = document.getElementById('cal-modal-note-select') as HTMLSelectElement;
+  const timeEl = document.getElementById('cal-modal-time') as HTMLInputElement;
+  const repeatsEl = document.getElementById('cal-modal-repeats');
+
+  if (dateEl) {
+    const lunar = calLunarMap.get(day) || '';
+    dateEl.textContent = getLocale() === 'zh' ? `${calYear}年${calMonth}月${day}日 ${lunar}` : `${calYear}-${calMonth}-${day}`;
+  }
+
+  // 加载便签列表
+  try {
+    const notes = await api.getAllNotes();
+    if (selectEl) {
+      selectEl.innerHTML = notes.map(n => `<option value="${n.id}">${escapeHtml(n.title)}</option>`).join('');
+    }
+  } catch (e) {
+    console.error('加载便签列表失败:', e);
+  }
+
+  // 默认时间
+  const pad = (n: number) => String(n).padStart(2, '0');
+  if (timeEl) {
+    timeEl.value = `${calYear}-${pad(calMonth)}-${pad(day)}T09:00`;
+  }
+
+  // 重复类型按钮
+  calCreateRepeat = 'none';
+  if (repeatsEl) {
+    const types = [
+      { key: 'none', label: t('note.once') },
+      { key: 'daily', label: t('note.daily') },
+      { key: 'weekly', label: t('note.weekly') },
+      { key: 'monthly', label: t('note.monthly') },
+      { key: 'lunar_monthly', label: t('note.lunarMonthly') },
+    ];
+    repeatsEl.innerHTML = types.map(tp => `<button class="rbtn${tp.key === 'none' ? ' active' : ''}" data-repeat="${tp.key}">${tp.label}</button>`).join('');
+    repeatsEl.querySelectorAll('.rbtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        calCreateRepeat = (btn as HTMLElement).dataset.repeat!;
+        repeatsEl.querySelectorAll('.rbtn').forEach(b => b.classList.toggle('active', b === btn));
+      });
+    });
+  }
+
+  modal.style.display = 'flex';
+}
+
+function closeCreateReminderModal() {
+  const modal = document.getElementById('cal-create-modal') as HTMLElement;
+  modal.style.display = 'none';
+}
+
+async function createReminderFromCalendar() {
+  const selectEl = document.getElementById('cal-modal-note-select') as HTMLSelectElement;
+  const timeEl = document.getElementById('cal-modal-time') as HTMLInputElement;
+  const noteId = selectEl?.value;
+  const timeVal = timeEl?.value;
+
+  if (!noteId) return;
+  if (!timeVal) return;
+
+  // datetime-local → ISO
+  const dt = new Date(timeVal);
+  const iso = dt.toISOString();
+
+  try {
+    // 获取便签标题
+    const note = await api.getNote(noteId);
+    await api.createReminder(noteId, note.title, iso, calCreateRepeat);
+    closeCreateReminderModal();
+    await renderMonthView();
+    if (calSelectedDate) {
+      const day = parseInt(calSelectedDate.split('-')[2]);
+      showDayDetail(day);
+    }
+  } catch (e) {
+    console.error('创建提醒失败:', e);
+    alert('创建提醒失败: ' + e);
+  }
 }
 
 // ===== 通用设置 =====

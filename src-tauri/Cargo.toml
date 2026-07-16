@@ -25,6 +25,7 @@ tokio = { version = "1", features = ["full"] }
 log = "0.4"
 tauri-plugin-shell = "2.3.5"
 tauri-plugin-autostart = "2"
+tyme4rs = "1"
 
 [profile.release]
 panic = "abort"

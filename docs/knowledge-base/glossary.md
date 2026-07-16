@@ -103,6 +103,18 @@
 
 ## P
 
+### 标签 (Tag)
+
+便签的自定义分类标记。每张便签最多 10 个标签，单标签最长 20 字符。存储为 JSON 数组（`Vec<String>`），在 SQLite 中以 TEXT 列 `tags` 存储，在 JSON 同步文件中随 Note 序列化。标签支持去重和自动 trim。
+
+---
+
+### 搜索 (Search)
+
+跨活跃+归档便签的全文搜索能力。当前使用 SQLite LIKE 查询匹配标题、内容和标签字段。搜索结果按置顶优先 + 更新时间倒序排列。
+
+---
+
 ### 置顶 (Pin)
 
 将便签窗口设为始终置顶（`always_on_top`）。`is_pinned` 字段控制，通过 `set_always_on_top` 同步到窗口。
@@ -113,7 +125,7 @@
 
 ### 提醒 (Reminder)
 
-关联到便签的时间触发器。支持一次性（Once）、每日（Daily）、每周（Weekly）、每月（Monthly）四种重复类型。状态机：Pending → Triggered → Done/Cancelled。
+关联到便签的时间触发器。支持一次性（Once）、每日（Daily）、每周（Weekly）、每月（Monthly）、农历每月（LunarMonthly）五种重复类型。状态机：Pending → Triggered → Done/Cancelled。Monthly 按精确日历月计算（月末溢出取目标月最后一天）；LunarMonthly 按农历月计算（domain 层返回 None，由 application 层调用 tyme4rs 库计算）。
 
 ### 仓储 trait (Repository Trait)
 
@@ -155,3 +167,4 @@ SQLite 作为本地运行时存储（事务/并发安全），JSON 文件作为 
 | 2026-07-08 | 初始版本 | — | — |
 | 2026-07-09 | 按模板重构，改为字母排序，补充缩写表 | — | — |
 | 2026-07-13 | 更新 AppState（5 成员）和调度器（事件驱动）词条 | — | #REFACTOR-008 |
+| 2026-07-15 | 新增标签（Tag）和搜索（Search）术语 | — | #FEAT-002 |

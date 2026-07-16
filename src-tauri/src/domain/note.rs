@@ -18,9 +18,15 @@ pub struct Note {
     pub window_state: WindowState,
     pub is_pinned: bool,
     pub is_archived: bool,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
 }
+
+/// 标签业务规则常量
+const MAX_TAGS: usize = 10;
+const MAX_TAG_LEN: usize = 20;
 
 impl Note {
     /// 创建新便签
@@ -35,6 +41,7 @@ impl Note {
             window_state: WindowState::default(),
             is_pinned: false,
             is_archived: false,
+            tags: Vec::new(),
             created_at: now.clone(),
             updated_at: now,
         }
@@ -96,6 +103,40 @@ impl Note {
         self.window_state.width = width;
         self.window_state.height = height;
         self.touch();
+    }
+
+    /// 全量设置标签（自动 trim、去重、限制数量和长度）
+    pub fn set_tags(&mut self, tags: Vec<String>) {
+        let mut seen = std::collections::HashSet::new();
+        self.tags = tags
+            .into_iter()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty() && t.len() <= MAX_TAG_LEN)
+            .filter(|t| seen.insert(t.clone()))
+            .take(MAX_TAGS)
+            .collect();
+        self.touch();
+    }
+
+    /// 添加单个标签（自动 trim、去重）
+    pub fn add_tag(&mut self, tag: String) {
+        let tag = tag.trim().to_string();
+        if tag.is_empty() || tag.len() > MAX_TAG_LEN {
+            return;
+        }
+        if !self.tags.contains(&tag) && self.tags.len() < MAX_TAGS {
+            self.tags.push(tag);
+            self.touch();
+        }
+    }
+
+    /// 删除指定标签
+    pub fn remove_tag(&mut self, tag: &str) {
+        let before = self.tags.len();
+        self.tags.retain(|t| t != tag);
+        if self.tags.len() != before {
+            self.touch();
+        }
     }
 
     /// 更新时间戳
@@ -202,5 +243,112 @@ mod tests {
         note.update_title("新标题".to_string());
         assert_eq!(note.title, "新标题");
         assert_ne!(note.updated_at, original_time);
+    }
+
+    #[test]
+    fn test_new_note_has_empty_tags() {
+        let note = Note::new("测试".to_string(), "amber".to_string());
+        assert!(note.tags.is_empty());
+    }
+
+    #[test]
+    fn test_set_tags() {
+        let mut note = Note::new("测试".to_string(), "amber".to_string());
+        note.set_tags(vec!["work".to_string(), "personal".to_string()]);
+        assert_eq!(note.tags.len(), 2);
+        assert!(note.tags.contains(&"work".to_string()));
+        assert!(note.tags.contains(&"personal".to_string()));
+    }
+
+    #[test]
+    fn test_set_tags_dedup() {
+        let mut note = Note::new("测试".to_string(), "amber".to_string());
+        note.set_tags(vec!["work".to_string(), "work".to_string(), "personal".to_string()]);
+        assert_eq!(note.tags.len(), 2);
+    }
+
+    #[test]
+    fn test_set_tags_trim() {
+        let mut note = Note::new("测试".to_string(), "amber".to_string());
+        note.set_tags(vec!["  work  ".to_string(), "personal".to_string()]);
+        assert_eq!(note.tags[0], "work");
+    }
+
+    #[test]
+    fn test_set_tags_empty_filtered() {
+        let mut note = Note::new("测试".to_string(), "amber".to_string());
+        note.set_tags(vec!["".to_string(), "  ".to_string(), "valid".to_string()]);
+        assert_eq!(note.tags.len(), 1);
+        assert_eq!(note.tags[0], "valid");
+    }
+
+    #[test]
+    fn test_set_tags_max_limit() {
+        let mut note = Note::new("测试".to_string(), "amber".to_string());
+        let tags: Vec<String> = (0..15).map(|i| format!("tag{}", i)).collect();
+        note.set_tags(tags);
+        assert_eq!(note.tags.len(), 10);
+    }
+
+    #[test]
+    fn test_set_tags_max_length() {
+        let mut note = Note::new("测试".to_string(), "amber".to_string());
+        let long_tag = "a".repeat(21);
+        note.set_tags(vec![long_tag, "valid".to_string()]);
+        assert_eq!(note.tags.len(), 1);
+        assert_eq!(note.tags[0], "valid");
+    }
+
+    #[test]
+    fn test_add_tag() {
+        let mut note = Note::new("测试".to_string(), "amber".to_string());
+        note.add_tag("work".to_string());
+        assert_eq!(note.tags.len(), 1);
+        assert_eq!(note.tags[0], "work");
+    }
+
+    #[test]
+    fn test_add_tag_dedup() {
+        let mut note = Note::new("测试".to_string(), "amber".to_string());
+        note.add_tag("work".to_string());
+        note.add_tag("work".to_string());
+        assert_eq!(note.tags.len(), 1);
+    }
+
+    #[test]
+    fn test_add_tag_trim() {
+        let mut note = Note::new("测试".to_string(), "amber".to_string());
+        note.add_tag("  work  ".to_string());
+        assert_eq!(note.tags[0], "work");
+    }
+
+    #[test]
+    fn test_add_tag_max_limit() {
+        let mut note = Note::new("测试".to_string(), "amber".to_string());
+        for i in 0..10 {
+            note.add_tag(format!("tag{}", i));
+        }
+        note.add_tag("overflow".to_string());
+        assert_eq!(note.tags.len(), 10);
+        assert!(!note.tags.contains(&"overflow".to_string()));
+    }
+
+    #[test]
+    fn test_remove_tag() {
+        let mut note = Note::new("测试".to_string(), "amber".to_string());
+        note.set_tags(vec!["work".to_string(), "personal".to_string()]);
+        note.remove_tag("work");
+        assert_eq!(note.tags.len(), 1);
+        assert_eq!(note.tags[0], "personal");
+    }
+
+    #[test]
+    fn test_remove_tag_not_exist() {
+        let mut note = Note::new("测试".to_string(), "amber".to_string());
+        note.set_tags(vec!["work".to_string()]);
+        let original_time = note.updated_at.clone();
+        note.remove_tag("nonexistent");
+        assert_eq!(note.tags.len(), 1);
+        assert_eq!(note.updated_at, original_time);
     }
 }

@@ -8,6 +8,8 @@ export interface Note {
   opacity: number;
   window_state: { pos_x: number; pos_y: number; width: number; height: number };
   is_pinned: boolean;
+  is_archived: boolean;
+  tags: string[];
   created_at: string;
   updated_at: string;
 }

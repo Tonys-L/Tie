@@ -2,6 +2,7 @@ pub mod commands;
 pub mod git_ops;
 pub mod git_sync;
 pub mod locale_manager;
+pub mod lunar_calendar;
 pub mod note_service;
 pub mod reminder_scheduler;
 pub mod reminder_service;

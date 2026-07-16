@@ -1,8 +1,8 @@
 use tauri::AppHandle;
 use tauri_plugin_notification::NotificationExt;
 
-use crate::domain::{NoteRepository, ReminderRepository};
-use super::window_manager;
+use crate::domain::{NoteRepository, ReminderRepository, RepeatType};
+use super::{lunar_calendar, window_manager};
 
 /// 触发所有到期提醒（编排逻辑）
 ///
@@ -63,6 +63,8 @@ pub fn fire_reminders(
             .builder()
             .title(&title)
             .body(&body)
+            .extra("note_id", &reminder.note_id)
+            .auto_cancel()
             .show()
         {
             Ok(_) => eprintln!("[调度器] 通知发送成功"),
@@ -70,7 +72,7 @@ pub fn fire_reminders(
         }
 
         // 弹出便签窗口（委托 window_manager）
-        match window_manager::activate_note_for_reminder(app, &note) {
+        match window_manager::activate_note_for_reminder(app, &note, &reminder.id) {
             Ok(_) => {}
             Err(e) => eprintln!("[调度器] 弹出便签窗口失败: {}", e),
         }
@@ -79,8 +81,26 @@ pub fn fire_reminders(
         if reminder.is_repeating() {
             let mut updated = reminder.clone();
             if updated.reset_for_next_trigger() {
+                // Daily/Weekly/Monthly：domain 层计算下次触发
                 if let Err(e) = reminder_repo.save(&updated) {
                     eprintln!("[调度器] 更新周期提醒失败: {}", e);
+                }
+            } else if reminder.repeat_type == RepeatType::LunarMonthly {
+                // LunarMonthly：domain 层无法计算，由 application 层调用农历库
+                match lunar_calendar::lunar_next_month(&updated.remind_at) {
+                    Some(next_time) => {
+                        updated.remind_at = next_time;
+                        if let Err(e) = reminder_repo.save(&updated) {
+                            eprintln!("[调度器] 更新农历周期提醒失败: {}", e);
+                        }
+                    }
+                    None => {
+                        eprintln!("[调度器] 农历计算失败，标记为已触发: {}", updated.remind_at);
+                        updated.mark_triggered();
+                        if let Err(e) = reminder_repo.save(&updated) {
+                            eprintln!("[调度器] 标记提醒已触发失败: {}", e);
+                        }
+                    }
                 }
             } else {
                 updated.mark_triggered();

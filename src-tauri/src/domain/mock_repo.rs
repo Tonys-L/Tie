@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
+use chrono::Datelike;
 
 use super::{Note, NoteRepository, Reminder, ReminderRepository};
 
@@ -50,6 +51,42 @@ impl NoteRepository for InMemoryNoteRepository {
         let mut result: Vec<Note> = notes.values().filter(|n| n.is_archived).cloned().collect();
         result.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         Ok(result)
+    }
+
+    fn search_notes(&self, query: &str) -> Result<Vec<Note>, String> {
+        let q = query.to_lowercase();
+        let notes = self.notes.lock().unwrap();
+        let mut result: Vec<Note> = notes
+            .values()
+            .filter(|n| {
+                n.title.to_lowercase().contains(&q)
+                    || n.content.to_lowercase().contains(&q)
+                    || n.tags.iter().any(|t| t.to_lowercase().contains(&q))
+            })
+            .cloned()
+            .collect();
+        result.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        Ok(result)
+    }
+
+    fn find_activity_by_month(&self, year: i32, month: u32) -> Result<Vec<u32>, String> {
+        let notes = self.notes.lock().unwrap();
+        let mut days: Vec<u32> = notes
+            .values()
+            .filter_map(|n| {
+                for ts in &[&n.created_at, &n.updated_at] {
+                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
+                        if dt.year() == year && dt.month() == month {
+                            return Some(dt.day() as u32);
+                        }
+                    }
+                }
+                None
+            })
+            .collect();
+        days.sort();
+        days.dedup();
+        Ok(days)
     }
 }
 
@@ -144,5 +181,19 @@ impl ReminderRepository for InMemoryReminderRepository {
                 .to_string();
             Ok(Some(min_time))
         }
+    }
+
+    fn find_by_date_range(&self, start: &str, end: &str) -> Result<Vec<Reminder>, String> {
+        Ok(self
+            .reminders
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|r| {
+                let t = r.snoozed_until.as_deref().unwrap_or(&r.remind_at);
+                t >= start && t < end
+            })
+            .cloned()
+            .collect())
     }
 }

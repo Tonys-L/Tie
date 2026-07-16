@@ -1,9 +1,10 @@
 use tauri::{AppHandle, State};
+use chrono::Datelike;
 
 use crate::domain::{Note, Reminder};
 use crate::AppState;
 
-use super::note_service;
+use super::{note_service, window_manager};
 
 // ============ Note 命令 ============
 
@@ -17,6 +18,18 @@ pub async fn create_note(
     let result = note_service::create_note(&app, state.note_repo.as_ref(), color);
     state.git_sync.schedule_auto_sync(app);
     result
+}
+
+/// 通过便签 ID 激活/弹出便签窗口（Hub 便签列表点击时调用）
+#[tauri::command]
+pub async fn activate_note_by_id(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    note_id: String,
+) -> Result<(), String> {
+    let note = state.note_repo.find_by_id(&note_id)?
+        .ok_or("便签不存在")?;
+    window_manager::open_note_window(&app, &note)
 }
 
 /// 获取便签详情
@@ -145,6 +158,22 @@ pub async fn get_archived_notes(state: State<'_, AppState>) -> Result<Vec<Note>,
     state.note_repo.find_archived()
 }
 
+/// 搜索便签（标题 + 内容 + 标签）
+#[tauri::command]
+pub async fn search_notes(state: State<'_, AppState>, query: String) -> Result<Vec<Note>, String> {
+    state.note_repo.search_notes(&query)
+}
+
+/// 更新便签标签
+#[tauri::command]
+pub async fn update_note_tags(app: AppHandle, state: State<'_, AppState>, id: String, tags: Vec<String>) -> Result<(), String> {
+    let mut note = state.note_repo.find_by_id(&id)?.ok_or("便签不存在")?;
+    note.set_tags(tags);
+    let result = state.note_repo.save(&note);
+    state.git_sync.schedule_auto_sync(app);
+    result
+}
+
 // ============ Reminder 命令 ============
 
 /// 创建提醒
@@ -199,6 +228,64 @@ pub async fn delete_reminder(app: AppHandle, state: State<'_, AppState>, id: Str
     state.scheduler.schedule_recalc();
     state.git_sync.schedule_auto_sync(app);
     result
+}
+
+/// 按月份查询提醒（日历视图用，含所有状态）
+#[tauri::command]
+pub async fn get_reminders_by_month(state: State<'_, AppState>, year: i32, month: u32) -> Result<Vec<Reminder>, String> {
+    let start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
+        .ok_or("无效的年月")?;
+    let end = if month == 12 {
+        chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
+    } else {
+        chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
+    }
+    .ok_or("无效的年月")?;
+    let start_iso = start.and_hms_opt(0, 0, 0).unwrap().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    let end_iso = end.and_hms_opt(0, 0, 0).unwrap().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    state.reminder_repo.find_by_date_range(&start_iso, &end_iso)
+}
+
+/// 查询月份内每天的农历日文本（日历视图用）
+#[derive(serde::Serialize)]
+pub struct LunarDateInfo {
+    day: u32,
+    lunar_text: String,
+}
+
+#[tauri::command]
+pub async fn get_lunar_dates(_state: State<'_, AppState>, year: i32, month: u32) -> Result<Vec<LunarDateInfo>, String> {
+    use tyme4rs::tyme::solar::SolarDay;
+    use tyme4rs::tyme::Culture;
+
+    let days_in_month = {
+        let next = if month == 12 {
+            chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
+        } else {
+            chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
+        };
+        next.ok_or("无效年月")?.pred_opt().ok_or("无效年月")?.day()
+    };
+
+    let mut result = Vec::new();
+    for day in 1..=days_in_month {
+        let solar = SolarDay::from_ymd(year as isize, month as usize, day as usize);
+        let lunar_day = solar.get_lunar_day();
+        let is_first = lunar_day.get_day() == 1;
+        let lunar_text = if is_first {
+            format!("{}{}", lunar_day.get_lunar_month().get_name(), lunar_day.get_name())
+        } else {
+            lunar_day.get_name()
+        };
+        result.push(LunarDateInfo { day, lunar_text });
+    }
+    Ok(result)
+}
+
+/// 查询月份内有便签活动的日期（日历视图用）
+#[tauri::command]
+pub async fn get_notes_activity_by_month(state: State<'_, AppState>, year: i32, month: u32) -> Result<Vec<u32>, String> {
+    state.note_repo.find_activity_by_month(year, month)
 }
 
 // ============ 同步命令 ============

@@ -19,6 +19,7 @@
 | LES-009 | extract_updated_at 解析逻辑 bug 导致冲突解决失效 | 数据同步 | 高 | 已修复 | 2026-07-13 |
 | LES-010 | Git 子进程未设 stdin null 导致测试挂起 | 数据同步 | 中 | 已修复 | 2026-07-14 |
 | LES-011 | repeat_config 空置字段违反 YAGNI 原则 | 编码规范 | 低 | 已修复 | 2026-07-14 |
+| LES-012 | tags 字段 JSON 存储须加 serde(default) 防止旧数据反序列化失败 | 数据同步 | 中 | 已修复 | 2026-07-15 |
 
 ---
 
@@ -27,7 +28,7 @@
 按业务分类匹配：
 
 - **编码规范**: LES-001, LES-002, LES-006, LES-011
-- **数据同步**: LES-003, LES-007, LES-008, LES-009, LES-010
+- **数据同步**: LES-003, LES-007, LES-008, LES-009, LES-010, LES-012
 - **前端构建**: LES-004
 - **业务逻辑**: LES-005
 
@@ -201,6 +202,20 @@
 
 ---
 
+## LES-012: tags 字段 JSON 存储须加 serde(default) 防止旧数据反序列化失败
+
+**问题**: Note 新增 `tags: Vec<String>` 字段后，旧版本的 JSON 同步文件（不含 tags 字段）在反序列化时会因字段缺失而失败。
+
+**原因**: serde 默认要求所有字段都存在，缺失字段会导致 `Error: missing field`。这在多设备同步场景中尤其常见——旧版本设备导出的 JSON 文件在新版本设备导入时失败。
+
+**解决方案**: 给 tags 字段添加 `#[serde(default)]` 属性，缺失时自动填充 `Vec::new()`（空数组）。同时 SQLite 建表语句设置 `DEFAULT '[]'`。
+
+**影响文件**: `src-tauri/src/domain/note.rs`（Note 结构体 tags 字段），`src-tauri/src/infrastructure/database.rs`（建表/迁移 DEFAULT '[]'）
+
+**预防**: 所有新增的领域模型字段，如果通过 JSON 序列化同步，必须加 `#[serde(default)]` 以保证向后兼容。SQLite 列须设置合理的 DEFAULT 值。
+
+---
+
 ## 变更记录
 
 | 日期 | 变更内容 | 变更人 | 关联变更 |
@@ -210,3 +225,4 @@
 | 2026-07-11 | 新增 LES-006（全局 listen 事件广播问题） | — | #FEAT-002 |
 | 2026-07-13 | 新增 LES-007/008/009（Windows 控制台窗口、git fetch 分支验证、extract_updated_at bug） | — | #REFACTOR-013 |
 | 2026-07-14 | 新增 LES-010/011（git stdin null 挂起、repeat_config YAGNI 清理） | — | #REFACTOR-014 |
+| 2026-07-15 | 新增 LES-012（tags serde(default) 兼容性） | — | #FEAT-002 |

@@ -38,6 +38,7 @@ export function repeatLabel(type: string): string {
   const map: Record<string, string> = {
     none: '', once: '',
     daily: t('note.daily'), weekly: t('note.weekly'), monthly: t('note.monthly'),
+    lunar_monthly: t('note.lunarMonthly'),
   };
   return map[type] || type;
 }

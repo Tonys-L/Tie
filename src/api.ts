@@ -19,6 +19,8 @@ export const updateNoteWindowState = (id: string, posX: number, posY: number, wi
 export const deleteNote = (id: string) => invoke('delete_note', { id });
 export const archiveNote = (id: string) => invoke('archive_note', { id });
 export const unarchiveNote = (id: string) => invoke('unarchive_note', { id });
+export const searchNotes = (query: string) => invoke<Note[]>('search_notes', { query });
+export const updateNoteTags = (id: string, tags: string[]) => invoke('update_note_tags', { id, tags });
 
 // ---- 提醒 ----
 
@@ -28,6 +30,19 @@ export const getReminders = (noteId: string) => invoke<Reminder[]>('get_reminder
 export const snoozeReminder = (id: string, minutes: number) => invoke('snooze_reminder', { id, minutes });
 export const dismissReminder = (id: string) => invoke('dismiss_reminder', { id });
 export const deleteReminder = (id: string) => invoke('delete_reminder', { id });
+export const getRemindersByMonth = (year: number, month: number) =>
+  invoke<Reminder[]>('get_reminders_by_month', { year, month });
+
+export interface LunarDateInfo {
+  day: number;
+  lunar_text: string;
+}
+
+export const getLunarDates = (year: number, month: number) =>
+  invoke<LunarDateInfo[]>('get_lunar_dates', { year, month });
+
+export const getNotesActivityByMonth = (year: number, month: number) =>
+  invoke<number[]>('get_notes_activity_by_month', { year, month });
 
 // ---- 同步 ----
 

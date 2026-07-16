@@ -138,6 +138,24 @@ impl ReminderRepository for SqliteReminderRepository {
             .map_err(|e| e.to_string())?;
         Ok(result)
     }
+
+    fn find_by_date_range(&self, start: &str, end: &str) -> Result<Vec<Reminder>, String> {
+        let conn = self.db.lock()?;
+        let mut stmt = conn
+            .prepare(
+                &format!("SELECT {} FROM reminders
+                 WHERE COALESCE(snoozed_until, remind_at) >= ?1
+                   AND COALESCE(snoozed_until, remind_at) < ?2
+                 ORDER BY remind_at ASC", SELECT_COLS),
+            )
+            .map_err(|e| e.to_string())?;
+        let reminders = stmt
+            .query_map(params![start, end], row_to_reminder)
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        Ok(reminders)
+    }
 }
 
 #[cfg(test)]

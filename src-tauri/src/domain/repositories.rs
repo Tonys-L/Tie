@@ -19,6 +19,12 @@ pub trait NoteRepository: Send + Sync {
 
     /// 查找已归档的便签
     fn find_archived(&self) -> Result<Vec<Note>, String>;
+
+    /// 搜索便签（标题 + 内容 + 标签，跨活跃和归档）
+    fn search_notes(&self, query: &str) -> Result<Vec<Note>, String>;
+
+    /// 查询指定月份内有创建或更新活动的日期集合（日历视图用）
+    fn find_activity_by_month(&self, year: i32, month: u32) -> Result<Vec<u32>, String>;
 }
 
 /// Reminder 仓储接口
@@ -46,4 +52,7 @@ pub trait ReminderRepository: Send + Sync {
 
     /// 查询最近一条到期提醒的时间（pending 状态）
     fn find_next_due_time(&self) -> Result<Option<String>, String>;
+
+    /// 查询指定时间范围内的提醒（日历视图用，含所有状态）
+    fn find_by_date_range(&self, start: &str, end: &str) -> Result<Vec<Reminder>, String>;
 }

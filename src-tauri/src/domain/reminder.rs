@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use chrono::Utc;
+use chrono::Datelike;
 
 /// 提醒状态
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -40,6 +41,7 @@ pub enum RepeatType {
     Daily,
     Weekly,
     Monthly,
+    LunarMonthly,
 }
 
 impl RepeatType {
@@ -49,6 +51,7 @@ impl RepeatType {
             RepeatType::Daily => "daily",
             RepeatType::Weekly => "weekly",
             RepeatType::Monthly => "monthly",
+            RepeatType::LunarMonthly => "lunar_monthly",
         }
     }
 
@@ -57,6 +60,7 @@ impl RepeatType {
             "daily" => RepeatType::Daily,
             "weekly" => RepeatType::Weekly,
             "monthly" => RepeatType::Monthly,
+            "lunar_monthly" => RepeatType::LunarMonthly,
             _ => RepeatType::Once,
         }
     }
@@ -138,6 +142,8 @@ impl Reminder {
     }
 
     /// 计算下次触发时间
+    ///
+    /// LunarMonthly 返回 None，由 application 层调用 lunar_calendar 计算农历月份推移。
     pub fn next_trigger(&self) -> Option<String> {
         if !self.is_repeating() {
             return None;
@@ -147,9 +153,28 @@ impl Reminder {
             RepeatType::Daily => current + chrono::Duration::days(1),
             RepeatType::Weekly => current + chrono::Duration::days(7),
             RepeatType::Monthly => {
-                // 简化处理：加 30 天
-                current + chrono::Duration::days(30)
+                // 精确日历月：月份+1，月末溢出取目标月最后一天
+                let naive = current.naive_utc();
+                let (next_year, next_month) = if naive.month() == 12 {
+                    (naive.year() + 1, 1u32)
+                } else {
+                    (naive.year(), naive.month() + 1)
+                };
+                let day = naive.day();
+                let next_date = chrono::NaiveDate::from_ymd_opt(next_year, next_month, day)
+                    .unwrap_or_else(|| {
+                        // day 超出目标月天数，取目标月最后一天
+                        let first_after = chrono::NaiveDate::from_ymd_opt(
+                            if next_month == 12 { next_year + 1 } else { next_year },
+                            if next_month == 12 { 1 } else { next_month + 1 },
+                            1,
+                        ).unwrap();
+                        first_after.pred_opt().unwrap()
+                    });
+                let next_naive = chrono::NaiveDateTime::new(next_date, naive.time());
+                chrono::DateTime::<chrono::FixedOffset>::from_naive_utc_and_offset(next_naive, *current.offset())
             }
+            RepeatType::LunarMonthly => return None, // 农历计算在 application 层
             RepeatType::Once => return None,
         };
         Some(next.to_rfc3339())
@@ -250,8 +275,50 @@ mod tests {
         );
         assert!(r.is_repeating());
         let next = r.next_trigger().unwrap();
-        // 简化处理：加 30 天 -> 2026-08-02
-        assert!(next.contains("2026-08-02"));
+        // 精确日历月：7月3日 → 8月3日
+        assert!(next.contains("2026-08-03"));
+    }
+
+    #[test]
+    fn test_monthly_repeat_month_end_overflow() {
+        // 1月31日 → 2月最后一天（非闰年 2月28日）
+        let r = Reminder::new(
+            "note-1".to_string(),
+            "".to_string(),
+            "2026-01-31T08:00:00Z".to_string(),
+            "monthly".to_string(),
+        );
+        let next = r.next_trigger().unwrap();
+        assert!(next.contains("2026-02-28"));
+    }
+
+    #[test]
+    fn test_monthly_repeat_december_to_january() {
+        // 12月15日 → 次年1月15日
+        let r = Reminder::new(
+            "note-1".to_string(),
+            "".to_string(),
+            "2026-12-15T08:00:00Z".to_string(),
+            "monthly".to_string(),
+        );
+        let next = r.next_trigger().unwrap();
+        assert!(next.contains("2027-01-15"));
+    }
+
+    #[test]
+    fn test_lunar_monthly_repeat() {
+        let r = Reminder::new(
+            "note-1".to_string(),
+            "".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "lunar_monthly".to_string(),
+        );
+        assert!(r.is_repeating());
+        // domain 层无法计算农历，返回 None
+        assert!(r.next_trigger().is_none());
+        // reset_for_next_trigger 也返回 false（application 层负责）
+        let mut r2 = r.clone();
+        assert!(!r2.reset_for_next_trigger());
     }
 
     #[test]

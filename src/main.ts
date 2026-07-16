@@ -36,9 +36,16 @@ function renderMarkdown(content: string): string {
     });
   }
   let html = marked.parse(processed) as string;
-  // 将 GFM task list 的 checkbox 美化
-  html = html.replace(/<li><input[^>]*disabled[^>]*>\s*/g, '<li class="task-item">');
-  html = html.replace(/<input type="checkbox"[^>]*>/g, '');
+  // 美化 GFM task list：保留可交互 checkbox，添加 data-task-index 用于点击切换
+  let taskIndex = 0;
+  html = html.replace(
+    /<li><input[^>]*type="checkbox"[^>]*>/g,
+    (match: string) => {
+      const checked = match.includes('checked');
+      const idx = taskIndex++;
+      return `<li class="task-item"><input type="checkbox" class="task-checkbox" data-task-index="${idx}" ${checked ? 'checked' : ''}>`;
+    }
+  );
   return html;
 }
 
@@ -49,6 +56,8 @@ const noteId = win.label.startsWith('note-') ? win.label.slice(5) : '';
 // 检查 URL 参数：?reminder=1 表示由提醒触发弹出
 const urlParams = new URLSearchParams(window.location.search);
 const isReminder = urlParams.get('reminder') === '1';
+const urlReminderId = urlParams.get('rid') || '';
+let currentReminderId = urlReminderId;
 
 if (noteId) {
   initNoteWindow(noteId);
@@ -88,7 +97,9 @@ async function initNoteWindow(id: string) {
   });
 
   // 监听提醒触发事件：窗口已存在时，后端发送此事件显示横幅
-  getCurrentWindow().listen('reminder-triggered', () => {
+  getCurrentWindow().listen('reminder-triggered', (event) => {
+    const payload = event.payload as { reminder_id: string };
+    currentReminderId = payload.reminder_id;
     const app = document.getElementById('app')!;
     const banner = app.querySelector('[data-reminder-banner]') as HTMLElement;
     if (banner) {
@@ -106,6 +117,8 @@ function renderNote(note: Note) {
     <div class="reminder-banner" data-reminder-banner style="display:none">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
       <span>${t('note.reminderBanner')}</span>
+      <button class="banner-action" data-banner-snooze>${t('note.snooze')}</button>
+      <button class="banner-action" data-banner-done>${t('note.done')}</button>
       <button class="banner-close" data-banner-close>&times;</button>
     </div>
     <div class="title-bar" data-drag>
@@ -116,6 +129,10 @@ function renderNote(note: Note) {
     <div class="content-area">
       <div class="content-view" data-content-view>${renderMarkdown(note.content)}</div>
       <textarea class="content-edit" data-content style="display:none" placeholder="${t('note.placeholder')}" spellcheck="false">${escapeHtml(note.content)}</textarea>
+    </div>
+    <div class="tag-bar" data-tag-bar>
+      <div class="tag-list" data-tag-list>${renderTagPills(note.tags)}</div>
+      <input class="tag-input" data-tag-input placeholder="${t('note.tagPlaceholder')}" maxlength="20">
     </div>
     <div class="bottom-bar">
       <div class="color-picker">
@@ -132,6 +149,7 @@ function renderNote(note: Note) {
 
   applyNoteStyle(note);
   setupNoteEvents(note);
+  setupTagEvents(note);
 
   // 关闭横幅按钮
   const banner = app.querySelector('[data-reminder-banner]') as HTMLElement;
@@ -139,12 +157,174 @@ function renderNote(note: Note) {
     banner.style.display = 'none';
     app.classList.remove('reminder-flash');
   });
+  // 贪睡按钮：5分钟后再次提醒
+  app.querySelector('[data-banner-snooze]')!.addEventListener('click', async () => {
+    if (currentReminderId) {
+      try { await invoke('snooze_reminder', { id: currentReminderId, minutes: 5 }); } catch (e) { console.error('贪睡失败:', e); }
+    }
+    banner.style.display = 'none';
+    app.classList.remove('reminder-flash');
+  });
+  // 完成按钮：标记提醒为已完成
+  app.querySelector('[data-banner-done]')!.addEventListener('click', async () => {
+    if (currentReminderId) {
+      try { await invoke('dismiss_reminder', { id: currentReminderId }); } catch (e) { console.error('完成提醒失败:', e); }
+    }
+    banner.style.display = 'none';
+    app.classList.remove('reminder-flash');
+  });
+
+  // ---- 右键菜单 ----
+  setupContextMenu(note, app);
+}
+
+// ============ 右键菜单 ============
+
+function setupContextMenu(note: Note, app: HTMLElement) {
+  const contentView = app.querySelector('[data-content-view]') as HTMLElement;
+  const textarea = app.querySelector('[data-content]') as HTMLTextAreaElement;
+
+  // 查看模式右键
+  contentView.addEventListener('contextmenu', (e) => {
+    if ((e.target as HTMLElement).closest('a')) return;
+    e.preventDefault();
+    showContextMenu(e as MouseEvent, note, app);
+  });
+
+  // 编辑模式右键
+  textarea.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showContextMenu(e as MouseEvent, note, app);
+  });
+
+  // 点击其他区域关闭菜单
+  document.addEventListener('click', () => closeCtxMenu());
+  // 窗口失焦关闭菜单（点击桌面等）
+  window.addEventListener('blur', () => closeCtxMenu());
+  // Esc 关闭菜单
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeCtxMenu();
+  });
+}
+
+function closeCtxMenu() {
+  const menu = document.getElementById('ctx-menu');
+  if (menu) menu.remove();
+}
+
+function showContextMenu(e: MouseEvent, note: Note, app: HTMLElement) {
+  // 移除已有菜单
+  document.getElementById('ctx-menu')?.remove();
+
+  const menu = document.createElement('div');
+  menu.id = 'ctx-menu';
+  menu.style.cssText = `position:fixed;z-index:99999;background:var(--surface,#fff);border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:4px 0;box-shadow:0 4px 16px rgba(0,0,0,0.12);min-width:140px;font-size:12px;`;
+
+  const items = [
+    { label: note.is_pinned ? t('note.unpin') : t('note.pin'), action: () => {
+      note.is_pinned = !note.is_pinned;
+      const pinBtn = app.querySelector('[data-pin]') as HTMLElement;
+      if (pinBtn) pinBtn.classList.toggle('pinned', note.is_pinned);
+      invoke('update_note_style', { id: note.id, color: note.color, opacity: note.opacity, isPinned: note.is_pinned });
+    }},
+    { label: t('note.archive'), action: async () => {
+      try { await invoke('archive_note', { id: note.id }); await win.close(); } catch (e) { console.error('归档失败:', e); }
+    }},
+    { label: t('note.delete'), danger: true, action: () => {
+      showDeleteConfirm(note.id, app);
+    }},
+    { type: 'separator' },
+    ...Object.entries(COLORS).map(([name, c]) => ({
+      label: `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${c.dot};margin-right:6px;vertical-align:middle;"></span>${name}`,
+      action: () => {
+        note.color = name;
+        app.querySelectorAll('[data-color]').forEach(d => d.classList.remove('active'));
+        const dot = app.querySelector(`[data-color="${name}"]`);
+        if (dot) dot.classList.add('active');
+        applyNoteStyle(note);
+        invoke('update_note_style', { id: note.id, color: note.color, opacity: note.opacity, isPinned: note.is_pinned });
+      },
+    })),
+  ];
+
+  items.forEach(item => {
+    if (item.type === 'separator') {
+      const sep = document.createElement('div');
+      sep.style.cssText = 'height:1px;background:var(--border-light,#e2e8f0);margin:4px 0;';
+      menu.appendChild(sep);
+      return;
+    }
+    const el = document.createElement('div');
+    el.innerHTML = item.label!;
+    el.style.cssText = `padding:6px 12px;cursor:pointer;color:${item.danger ? '#dc2626' : 'var(--text,#333)'};white-space:nowrap;`;
+    el.addEventListener('mouseenter', () => el.style.background = 'var(--surface-hover,#f1f5f9)');
+    el.addEventListener('mouseleave', () => el.style.background = 'transparent');
+    el.addEventListener('click', (ev) => { ev.stopPropagation(); item.action!(); menu.remove(); });
+    menu.appendChild(el);
+  });
+
+  document.body.appendChild(menu);
+
+  // 定位菜单（不超出窗口）
+  const rect = { x: e.clientX, y: e.clientY };
+  const menuRect = menu.getBoundingClientRect();
+  const maxX = window.innerWidth - menuRect.width - 4;
+  const maxY = window.innerHeight - menuRect.height - 4;
+  menu.style.left = Math.min(rect.x, maxX) + 'px';
+  menu.style.top = Math.min(rect.y, maxY) + 'px';
 }
 
 function applyNoteStyle(note: Note) {
   const colors = COLORS[note.color] || COLORS.amber;
   const app = document.getElementById('app')!;
   app.style.backgroundColor = colors.bg(note.opacity);
+}
+
+// ============ 标签渲染 ============
+
+function renderTagPills(tags: string[]): string {
+  return tags.map(tag =>
+    `<span class="tag-pill" data-tag="${escapeHtml(tag)}">${escapeHtml(tag)}<button class="tag-remove" data-tag-remove="${escapeHtml(tag)}">&times;</button></span>`
+  ).join('');
+}
+
+function refreshTagBar(note: Note) {
+  const tagList = document.querySelector('[data-tag-list]') as HTMLElement;
+  if (tagList) tagList.innerHTML = renderTagPills(note.tags);
+}
+
+function setupTagEvents(note: Note) {
+  const tagInput = document.querySelector('[data-tag-input]') as HTMLInputElement;
+  const tagList = document.querySelector('[data-tag-list]') as HTMLElement;
+  if (!tagInput || !tagList) return;
+
+  // 回车或逗号添加标签
+  tagInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      const val = tagInput.value.trim();
+      if (val) {
+        // 直接调用后端，domain 层处理去重和限制
+        const newTags = [...note.tags, val];
+        note.tags = newTags;
+        refreshTagBar(note);
+        tagInput.value = '';
+        invoke('update_note_tags', { id: note.id, tags: newTags });
+      }
+    }
+  });
+
+  // 点击标签的 × 删除
+  tagList.addEventListener('click', (e) => {
+    const removeBtn = (e.target as HTMLElement).closest('[data-tag-remove]') as HTMLElement;
+    if (removeBtn) {
+      e.stopPropagation();
+      const tag = removeBtn.dataset.tagRemove!;
+      note.tags = note.tags.filter(t => t !== tag);
+      refreshTagBar(note);
+      invoke('update_note_tags', { id: note.id, tags: note.tags });
+    }
+  });
 }
 
 // ============ 事件绑定 ============
@@ -156,8 +336,37 @@ function setupNoteEvents(note: Note) {
   const contentView = app.querySelector('[data-content-view]') as HTMLElement;
   const textarea = app.querySelector('[data-content]') as HTMLTextAreaElement;
 
-  // 点击查看区 → 进入编辑模式（链接除外）
+  // 点击查看区 → 进入编辑模式（链接和 checkbox 除外）
   contentView.addEventListener('click', (e) => {
+    // 拦截 checkbox 点击：切换待办状态，不进入编辑模式
+    const checkbox = (e.target as HTMLElement).closest('.task-checkbox') as HTMLInputElement;
+    if (checkbox) {
+      e.preventDefault();
+      e.stopPropagation();
+      const idx = parseInt(checkbox.dataset.taskIndex || '0');
+      // 在 content 中找到第 idx 个 task list 行并切换 [ ] ↔ [x]
+      const lines = note.content.split('\n');
+      let count = 0;
+      for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(/^(\s*[-*+]\s+)\[([ x])\]/);
+        if (m) {
+          if (count === idx) {
+            const isChecked = m[2] === 'x';
+            lines[i] = lines[i].replace(/\[[ x]\]/, isChecked ? '[ ]' : '[x]');
+            break;
+          }
+          count++;
+        }
+      }
+      note.content = lines.join('\n');
+      // 同步 textarea 值，避免编辑模式时内容不一致
+      textarea.value = note.content;
+      // 重新渲染查看区
+      contentView.innerHTML = renderMarkdown(note.content);
+      // 自动保存
+      invoke('update_note_content', { id: note.id, content: note.content });
+      return;
+    }
     // 拦截链接点击：在系统浏览器打开，不进入编辑模式
     const link = (e.target as HTMLElement).closest('a');
     if (link) {
@@ -183,6 +392,32 @@ function setupNoteEvents(note: Note) {
     textarea.style.display = 'none';
     contentView.style.display = 'block';
     invoke('update_note_content', { id: note.id, content });
+  });
+
+  // ---- 快捷键 ----
+  document.addEventListener('keydown', (e) => {
+    // Ctrl+S：保存当前编辑内容
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      e.preventDefault();
+      if (textarea.style.display !== 'none') {
+        // 编辑模式 → 保存并切回查看模式
+        textarea.blur();
+      } else {
+        // 查看模式 → 无操作（已自动保存）
+      }
+    }
+    // Esc：退出编辑模式回到查看模式
+    if (e.key === 'Escape') {
+      if (textarea.style.display !== 'none') {
+        e.preventDefault();
+        textarea.blur();
+      }
+    }
+    // Ctrl+N：新建便签
+    if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+      e.preventDefault();
+      invoke('create_note');
+    }
   });
 
   // Tab 键插入空格而非切换焦点
@@ -407,6 +642,7 @@ function showReminderPanel(note: Note, app: HTMLElement) {
 	        <button class="rbtn" data-repeat="daily">${t('note.daily')}</button>
 	        <button class="rbtn" data-repeat="weekly">${t('note.weekly')}</button>
 	        <button class="rbtn" data-repeat="monthly">${t('note.monthly')}</button>
+        <button class="rbtn" data-repeat="lunar_monthly">${t('note.lunarMonthly')}</button>
       </div>
       <div class="rd-existing" data-reminder-list></div>
       <button class="rd-save" data-save-reminder>${t('note.setReminder')}</button>

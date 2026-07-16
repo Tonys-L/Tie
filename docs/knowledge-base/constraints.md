@@ -198,6 +198,9 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | INV-015 | Git 同步前必须验证远程分支存在（`git rev-parse origin/<branch>`），分支不存在时返回 `BRANCH_NOT_FOUND:<已有分支>` 由前端提示用户选择是否创建 | `git_sync.rs` sync 方法 |
 | INV-016 | 所有 git 子进程必须设置 `stdin(Stdio::null())`，防止交互式提示导致进程挂起 | `git_ops.rs` run_git / check_git_installed / list_remote_branches |
 | INV-017 | Git 同步初始化后必须验证本地分支名与配置一致，不一致时自动重命名 | `git_sync.rs` sync 方法 |
+| INV-018 | Note.tags 字段使用 `#[serde(default)]` 确保旧版 JSON 同步文件反序列化为空数组而非报错 | `domain/note.rs` Note 结构体 |
+| INV-019 | 标签数量上限 10 个（MAX_TAGS），单个标签长度上限 20 字符（MAX_TAG_LEN）；set_tags 自动 trim/去重/截断 | `domain/note.rs` set_tags/add_tag |
+| INV-020 | LunarMonthly 重复类型的 next_trigger 在 application 层计算（domain 层返回 None），因为农历转换依赖外部库 tyme4rs，不能放入 domain 层 | `domain/reminder.rs` next_trigger + `application/lunar_calendar.rs` lunar_next_month + `application/reminder_service.rs` fire_reminders |
 
 ### 已知策略缺口
 
@@ -303,3 +306,6 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | 2026-07-11 | AppState 新增 ShortcutManager 字段；提醒触发已存在窗口通过 emit_to 发送 reminder-triggered 事件 | — | #FEAT-001 |
 | 2026-07-13 | 7 个同步命令改 async；删除 ReminderRepository update_status/snooze 方法；reminder_service 窗口操作委托 window_manager；新增 INV-014/INV-015；新增模块边界和禁止事项 | — | #REFACTOR-013 |
 | 2026-07-14 | 删除 Reminder.repeat_config 字段（YAGNI）；新增 INV-016（stdin null）/INV-017（分支名验证）；git 子进程全部加 stdin(Stdio::null()) | — | #REFACTOR-014 |
+| 2026-07-15 | 迭代一 v0.2.0：Note 新增 tags 字段 + 标签管理能力；NoteRepository 新增 search_notes；新增 search_notes/update_note_tags 命令；新增 INV-018（tags serde default）/INV-019（标签数量/长度限制） | — | #FEAT-002 同步更新 boundaries.md |
+| 2026-07-15 | 迭代三 v0.4.0：Monthly 改精确日历月；新增 LunarMonthly 重复类型 + tyme4rs 农历库；新增日历视图；ReminderRepository 新增 find_pending_by_date_range；新增 get_reminders_by_month 命令；新增 INV-020（LunarMonthly 农历计算在 application 层） | — | #FEAT-003 同步更新 boundaries.md/glossary.md |
+| 2026-07-15 | 迭代三 v0.4.1：日历视图 7 项增强；find_pending_by_date_range 改为 find_by_date_range（含所有状态）；新增 get_lunar_dates/get_notes_activity_by_month 命令；NoteRepository 新增 find_activity_by_month | — | #FEAT-005 同步更新 boundaries.md |

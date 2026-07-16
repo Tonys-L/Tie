@@ -1,6 +1,6 @@
 # 能力边界
 
-> **TL;DR**: 核心能力：便签管理、提醒调度、数据同步。能力边界：单用户桌面工具，不提供云服务/多用户协作。⚠️ 便签管理不包含富文本编辑，提醒调度不包含日历视图。
+> **TL;DR**: 核心能力：便签管理、提醒调度、数据同步、日历视图。能力边界：单用户桌面工具，不提供云服务/多用户协作。⚠️ 便签管理不包含富文本编辑，日历视图展示提醒+便签活动+农历，支持点击日期创建提醒。
 
 ---
 
@@ -8,24 +8,29 @@
 
 ### 便签管理
 
-**能力定义**: 创建、编辑、归档/恢复、删除桌面悬浮便签，支持颜色/透明度/置顶调整。
+**能力定义**: 创建、编辑、归档/恢复、删除桌面悬浮便签，支持颜色/透明度/置顶调整、标签分类、全局搜索。
 
 **业务规则**:
 - 每张便签一个独立窗口，label 格式 `note-{uuid}`
 - 窗口关闭时若 title+content 均空则自动删除
 - 归档后不在桌面显示但保留数据
 - 透明度范围 0.3~1.0
+- 标签数量上限 10 个，单标签长度上限 20 字符（INV-019）
+- 搜索范围跨活跃+归档，匹配标题+内容+标签
 
 **变化点**:
-- 前端渲染方式（当前 Markdown，未来可能富文本）
+- 前端渲染方式（当前 Markdown + 待办清单交互，未来可能富文本）
 - 颜色选项扩展
+- 搜索实现（当前 LIKE，未来可能 FTS5）
 
 **对应代码**:
-- `src-tauri/src/domain/note.rs`（领域模型）
-- `src-tauri/src/application/commands.rs`（命令入口，`#[tauri::command]` 集中地）
+- `src-tauri/src/domain/note.rs`（领域模型，含 tags 字段 + set_tags/add_tag/remove_tag）
+- `src-tauri/src/domain/repositories.rs`（NoteRepository trait，含 search_notes）
+- `src-tauri/src/application/commands.rs`（命令入口，含 search_notes/update_note_tags）
 - `src-tauri/src/application/note_service.rs`（便签编排：create_note 创建+开窗口、close_note_if_empty 空便签自动删除 INV-003、sync_notes 同步机制）
 - `src-tauri/src/application/window_manager.rs`（窗口管理）
-- `src/main.ts`（前端入口）
+- `src/main.ts`（前端入口，含标签栏）
+- `src/hub.ts`（Hub 前端，含后端搜索+标签侧边栏+排序）
 
 ---
 
@@ -42,7 +47,8 @@
 - 调度方式：事件驱动（单定时器 + Arc<Notify>），创建/更新/删除提醒时通知调度器重新计算定时器
 
 **变化点**:
-- Monthly 重复当前简化为 +30 天，未来需精确日历月
+- Monthly 重复已改为精确日历月（月末溢出取目标月最后一天）
+- LunarMonthly 重复类型在 application 层计算（domain 层不依赖农历库）
 - 通知方式（当前系统通知 + 弹窗）
 
 **对应代码**:
@@ -138,9 +144,11 @@
 | 前端框架 | 原生 TS | 可能引入 React/Vue | Vite 配置不变，替换前端代码 |
 | 数据库 | SQLite | 可能换 PostgreSQL | 仓储 trait 隔离，新增 infrastructure 实现 |
 | 同步协议 | Git HTTPS | 可能换 WebSocket/云服务 | 重写 git_sync 模块 |
-| 重复类型 | Daily/Weekly/Monthly(+30天) | 可能精确日历月 | 修改 `next_trigger()` 计算 |
+| 重复类型 | Daily/Weekly/Monthly(精确月)/LunarMonthly(农历月) | 可能新增更多重复类型 | 修改 `next_trigger()` + `lunar_calendar.rs` |
 | 通知方式 | 系统通知 + 弹窗 | 可能加邮件/推送 | 新增通知通道模块 |
 | 快捷键 | 可配置（2 个动作） | 可能新增动作 | `shortcut_manager.rs` + `shortcut_config.json` |
+| 标签管理 | 手动标签 + 数量/长度限制 | 可能自动标签/标签颜色 | `domain/note.rs` tags 字段 |
+| 搜索方式 | SQLite LIKE 查询 | 可能引入 FTS5 全文索引 | `sqlite_note_repo.rs` search_notes |
 
 ---
 
@@ -165,3 +173,7 @@
 | 2026-07-13 | IPC 命令数修正为 25；删除 ReminderRepository partial update 方法；reminder_service 窗口操作委托 window_manager；移除 tauri-plugin-store | — | #REFACTOR-013 |
 | 2026-07-13 | 新增 get_data_dir/open_data_dir 命令；通用设置页新增数据存储卡片；sync_notes 新增 create_branch 参数 | — | #FEAT-003 |
 | 2026-07-14 | 删除 Reminder.repeat_config 字段；新增 git_sync 集成测试和 reminder_scheduler 单元测试；新增 INV-016/017 | — | #REFACTOR-014 |
+| 2026-07-15 | 迭代一 v0.2.0：Note 新增 tags 字段 + 标签管理能力；NoteRepository 新增 search_notes；新增 search_notes/update_note_tags 命令；新增标签侧边栏/后端搜索/排序 | — | #FEAT-002 同步更新 constraints.md |
+| 2026-07-15 | 迭代二 v0.3.0：待办清单/复选框交互（GFM task list checkbox 可点击切换状态，自动保存） | — | #FEAT-003 |
+| 2026-07-15 | 迭代三 v0.4.0：Monthly 改精确日历月；新增 LunarMonthly 重复类型 + tyme4rs 农历库；新增日历视图（Hub 月历展示提醒分布）；ReminderRepository 新增 find_pending_by_date_range；新增 get_reminders_by_month 命令 | — | #FEAT-004 同步更新 constraints.md/glossary.md |
+| 2026-07-15 | 迭代三 v0.4.1：日历视图 7 项增强——显示提醒标题/农历日期/状态区分色/便签活动蓝点/今天本周高亮/点击日期创建提醒/年视图切换；find_pending_by_date_range 改为 find_by_date_range（含所有状态）；新增 get_lunar_dates/get_notes_activity_by_month 命令；NoteRepository 新增 find_activity_by_month | — | #FEAT-005 同步更新 constraints.md |

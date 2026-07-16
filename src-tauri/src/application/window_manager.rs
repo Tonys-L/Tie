@@ -69,24 +69,25 @@ pub fn open_note_window_with_url(app: &AppHandle, note: &Note, url: &str) -> Res
 
 /// 提醒触发时激活便签窗口
 ///
-/// - 窗口已存在：显示+聚焦+发送 reminder-triggered 事件+闪烁
-/// - 窗口不存在：创建新窗口（URL 带 reminder 参数）
-pub fn activate_note_for_reminder(app: &AppHandle, note: &Note) -> Result<(), String> {
+/// - 窗口已存在：显示+聚焦+发送 reminder-triggered 事件（携带 reminder_id）+闪烁
+/// - 窗口不存在：创建新窗口（URL 带 reminder + rid 参数）
+pub fn activate_note_for_reminder(app: &AppHandle, note: &Note, reminder_id: &str) -> Result<(), String> {
     let label = format!("note-{}", note.id);
 
     if let Some(window) = app.get_webview_window(&label) {
         // 窗口已存在 → 显示+聚焦+发送事件+闪烁
         let _ = window.show();
         let _ = window.set_focus();
-        let _ = app.emit_to(&label, "reminder-triggered", ());
-        eprintln!("[调度器] 窗口已存在，发送 reminder-triggered 事件: note_id={}", note.id);
+        let _ = app.emit_to(&label, "reminder-triggered", serde_json::json!({ "reminder_id": reminder_id }));
+        eprintln!("[调度器] 窗口已存在，发送 reminder-triggered 事件: note_id={}, reminder_id={}", note.id, reminder_id);
         flash_window(&window, note.is_pinned);
         Ok(())
     } else {
-        // 窗口不存在 → 创建新窗口（URL 带 reminder 参数）
-        match open_note_window_with_url(app, note, "index.html?reminder=1") {
+        // 窗口不存在 → 创建新窗口（URL 带 reminder + rid 参数）
+        let url = format!("index.html?reminder=1&rid={}", reminder_id);
+        match open_note_window_with_url(app, note, &url) {
             Ok(_) => {
-                eprintln!("[调度器] 便签窗口已弹出: note_id={}", note.id);
+                eprintln!("[调度器] 便签窗口已弹出: note_id={}, reminder_id={}", note.id, reminder_id);
                 Ok(())
             }
             Err(e) => Err(e),
