@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use chrono::Utc;
 
-use super::value_objects::{NoteColor, WindowState};
+use super::value_objects::WindowState;
 
 /// Note 聚合根 — 便签的核心领域模型
 ///
@@ -13,7 +13,7 @@ pub struct Note {
     pub id: String,
     pub title: String,
     pub content: String,
-    pub color: NoteColor,
+    pub color: String,
     pub opacity: f64,
     pub window_state: WindowState,
     pub is_pinned: bool,
@@ -36,7 +36,7 @@ impl Note {
             id: Uuid::new_v4().to_string(),
             title,
             content: String::new(),
-            color: NoteColor::from_str(&color),
+            color,
             opacity: 1.0,
             window_state: WindowState::default(),
             is_pinned: false,
@@ -61,7 +61,7 @@ impl Note {
 
     /// 切换颜色
     pub fn set_color(&mut self, color: String) {
-        self.color = NoteColor::from_str(&color);
+        self.color = color;
         self.touch();
     }
 
@@ -154,7 +154,7 @@ mod tests {
         let note = Note::new("测试".to_string(), "amber".to_string());
         assert!(!note.id.is_empty());
         assert_eq!(note.title, "测试");
-        assert_eq!(note.color, NoteColor::Amber);
+        assert_eq!(note.color, "amber");
         assert_eq!(note.opacity, 1.0);
         assert!(!note.is_pinned);
     }
@@ -202,15 +202,15 @@ mod tests {
     #[test]
     fn test_set_color() {
         let mut note = Note::new("".to_string(), "amber".to_string());
-        assert_eq!(note.color, NoteColor::Amber);
+        assert_eq!(note.color, "amber");
         note.set_color("blue".to_string());
-        assert_eq!(note.color, NoteColor::Blue);
+        assert_eq!(note.color, "blue");
         note.set_color("pink".to_string());
-        assert_eq!(note.color, NoteColor::Pink);
+        assert_eq!(note.color, "pink");
         note.set_color("green".to_string());
-        assert_eq!(note.color, NoteColor::Green);
+        assert_eq!(note.color, "green");
         note.set_color("white".to_string());
-        assert_eq!(note.color, NoteColor::White);
+        assert_eq!(note.color, "white");
     }
 
     #[test]

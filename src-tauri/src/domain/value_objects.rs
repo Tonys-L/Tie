@@ -1,38 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// 便签颜色枚举
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum NoteColor {
-    Amber,
-    Blue,
-    Pink,
-    Green,
-    White,
-}
-
-impl NoteColor {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "blue" => NoteColor::Blue,
-            "pink" => NoteColor::Pink,
-            "green" => NoteColor::Green,
-            "white" => NoteColor::White,
-            _ => NoteColor::Amber,
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        match self {
-            NoteColor::Amber => "amber",
-            NoteColor::Blue => "blue",
-            NoteColor::Pink => "pink",
-            NoteColor::Green => "green",
-            NoteColor::White => "white",
-        }
-    }
-}
-
 /// 窗口状态值对象
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowState {
@@ -56,13 +23,6 @@ impl Default for WindowState {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_color_from_str() {
-        assert_eq!(NoteColor::from_str("amber"), NoteColor::Amber);
-        assert_eq!(NoteColor::from_str("blue"), NoteColor::Blue);
-        assert_eq!(NoteColor::from_str("invalid"), NoteColor::Amber);
-    }
 
     #[test]
     fn test_window_state_default() {

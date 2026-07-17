@@ -265,6 +265,17 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 - **tao 0.35.3 Windows 偶发崩溃**：`flush_paint_messages` 断言失败（`event_loop.rs:2344`），点击设置中心等窗口操作时偶现。这是 tao 上游库的已知 bug，当前 tao 0.35.3 已是最新版（Tauri 2.11.5 依赖），上游尚未修复。无法通过业务代码或升级解决，等待 tao 发布修复版本。
 - **CI/CD**：GitHub Actions workflow（`.github/workflows/release.yml`）在 push tag `v*` 时触发，自动构建 NSIS 安装包并发布到 GitHub Release。仅支持 Windows 平台。
 
+### 发布流程
+
+发版步骤（CI/CD 自动构建发布）：
+
+1. 修改版本号（三处同步）：
+   - `src-tauri/tauri.conf.json` → `version`
+   - `src-tauri/Cargo.toml` → `version`
+   - `package.json` → `version`
+2. 提交并打 tag：`git commit && git tag v0.x.0 && git push origin main --tags`
+3. CI 自动构建 NSIS 安装包并发布到 GitHub Release
+
 ### 编码规范
 
 - Rust：遵循 `cargo fmt` + `cargo clippy`

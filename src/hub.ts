@@ -801,19 +801,42 @@ function showDayDetail(day: number) {
     const d = new Date(r.remind_at);
     return d.getDate() === day && d.getMonth() + 1 === calMonth && d.getFullYear() === calYear;
   });
+  // 过滤当天更新的便签（按 updated_at 本地日期匹配）
+  const dayNotes = [...activeNotes, ...archivedNotes].filter(n => {
+    const d = new Date(n.updated_at);
+    return d.getDate() === day && d.getMonth() + 1 === calMonth && d.getFullYear() === calYear;
+  });
   const lunarText = calLunarMap.get(day) || '';
   const dateHeader = getLocale() === 'zh' ? `${calMonth}/${day} ${lunarText}` : `${calMonth}/${day}`;
+  let html = `<div class="cal-detail-title">${dateHeader}</div>`;
+  // 提醒区块
   if (dayReminders.length === 0) {
-    detailEl.innerHTML = `<div class="cal-detail-title">${dateHeader}</div><div class="cal-empty">${t('hub.noRemindersOnDay')}</div>`;
+    html += `<div class="cal-empty">${t('hub.noRemindersOnDay')}</div>`;
   } else {
-    const items = dayReminders.map(r => {
+    html += dayReminders.map(r => {
       const dt = new Date(r.remind_at).toLocaleTimeString(getLocaleTag(), { hour: '2-digit', minute: '2-digit' });
       const repeat = r.repeat_type !== 'once' && r.repeat_type !== 'none' ? ` · ${repeatLabel(r.repeat_type)}` : '';
       const status = r.status || 'pending';
       return `<div class="cal-reminder-item"><span class="cal-reminder-status ${status}"></span><span class="cal-reminder-time">${dt}</span><span class="cal-reminder-title">${escapeHtml(r.note_title)}</span><span class="cal-reminder-repeat">${repeat}</span></div>`;
     }).join('');
-    detailEl.innerHTML = `<div class="cal-detail-title">${dateHeader}</div>${items}`;
   }
+  // 当天便签区块
+  html += `<div class="cal-day-notes-title">${t('hub.dayNotes')}</div>`;
+  if (dayNotes.length === 0) {
+    html += `<div class="cal-empty">${t('hub.noNotesOnDay')}</div>`;
+  } else {
+    html += dayNotes.map(n =>
+      `<div class="cal-detail-note-item" data-note-id="${n.id}"><span class="cal-detail-note-dot"></span><span class="cal-detail-note-text">${escapeHtml(n.title) || t('note.untitled')}</span></div>`
+    ).join('');
+  }
+  detailEl.innerHTML = html;
+  // 便签点击事件：打开便签窗口
+  detailEl.querySelectorAll('.cal-detail-note-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const noteId = (el as HTMLElement).dataset.noteId!;
+      invoke('activate_note_by_id', { noteId }).catch(err => console.error('激活便签失败:', err));
+    });
+  });
   // 添加"创建提醒"按钮
   const createBtn = document.createElement('button');
   createBtn.className = 'btn-secondary cal-create-btn';

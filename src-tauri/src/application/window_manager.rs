@@ -2,15 +2,22 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::domain::Note;
 
-/// 闪烁提示：临时置顶 300ms 后恢复原状态
+/// 闪烁提示：临时置顶 1.8s 匹配前端动画时长，立即定向发送 flash-window 事件
+///
+/// 关键时序：事件必须同步发送（不能放到线程延迟中），否则事件到达时窗口已恢复非置顶，
+/// 被其他 always_on_top 便签遮挡，导致看不到闪烁。
+///
+/// 注意：必须使用 emit_to 定向发送到当前窗口，禁止使用 emit 广播（会导致所有便签都闪烁）
 fn flash_window(window: &tauri::WebviewWindow, restore_on_top: bool) {
+    let label = window.label().to_string();
     let _ = window.set_always_on_top(true);
+    // 立即定向发送事件，前端开始闪烁动画（窗口处于置顶状态，可见）
+    let _ = window.emit_to(&label, "flash-window", ());
     let win_clone = window.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        // 置顶保持 1.8s 匹配前端动画时长
+        std::thread::sleep(std::time::Duration::from_millis(1800));
         let _ = win_clone.set_always_on_top(restore_on_top);
-        // 发送事件让前端闪烁
-        let _ = win_clone.emit("flash-window", ());
     });
 }
 

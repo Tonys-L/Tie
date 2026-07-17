@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use rusqlite::{params, OptionalExtension, Row};
 
-use crate::domain::{Note, NoteColor, NoteRepository, WindowState};
+use crate::domain::{Note, NoteRepository, WindowState};
 
 use super::Database;
 
@@ -24,7 +24,7 @@ fn row_to_note(row: &Row) -> rusqlite::Result<Note> {
         id: row.get("id")?,
         title: row.get("title")?,
         content: row.get("content")?,
-        color: NoteColor::from_str(&row.get::<_, String>("color")?),
+        color: row.get("color")?,
         opacity: row.get("opacity")?,
         window_state: WindowState {
             pos_x: row.get("pos_x")?,
@@ -69,7 +69,7 @@ impl NoteRepository for SqliteNoteRepository {
                 note.id,
                 note.title,
                 note.content,
-                note.color.as_str(),
+                &note.color,
                 note.opacity,
                 note.window_state.pos_x,
                 note.window_state.pos_y,
@@ -204,7 +204,7 @@ mod tests {
         let found = found.unwrap();
         assert_eq!(found.id, note.id);
         assert_eq!(found.title, "测试便签");
-        assert_eq!(found.color, NoteColor::Amber);
+        assert_eq!(found.color, "amber");
         assert_eq!(found.opacity, 1.0);
         assert!(!found.is_pinned);
     }
@@ -268,7 +268,7 @@ mod tests {
         repo.save(&note).unwrap();
 
         let found = repo.find_by_id(&id).unwrap().unwrap();
-        assert_eq!(found.color, NoteColor::Blue);
+        assert_eq!(found.color, "blue");
         assert_eq!(found.opacity, 0.5);
         assert!(found.is_pinned);
     }

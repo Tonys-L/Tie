@@ -93,7 +93,7 @@ async function initNoteWindow(id: string) {
   getCurrentWindow().listen('flash-window', () => {
     const app = document.getElementById('app')!;
     app.classList.add('flash-highlight');
-    setTimeout(() => app.classList.remove('flash-highlight'), 1000);
+    setTimeout(() => app.classList.remove('flash-highlight'), 3600);
   });
 
   // 监听提醒触发事件：窗口已存在时，后端发送此事件显示横幅
@@ -123,6 +123,7 @@ function renderNote(note: Note) {
     </div>
     <div class="title-bar" data-drag>
       <span class="title-text" data-title>${escapeHtml(note.title) || t('app.note')}</span>
+      <span class="title-time">${formatNoteTime(note.created_at)}</span>
 	      <button class="icon-btn pin-btn ${note.is_pinned ? 'pinned' : ''}" data-pin title="${t('note.pin')}"></button>
 	      <button class="icon-btn" data-close title="${t('note.close')}">&times;</button>
     </div>
@@ -139,6 +140,7 @@ function renderNote(note: Note) {
         ${Object.entries(COLORS).map(([name, c]) =>
           `<div class="color-dot ${note.color === name ? 'active' : ''}" data-color="${name}" style="background:${c.dot}"></div>`
         ).join('')}
+        <div class="color-dot custom-color-dot ${note.color.startsWith('#') ? 'active' : ''}" data-custom-color title="${t('note.customColor')}"></div>
       </div>
       <input type="range" class="opacity-slider" data-opacity min="0.3" max="1" step="0.05" value="${note.opacity}">
       <button class="icon-btn ai-btn" data-ai-sniff title="${t('hub.aiAssistant')}" disabled><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v1.3h6V16.7c0-.8.4-1.5 1-2A7 7 0 0 0 12 2z"/></svg></button>
@@ -216,6 +218,127 @@ function closeCtxMenu() {
   if (menu) menu.remove();
 }
 
+// ============ 自定义颜色面板 ============
+
+/** 预设自定义颜色（hex 值，覆盖常用色相） */
+const PRESET_COLORS: string[] = [
+  '#ef4444', '#f59e0b', '#eab308', '#22c55e',
+  '#14b8a6', '#3b82f6', '#6366f1', '#8b5cf6',
+  '#ec4899', '#64748b', '#0ea5e9', '#84cc16',
+];
+
+/** 关闭已存在的颜色面板 */
+function closeColorPanel() {
+  const panel = document.getElementById('color-panel');
+  if (panel) panel.remove();
+  // 清理外部 mousedown 监听
+  if (colorPanelCloseHandler) {
+    document.removeEventListener('mousedown', colorPanelCloseHandler);
+    colorPanelCloseHandler = null;
+  }
+}
+
+/** 颜色面板外部点击关闭监听（全局引用，用于清理） */
+let colorPanelCloseHandler: ((ev: MouseEvent) => void) | null = null;
+
+/**
+ * 显示自定义颜色面板：12 个预设颜色 + hex 输入框。
+ * 替代原生 <input type="color">（WebView2 中弹框位置不可控，默认在屏幕左上角）。
+ */
+function showCustomColorPanel(note: Note, app: HTMLElement, customDot: HTMLElement) {
+  closeColorPanel();
+  closeCtxMenu();
+
+  const panel = document.createElement('div');
+  panel.id = 'color-panel';
+
+  // 预设颜色网格
+  const grid = document.createElement('div');
+  grid.className = 'cp-grid';
+  PRESET_COLORS.forEach(hex => {
+    const cell = document.createElement('div');
+    cell.className = 'cp-cell';
+    cell.style.background = hex;
+    if (note.color.toLowerCase() === hex.toLowerCase()) cell.classList.add('selected');
+    cell.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      applyCustomColor(note, app, customDot, hex);
+      closeColorPanel();
+    });
+    grid.appendChild(cell);
+  });
+  panel.appendChild(grid);
+
+  // hex 输入框
+  const inputWrap = document.createElement('div');
+  inputWrap.className = 'cp-input-wrap';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'cp-input';
+  input.value = note.color.startsWith('#') ? note.color : '#3b82f6';
+  input.maxLength = 7;
+  input.setAttribute('spellcheck', 'false');
+  const applyBtn = document.createElement('button');
+  applyBtn.className = 'cp-apply';
+  applyBtn.textContent = '✓';
+  applyBtn.title = t('note.customColor');
+  const applyHex = () => {
+    let v = input.value.trim();
+    if (!v.startsWith('#')) v = '#' + v;
+    if (/^#[0-9a-fA-F]{6}$/.test(v)) {
+      applyCustomColor(note, app, customDot, v.toLowerCase());
+      closeColorPanel();
+    }
+  };
+  applyBtn.addEventListener('click', (ev) => { ev.stopPropagation(); applyHex(); });
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); applyHex(); }
+    if (ev.key === 'Escape') { ev.preventDefault(); closeColorPanel(); }
+  });
+  inputWrap.appendChild(input);
+  inputWrap.appendChild(applyBtn);
+  panel.appendChild(inputWrap);
+
+  document.body.appendChild(panel);
+
+  // 阻止面板内 click 冒泡，防止触发外部关闭监听
+  panel.addEventListener('click', (ev) => ev.stopPropagation());
+
+  // 定位面板：圆点上方，不超出窗口
+  const rect = customDot.getBoundingClientRect();
+  const panelRect = panel.getBoundingClientRect();
+  const maxX = window.innerWidth - panelRect.width - 4;
+  const x = Math.min(rect.left, maxX);
+  // 优先在圆点上方弹出，空间不足时下方
+  const aboveY = rect.top - panelRect.height - 4;
+  const belowY = rect.bottom + 4;
+  const y = aboveY > 4 ? aboveY : belowY;
+  panel.style.left = Math.max(4, x) + 'px';
+  panel.style.top = y + 'px';
+
+  // 点击面板外部关闭（mousedown 比 click 更可靠，避免输入框失焦后意外关闭）
+  const closeOnOutside = (ev: MouseEvent) => {
+    if (panel.contains(ev.target as Node)) return;
+    closeColorPanel();
+  };
+  colorPanelCloseHandler = closeOnOutside;
+  setTimeout(() => {
+    document.addEventListener('mousedown', closeOnOutside);
+    window.addEventListener('blur', closeColorPanel, { once: true });
+  }, 0);
+}
+
+/** 应用自定义颜色：更新 note + UI + 持久化 */
+function applyCustomColor(note: Note, app: HTMLElement, customDot: HTMLElement, hex: string) {
+  note.color = hex;
+  app.querySelectorAll('.color-dot').forEach(d => d.classList.remove('active'));
+  customDot.classList.add('active');
+  applyNoteStyle(note);
+  invoke('update_note_style', {
+    id: note.id, color: hex, opacity: note.opacity, isPinned: note.is_pinned,
+  });
+}
+
 function showContextMenu(e: MouseEvent, note: Note, app: HTMLElement) {
   // 移除已有菜单
   document.getElementById('ctx-menu')?.remove();
@@ -260,7 +383,7 @@ function showContextMenu(e: MouseEvent, note: Note, app: HTMLElement) {
       label: `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${c.dot};margin-right:6px;vertical-align:middle;"></span>${name}`,
       action: () => {
         note.color = name;
-        app.querySelectorAll('[data-color]').forEach(d => d.classList.remove('active'));
+        app.querySelectorAll('.color-dot').forEach(d => d.classList.remove('active'));
         const dot = app.querySelector(`[data-color="${name}"]`);
         if (dot) dot.classList.add('active');
         applyNoteStyle(note);
@@ -455,10 +578,31 @@ function setupTodoSortButton(note: Note, app: HTMLElement): void {
   contentView.insertBefore(btn, contentView.firstChild);
 }
 
+/** 格式化便签创建时间为简短显示（如 "7/17 10:30"） */
+function formatNoteTime(iso: string): string {
+  const d = new Date(iso);
+  const locale = localStorage.getItem('locale') || 'zh';
+  const month = d.getMonth() + 1;
+  const day = d.getDate();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return locale === 'zh' ? `${month}/${day} ${hh}:${mm}` : `${month}/${day} ${hh}:${mm}`;
+}
+
 function applyNoteStyle(note: Note) {
-  const colors = COLORS[note.color] || COLORS.amber;
   const app = document.getElementById('app')!;
-  app.style.backgroundColor = colors.bg(note.opacity);
+  const colors = COLORS[note.color];
+  if (colors) {
+    app.style.backgroundColor = colors.bg(note.opacity);
+  } else if (note.color.startsWith('#')) {
+    // 自定义颜色：hex 转 rgba
+    const r = parseInt(note.color.slice(1, 3), 16);
+    const g = parseInt(note.color.slice(3, 5), 16);
+    const b = parseInt(note.color.slice(5, 7), 16);
+    app.style.backgroundColor = `rgba(${r}, ${g}, ${b}, ${note.opacity})`;
+  } else {
+    app.style.backgroundColor = COLORS.amber.bg(note.opacity);
+  }
 }
 
 // ============ 标签渲染 ============
@@ -706,7 +850,7 @@ function setupNoteEvents(note: Note) {
     dot.addEventListener('click', () => {
       const color = (dot as HTMLElement).dataset.color!;
       note.color = color;
-      app.querySelectorAll('[data-color]').forEach(d => d.classList.remove('active'));
+      app.querySelectorAll('.color-dot').forEach(d => d.classList.remove('active'));
       dot.classList.add('active');
       applyNoteStyle(note);
       invoke('update_note_style', {
@@ -714,6 +858,16 @@ function setupNoteEvents(note: Note) {
       });
     });
   });
+
+  // ---- 自定义颜色 ----
+  // 点击圆点弹出颜色面板（WebView2 原生 color picker 弹框位置不可控，改用自定义面板）
+  const customDot = app.querySelector('[data-custom-color]') as HTMLElement;
+  if (customDot) {
+    customDot.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showCustomColorPanel(note, app, customDot);
+    });
+  }
 
   // ---- 透明度滑块 ----
   const slider = app.querySelector('[data-opacity]') as HTMLInputElement;
