@@ -177,6 +177,9 @@ function renderNote(note: Note) {
 
   // ---- 右键菜单 ----
   setupContextMenu(note, app);
+
+  // ---- 待办排序按钮 ----
+  setupTodoSortButton(note, app);
 }
 
 // ============ 右键菜单 ============
@@ -221,7 +224,24 @@ function showContextMenu(e: MouseEvent, note: Note, app: HTMLElement) {
   menu.id = 'ctx-menu';
   menu.style.cssText = `position:fixed;z-index:99999;background:var(--surface,#fff);border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:4px 0;box-shadow:0 4px 16px rgba(0,0,0,0.12);min-width:140px;font-size:12px;`;
 
-  const items = [
+  type MenuItem = { label?: string; action?: () => void; type?: string; danger?: boolean };
+
+  // AI 操作始终显示，点击时若无选区则提示
+  const selection = getSelectedText(note, app);
+  const aiAction = (op: string) => {
+    if (!selection) { showToast(t('note.aiNoSelection'), 'error'); return; }
+    rewriteText(selection, op);
+  };
+  const aiItems: MenuItem[] = [
+    { type: 'separator' },
+    { label: '✨ ' + t('note.aiTidy'), action: () => aiAction('tidy') },
+    { label: '📋 ' + t('note.aiTodoSplit'), action: () => aiAction('todo_split') },
+    { label: '👔 ' + t('note.aiStyleFormal'), action: () => aiAction('style_formal') },
+    { label: '📢 ' + t('note.aiStyleConcise'), action: () => aiAction('style_concise') },
+    { label: '🤝 ' + t('note.aiStyleMild'), action: () => aiAction('style_mild') },
+  ];
+
+  const items: MenuItem[] = [
     { label: note.is_pinned ? t('note.unpin') : t('note.pin'), action: () => {
       note.is_pinned = !note.is_pinned;
       const pinBtn = app.querySelector('[data-pin]') as HTMLElement;
@@ -234,6 +254,7 @@ function showContextMenu(e: MouseEvent, note: Note, app: HTMLElement) {
     { label: t('note.delete'), danger: true, action: () => {
       showDeleteConfirm(note.id, app);
     }},
+    ...aiItems,
     { type: 'separator' },
     ...Object.entries(COLORS).map(([name, c]) => ({
       label: `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${c.dot};margin-right:6px;vertical-align:middle;"></span>${name}`,
@@ -273,6 +294,165 @@ function showContextMenu(e: MouseEvent, note: Note, app: HTMLElement) {
   const maxY = window.innerHeight - menuRect.height - 4;
   menu.style.left = Math.min(rect.x, maxX) + 'px';
   menu.style.top = Math.min(rect.y, maxY) + 'px';
+}
+
+// ============ AI 文本重写 ============
+
+/**
+ * 获取当前选中的文本及其替换函数。
+ * - 编辑模式：通过 textarea.selectionStart/End 获取
+ * - 查看模式：通过 window.getSelection() 获取
+ * - 选中文本 trim 后长度 < 5 时返回 null（前端预检查，与后端校验对齐）
+ */
+function getSelectedText(note: Note, app: HTMLElement): { text: string; replace: (newText: string) => void } | null {
+  const textarea = app.querySelector('[data-content]') as HTMLTextAreaElement;
+
+  // 编辑模式：检查 textarea 选区
+  if (textarea && textarea.style.display !== 'none') {
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    if (start !== end) {
+      const text = textarea.value.substring(start, end);
+      if (text.trim().length < 5) return null;
+      return {
+        text,
+        replace: (newText: string) => {
+          textarea.value = textarea.value.substring(0, start) + newText + textarea.value.substring(end);
+          textarea.dispatchEvent(new Event('input'));
+        }
+      };
+    }
+  }
+
+  // 查看模式：检查 window.getSelection()
+  const selection = window.getSelection();
+  if (selection && selection.toString().trim().length >= 5) {
+    const text = selection.toString();
+    return {
+      text,
+      replace: (newText: string) => {
+        note.content = note.content.replace(text, newText);
+        invoke('update_note_content', { id: note.id, content: note.content });
+        const contentView = app.querySelector('[data-content-view]') as HTMLElement;
+        if (contentView) contentView.innerHTML = renderMarkdown(note.content);
+      }
+    };
+  }
+
+  return null;
+}
+
+/**
+ * 调用后端 ai_rewrite_text 重写选中文本并替换。
+ * 显示 loading → 调用后端 → 替换文本 → 显示结果提示。
+ */
+async function rewriteText(selection: { text: string; replace: (newText: string) => void }, operation: string): Promise<void> {
+  try {
+    showToast(t('note.aiProcessing'), 'info', true);
+    const result = await invoke<string>('ai_rewrite_text', { text: selection.text, operation });
+    if (result) {
+      selection.replace(result);
+      showToast(t('note.aiReplaced'), 'success');
+    }
+  } catch (e) {
+    console.error('AI 重写失败:', e);
+    showToast(t('note.aiFailed') + ': ' + e, 'error');
+  }
+}
+
+/**
+ * 轻量 toast 提示（底部居中），新提示自动替换已有提示。
+ * persistent=true 时不自动消失（用于 loading 状态，由后续 toast 替换）。
+ */
+function showToast(message: string, type: 'info' | 'success' | 'error' = 'info', persistent: boolean = false): void {
+  const existing = document.querySelector('.ai-toast');
+  if (existing) existing.remove();
+  const toast = document.createElement('div');
+  toast.className = 'ai-toast';
+  toast.textContent = message;
+  const bg = type === 'error' ? '#dc2626' : type === 'success' ? '#16a34a' : '#475569';
+  toast.style.cssText = `position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:6px 12px;border-radius:4px;font-size:12px;z-index:99999;background:${bg};color:#fff;box-shadow:0 2px 8px rgba(0,0,0,0.15);white-space:nowrap;`;
+  document.body.appendChild(toast);
+  if (!persistent) {
+    setTimeout(() => toast.remove(), 2000);
+  }
+}
+
+// ============ 待办清单 AI 排序 ============
+
+/** 已排序的便签 id 集合（内存级，内容变化时清除，避免重复显示排序按钮） */
+const sortedNoteIds = new Set<string>();
+
+/** 提取 content 中所有未完成待办条目（`- [ ]` / `* [ ]` / `+ [ ]`）的文本 */
+function extractTodoItems(content: string): string[] {
+  return content
+    .split('\n')
+    .filter(line => /^\s*[-*+]\s+\[ \] /.test(line))
+    .map(line => line.replace(/^\s*[-*+]\s+\[ \] /, ''));
+}
+
+/** 将排序后的条目按原顺序替换回 content 中的未完成待办行（保留原标记符和缩进） */
+function applySortedTodos(content: string, sortedItems: string[]): string {
+  const lines = content.split('\n');
+  let idx = 0;
+  return lines
+    .map(line => {
+      const m = line.match(/^(\s*)([-*+]\s+)\[ \] (.*)$/);
+      if (m) {
+        const item = idx < sortedItems.length ? sortedItems[idx] : m[3];
+        idx++;
+        return `${m[1]}${m[2]}[ ] ${item}`;
+      }
+      return line;
+    })
+    .join('\n');
+}
+
+/** 检测待办条目 >3 且未排序时在 content-view 顶部显示 AI 排序按钮 */
+function setupTodoSortButton(note: Note, app: HTMLElement): void {
+  const todos = extractTodoItems(note.content);
+  if (todos.length <= 3) return;
+  // 已排序的便签不再显示按钮（内容变化时清除标记）
+  if (sortedNoteIds.has(note.id)) return;
+
+  const contentView = app.querySelector('[data-content-view]') as HTMLElement;
+  if (!contentView) return;
+
+  // 避免重复插入
+  if (contentView.querySelector('.todo-sort-btn')) return;
+
+  const btn = document.createElement('button');
+  btn.className = 'todo-sort-btn';
+  btn.textContent = t('note.aiSortTodos');
+  btn.style.cssText = 'display:block;margin:4px 0 8px;padding:4px 10px;font-size:11px;background:#3B82F6;color:#fff;border:none;border-radius:4px;cursor:pointer;';
+  btn.addEventListener('click', async () => {
+    btn.textContent = t('note.aiSorting');
+    (btn as HTMLButtonElement).disabled = true;
+    try {
+      const sorted = await invoke<string[]>('ai_sort_todos', { todos });
+      if (sorted.length !== todos.length) {
+        showToast(t('note.aiSortMismatch'), 'error');
+        return;
+      }
+      note.content = applySortedTodos(note.content, sorted);
+      // 标记为已排序，排序后不重新显示按钮
+      sortedNoteIds.add(note.id);
+      // 更新编辑框和视图
+      const textarea = app.querySelector('[data-content]') as HTMLTextAreaElement;
+      if (textarea) textarea.value = note.content;
+      contentView.innerHTML = renderMarkdown(note.content);
+      // 自动保存
+      invoke('update_note_content', { id: note.id, content: note.content });
+      showToast(t('note.aiSortDone'), 'success');
+    } catch (e) {
+      console.error('AI 排序失败:', e);
+      showToast(t('note.aiFailed'), 'error');
+    } finally {
+      btn.textContent = t('note.aiSortTodos');
+      (btn as HTMLButtonElement).disabled = false;
+    }
+  });
+  contentView.insertBefore(btn, contentView.firstChild);
 }
 
 function applyNoteStyle(note: Note) {
@@ -364,6 +544,9 @@ function setupNoteEvents(note: Note) {
       textarea.value = note.content;
       // 重新渲染查看区
       contentView.innerHTML = renderMarkdown(note.content);
+      // checkbox 切换改变了待办状态，清除已排序标记并重新检测排序按钮
+      sortedNoteIds.delete(note.id);
+      setupTodoSortButton(note, app);
       // 自动保存
       invoke('update_note_content', { id: note.id, content: note.content });
       // checkbox 切换不触发嗅探（只是状态变化，内容主体未变）
@@ -389,11 +572,17 @@ function setupNoteEvents(note: Note) {
   // 失焦 → 保存并切回查看模式
   textarea.addEventListener('blur', () => {
     const content = textarea.value;
+    // 内容变化时清除已排序标记，允许再次排序
+    if (content !== note.content) {
+      sortedNoteIds.delete(note.id);
+    }
     note.content = content;
     contentView.innerHTML = renderMarkdown(content);
     textarea.style.display = 'none';
     contentView.style.display = 'block';
     invoke('update_note_content', { id: note.id, content });
+    // 重新检测待办排序按钮（内容变化后待办数量可能 > 3）
+    setupTodoSortButton(note, app);
     // 嗅探：失焦保存后异步识别时间关键词
     sniffAfterSave(note);
   });
@@ -854,15 +1043,20 @@ function showSniffEmptyHint(app: HTMLElement): void {
  * force=true 时绕过防抖和内容变化检查（手动触发），
  * 失败时通过可选回调通知调用方。
  */
-function sniffAfterSave(note: Note, force: boolean = false, onDone?: (suggestions: Suggestion[]) => void): void {
+async function sniffAfterSave(note: Note, force: boolean = false, onDone?: (suggestions: Suggestion[]) => void): Promise<void> {
   if (!force) {
     // 内容未变则跳过
     const lastContent = sniffContentMap.get(note.id);
-    if (lastContent === note.content) return;
+    if (lastContent === note.content) { if (onDone) onDone([]); return; }
     // 防抖：10 秒内不重复嗅探同一便签
     const now = Date.now();
     const last = sniffDebounceMap.get(note.id) || 0;
-    if (now - last < SNIFF_DEBOUNCE_MS) return;
+    if (now - last < SNIFF_DEBOUNCE_MS) { if (onDone) onDone([]); return; }
+    // 前端预检查嗅探开关：关闭则直接跳过，不发起 IPC 调用
+    try {
+      const config = await invoke<AiConfig>('get_ai_config');
+      if (!config.sniff_enabled) { if (onDone) onDone([]); return; }
+    } catch { /* 读取配置失败则继续，后端会再次校验 */ }
     sniffDebounceMap.set(note.id, now);
     sniffContentMap.set(note.id, note.content);
   }

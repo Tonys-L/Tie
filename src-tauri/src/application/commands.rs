@@ -544,3 +544,144 @@ pub async fn sniff_suggestions(content: String) -> Result<Vec<super::reminder_pa
         .await
         .map_err(|e| e.to_string())
 }
+
+/// 生成周报/月报草稿
+///
+/// 基于便签列表调用 AI 生成 Markdown 报告。
+/// - `period_type`：`"weekly"` 或 `"monthly"`
+/// - `start_date` / `end_date`：ISO 格式 `YYYY-MM-DD`，用于过滤便签范围
+///
+/// 未配置 AI 时返回 `"AI 未配置"` 错误。
+#[tauri::command]
+pub async fn generate_report(
+    state: State<'_, AppState>,
+    period_type: String,
+    start_date: String,
+    end_date: String,
+) -> Result<super::report_generator::ReportDraft, String> {
+    let path = super::ai_config::AiConfig::default_path();
+    let config = super::ai_config::AiConfig::load(&path)?;
+    if !config.is_configured() {
+        return Err("AI 未配置".to_string());
+    }
+    let period = match period_type.as_str() {
+        "weekly" => super::report_generator::ReportPeriod::Weekly {
+            start: start_date.clone(),
+            end: end_date.clone(),
+        },
+        "monthly" => {
+            let year: u32 = start_date
+                .chars()
+                .take(4)
+                .collect::<String>()
+                .parse()
+                .map_err(|_| "无效的年份".to_string())?;
+            let month: u32 = start_date
+                .chars()
+                .skip(5)
+                .take(2)
+                .collect::<String>()
+                .parse()
+                .map_err(|_| "无效的月份".to_string())?;
+            super::report_generator::ReportPeriod::Monthly { year, month }
+        }
+        _ => {
+            return Err(format!(
+                "无效的 period_type: {}，应为 weekly 或 monthly",
+                period_type
+            ));
+        }
+    };
+    let notes = state.note_repo.find_all()?;
+    // 按 updated_at 日期部分过滤在 [start_date, end_date] 范围内的便签
+    let filtered: Vec<crate::domain::Note> = notes
+        .into_iter()
+        .filter(|note| {
+            let date_part: String = note.updated_at.chars().take(10).collect();
+            date_part >= start_date && date_part <= end_date
+        })
+        .collect();
+    super::report_generator::generate_report(&filtered, period, &config)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// AI 文本重写
+///
+/// 用户在便签中选中文本后右键调用，根据 `operation` 指定的风格重写文本。
+/// - `operation`：`tidy` / `todo_split` / `style_formal` / `style_concise` / `style_mild`
+/// - 文本长度限制 5~500 字符（按字符计数，避免 UTF-8 切片 panic）
+///
+/// 未配置 AI 时返回 `"AI 未配置"` 错误。
+#[tauri::command]
+pub async fn ai_rewrite_text(
+    _state: State<'_, AppState>,
+    text: String,
+    operation: String,
+) -> Result<String, String> {
+    let path = super::ai_config::AiConfig::default_path();
+    let config = super::ai_config::AiConfig::load(&path)?;
+    if !config.is_configured() {
+        return Err("AI 未配置".to_string());
+    }
+    let op = super::prompts::rewrite::RewriteOperation::from_str(&operation)
+        .ok_or_else(|| "无效的操作类型".to_string())?;
+    let char_count = text.chars().count();
+    if char_count < 5 || char_count > 500 {
+        return Err("请选中文本长度在 5~500 字符之间".to_string());
+    }
+    let messages = super::prompts::rewrite::build_rewrite_messages(&text, op);
+    let service = super::ai_service::AiService::new(config);
+    let result = service.call(messages).await.map_err(|e| e.to_string())?;
+    Ok(result.trim().to_string())
+}
+
+/// AI 待办清单智能排序
+///
+/// 接收待办条目列表，调用 AI 按紧急程度排序后返回。
+/// 条目数 ≤ 3 时拒绝排序（无必要）。
+#[tauri::command]
+pub async fn ai_sort_todos(
+    _state: State<'_, AppState>,
+    todos: Vec<String>,
+) -> Result<Vec<String>, String> {
+    if todos.len() <= 3 {
+        return Err("待办条目数 ≤ 3，无需 AI 排序".to_string());
+    }
+    let path = super::ai_config::AiConfig::default_path();
+    let config = super::ai_config::AiConfig::load(&path)?;
+    if !config.is_configured() {
+        return Err("AI 未配置".to_string());
+    }
+    let messages = super::prompts::sort::build_sort_messages(&todos);
+    let service = super::ai_service::AiService::new(config);
+    let result = service.call(messages).await.map_err(|e| e.to_string())?;
+
+    // 解析 JSON 数组
+    let trimmed = result.trim();
+    // 尝试提取 JSON 数组（兼容 AI 可能附加的额外文本）
+    let json_str = extract_json_array(trimmed).ok_or_else(|| "排序结果解析失败".to_string())?;
+    let arr: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
+    let arr = arr
+        .as_array()
+        .ok_or_else(|| "排序结果不是数组".to_string())?;
+    let sorted: Vec<String> = arr
+        .iter()
+        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+        .collect();
+    if sorted.is_empty() {
+        return Err("排序结果为空".to_string());
+    }
+    Ok(sorted)
+}
+
+/// 从 AI 返回文本中提取 JSON 数组片段
+fn extract_json_array(text: &str) -> Option<String> {
+    let start = text.find('[')?;
+    let end = text.rfind(']')?;
+    if end >= start {
+        Some(text[start..=end].to_string())
+    } else {
+        None
+    }
+}

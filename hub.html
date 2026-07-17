@@ -310,6 +310,24 @@
     .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
     .btn-secondary:hover { background: var(--surface-hover); }
 
+    /* AI 报告按钮（主题蓝） */
+    .btn-ai-report {
+      background: #3B82F6;
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-family: inherit;
+      transition: background 0.12s;
+    }
+    .btn-ai-report:hover { background: #2563EB; }
+    .btn-ai-report:disabled { background: #9CA3AF; cursor: not-allowed; }
+
     /* ===== 日历页 ===== */
     .cal-header {
       display: flex; align-items: center; justify-content: center;
@@ -556,6 +574,8 @@
             <button class="cal-view-btn active" data-view="month" data-i18n="hub.monthView">月</button>
             <button class="cal-view-btn" data-view="year" data-i18n="hub.yearView">年</button>
           </div>
+          <button class="btn-ai-report" id="btn-generate-weekly-report" data-i18n="hub.generateWeeklyReport">生成周报</button>
+          <button class="btn-ai-report" id="btn-generate-monthly-report" data-i18n="hub.generateMonthlyReport">生成月报</button>
         </div>
         <!-- 月视图 -->
         <div id="cal-month-view" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
@@ -737,7 +757,7 @@
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
           </div>
           <div class="about-name" data-i18n="app.name">AI 便签</div>
-          <div class="about-version">v0.5.0 · <span data-i18n="hub.desktopApp">桌面便签应用</span></div>
+          <div class="about-version">v0.7.0 · <span data-i18n="hub.desktopApp">桌面便签应用</span></div>
           <div class="about-info">
             <strong data-i18n="hub.aboutFeatures">功能</strong><br>
             <span data-i18n="hub.aboutF1">· Markdown 编辑，支持图片拖入、待办清单</span><br>
@@ -745,14 +765,24 @@
             <span data-i18n="hub.aboutF3">· 日历视图：月历+年历，直观查看提醒分布</span><br>
             <span data-i18n="hub.aboutF4">· 标签管理、置顶、颜色、透明度、归档</span><br>
             <span data-i18n="hub.aboutF5">· Git 多设备同步，数据完全本地存储</span><br>
+            <span data-i18n="hub.aboutF6">· AI 嗅探：保存便签自动识别提醒/拆任务/规整/标签</span><br>
+            <span data-i18n="hub.aboutF7">· AI 文本重写：右键菜单 5 种操作（规整/转清单/正式/精简/温和）</span><br>
+            <span data-i18n="hub.aboutF8">· AI 待办排序：待办 > 3 条时按紧急程度智能排序</span><br>
+            <span data-i18n="hub.aboutF9">· AI 周报/月报：日历页一键生成回顾草稿</span><br>
             <br>
             <strong data-i18n="hub.aboutUsage">使用方式</strong><br>
             <span data-i18n="hub.aboutU1">· 双击托盘图标 → 新建便签</span><br>
             <span data-i18n="hub.aboutU2">· 输入 - [ ] 任务 → 查看模式显示可点击 checkbox</span><br>
             <span data-i18n="hub.aboutU3">· 拖入图片 → 自动保存到本地并插入引用</span><br>
-            <span data-i18n="hub.aboutU4">· 右键便签内容 → 置顶 / 归档 / 删除 / 换色</span><br>
+            <span data-i18n="hub.aboutU4">· 右键便签内容 → 置顶 / 归档 / 删除 / 换色 / AI 重写</span><br>
             <span data-i18n="hub.aboutU5">· Ctrl+S 保存 · Esc 退出编辑 · Ctrl+N 新建</span><br>
-            <span data-i18n="hub.aboutU6">· Ctrl+Shift+N 全局新建 · Ctrl+Shift+S 显示全部</span>
+            <span data-i18n="hub.aboutU6">· Ctrl+Shift+N 全局新建 · Ctrl+Shift+S 显示全部</span><br>
+            <span data-i18n="hub.aboutU7">· 选中文本右键 → ✨ 规整 / 📋 转清单 / 👔 正式 / 📢 精简 / 🤝 温和</span><br>
+            <span data-i18n="hub.aboutU8">· 待办 > 3 条 → 内容顶部出现 ✨ AI 排序按钮</span><br>
+            <span data-i18n="hub.aboutU9">· 日历页顶部 → 📊 生成月报 · 📋 生成周报</span><br>
+            <br>
+            <strong>GitHub</strong><br>
+            <a href="#" id="about-github-link" style="color:var(--primary,#3B82F6);text-decoration:none;">https://github.com/Tonys-L/Tie</a>
           </div>
         </div>
       </div>

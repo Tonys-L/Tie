@@ -95,7 +95,7 @@
 
 - 前端通过 `@tauri-apps/api/core` 的 `invoke` 调用后端命令
 - 后端通过 `window.emit` / `emit_to` 向前端发送事件（如 `flash-window`、`reminder-triggered`）
-- 27 个命令集中在 `application/commands.rs`
+- 44 个命令集中在 `application/commands.rs`
 - 可能并发的命令必须 `async` 避免死锁
 
 ### 前端多页面边界
@@ -133,6 +133,66 @@
 - `src-tauri/src/application/reminder_parser.rs`（`sniff_suggestions` 函数 + `Suggestion` 结构）
 - `src-tauri/src/application/prompts/sniff.rs`（嗅探 Prompt 模板）
 - `src-tauri/src/application/commands.rs`（`sniff_suggestions` 命令入口）
+
+### 周报/月报生成
+
+**能力定义**: 基于便签列表调用 AI 生成周报/月报 Markdown 草稿，按四个板块（重点/已完成/进行中/零散记录）输出。
+
+**业务规则**:
+- 未配置 AI（api_key 为空）时返回错误（"AI 未配置"），不静默跳过
+- 数据拾取：按 updated_at 倒序，上限 20 条，每条取 content 前 200 字符
+- 便签按 updated_at 日期部分（前 10 字符）过滤在 [start_date, end_date] 范围内
+- 标题自动生成：周报 `YYYY-MM-DD ~ MM-DD 周报`，月报 `YYYY-MM 月报`
+- 不修改便签/提醒数据，不触发自动同步
+
+**变化点**:
+- Prompt 模板可调整（`prompts/report.rs`）
+- 报告板块结构可调整（当前四板块）
+
+**对应代码**:
+- `src-tauri/src/application/report_generator.rs`（`generate_report` 函数 + `ReportPeriod`/`ReportDraft` 结构）
+- `src-tauri/src/application/prompts/report.rs`（报告 Prompt 模板）
+- `src-tauri/src/application/commands.rs`（`generate_report` 命令入口）
+
+### AI 文本重写
+
+**能力定义**: 通过右键菜单对选中文本执行 5 种 AI 重写操作（规整/转清单/更正式/更精简/更温和），结果直接替换选中文本。
+
+**业务规则**:
+- 未配置 AI（api_key 为空）时返回错误，不静默跳过
+- 选中文本长度 < 5 字符时返回错误（前端预检查 + 后端校验对齐）
+- 支持 5 种操作：`tidy`（口语→书面）、`todo_split`（转待办清单）、`style_formal`（更正式）、`style_concise`（更精简）、`style_mild`（更温和）
+- 前端支持编辑模式（textarea 选区）和查看模式（window.getSelection）双模式
+- 替换后自动保存，支持 Ctrl+Z 撤销
+
+**变化点**:
+- 操作类型可扩展（`RewriteOperation` 枚举 + `prompts/rewrite.rs`）
+- Prompt 模板可调整
+
+**对应代码**:
+- `src-tauri/src/application/prompts/rewrite.rs`（`RewriteOperation` 枚举 + `build_rewrite_messages`）
+- `src-tauri/src/application/commands.rs`（`ai_rewrite_text` 命令入口）
+- `src/main.ts`（右键菜单 + `rewriteText` 前端逻辑）
+
+### 待办清单智能排序
+
+**能力定义**: 当便签内未完成待办（`- [ ]`）超过 3 条时，调用 AI 按紧急程度重新排序。
+
+**业务规则**:
+- 待办条目 ≤ 3 时返回错误（"无需 AI 排序"），不调用 AI
+- 排序权重（从高到低）：紧急词 > 近期时间 > 中期时间 > 远期时间 > 一般事项
+- AI 返回 JSON 字符串数组，后端用 `extract_json_array` 提取
+- 排序结果数量必须与输入一致，否则前端提示不匹配并取消
+- 排序后自动保存便签内容
+
+**变化点**:
+- 排序权重规则可调整（`prompts/sort.rs`）
+- 触发阈值（当前 > 3）可调整
+
+**对应代码**:
+- `src-tauri/src/application/prompts/sort.rs`（`build_sort_messages` 排序 Prompt）
+- `src-tauri/src/application/commands.rs`（`ai_sort_todos` 命令 + `extract_json_array` 辅助函数）
+- `src/main.ts`（`extractTodoItems`/`applySortedTodos`/`setupTodoSortButton` 前端逻辑）
 
 ---
 
@@ -178,6 +238,9 @@
 | 标签管理 | 手动标签 + 数量/长度限制 | 可能自动标签/标签颜色 | `domain/note.rs` tags 字段 |
 | 搜索方式 | SQLite LIKE 查询 | 可能引入 FTS5 全文索引 | `sqlite_note_repo.rs` search_notes |
 | AI 嗅探建议类型 | reminder/todo_split/tidy/style/tag_suggest 5 种 | 可能新增更多建议类型 | `reminder_parser.rs` match 分支 + `prompts/sniff.rs` |
+| 报告周期类型 | Weekly/Monthly 2 种 | 可能新增自定义周期 | `report_generator.rs` ReportPeriod 枚举 + `commands.rs` generate_report 参数 |
+| AI 文本重写操作 | tidy/todo_split/style_formal/style_concise/style_mild 5 种 | 可能新增更多操作类型 | `prompts/rewrite.rs` RewriteOperation 枚举 + `commands.rs` ai_rewrite_text |
+| 待办排序触发阈值 | > 3 条待办时触发 | 可能调整为可配置阈值 | `commands.rs` ai_sort_todos 阈值判断 + `main.ts` setupTodoSortButton |
 
 ---
 
@@ -207,3 +270,5 @@
 | 2026-07-15 | 迭代三 v0.4.0：Monthly 改精确日历月；新增 LunarMonthly 重复类型 + tyme4rs 农历库；新增日历视图（Hub 月历展示提醒分布）；ReminderRepository 新增 find_pending_by_date_range；新增 get_reminders_by_month 命令 | — | #FEAT-004 同步更新 constraints.md/glossary.md |
 | 2026-07-15 | 迭代三 v0.4.1：日历视图 7 项增强——显示提醒标题/农历日期/状态区分色/便签活动蓝点/今天本周高亮/点击日期创建提醒/年视图切换；find_pending_by_date_range 改为 find_by_date_range（含所有状态）；新增 get_lunar_dates/get_notes_activity_by_month 命令；NoteRepository 新增 find_activity_by_month | — | #FEAT-005 同步更新 constraints.md |
 | 2026-07-16 | AI 嗅探扩展 4 种建议类型（todo_split/tidy/style/tag_suggest）；新增"AI 嗅探"支撑能力描述；扩展点分析表新增 AI 嗅探建议类型扩展点 | — | #FEAT-006 |
+| 2026-07-16 | 新增"周报/月报生成"支撑能力（report_generator.rs + prompts/report.rs + generate_report 命令）；扩展点分析表新增报告周期类型扩展点；IPC 命令数修正为 42（历史不一致修正，以代码为准） | — | #FEAT-007 |
+| 2026-07-17 | 新增"AI 文本重写"支撑能力（prompts/rewrite.rs + ai_rewrite_text 命令，5 种操作：tidy/todo_split/style_formal/style_concise/style_mild）；新增"待办清单智能排序"支撑能力（prompts/sort.rs + ai_sort_todos 命令，待办 > 3 时触发）；IPC 命令数 42 → 44 | — | #FEAT-008 |

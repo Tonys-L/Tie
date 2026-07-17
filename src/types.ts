@@ -69,3 +69,9 @@ export interface Suggestion {
   description: string;    // 详细描述，如"检测到"明天上午9点"，可添加提醒"
   data: any;              // 类型相关数据（reminder 类型为 SniffResult）
 }
+
+// AI 生成的报告草稿（后端 generate_report 命令返回）
+export interface ReportDraft {
+  title: string;    // 如 "2026-07-13 ~ 07-19 周报" 或 "2026-07 月报"
+  content: string;  // Markdown 内容
+}

@@ -1,7 +1,7 @@
 // ============ API 层：统一封装所有 invoke 调用 ============
 
 import { invoke } from '@tauri-apps/api/core';
-import type { Note, Reminder, SyncConfig, ShortcutConfig, AiConfig, ReminderDraft, Suggestion } from './types';
+import type { Note, Reminder, SyncConfig, ShortcutConfig, AiConfig, ReminderDraft, Suggestion, ReportDraft } from './types';
 
 // ---- 便签 ----
 
@@ -71,3 +71,5 @@ export const parseReminderNatural = (text: string) =>
   invoke<ReminderDraft>('parse_reminder_natural', { text });
 export const sniffSuggestions = (content: string) =>
   invoke<Suggestion[]>('sniff_suggestions', { content });
+export const generateReport = (periodType: 'weekly' | 'monthly', startDate: string, endDate: string) =>
+  invoke<ReportDraft>('generate_report', { periodType, startDate, endDate });

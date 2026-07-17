@@ -160,6 +160,9 @@ pub fn run() {
             commands::test_ai_connection,
             commands::parse_reminder_natural,
             commands::sniff_suggestions,
+            commands::generate_report,
+            commands::ai_rewrite_text,
+            commands::ai_sort_todos,
         ])
         .build(tauri::generate_context!())
         .expect("启动应用失败");

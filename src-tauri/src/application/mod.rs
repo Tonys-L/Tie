@@ -8,6 +8,7 @@ pub mod lunar_calendar;
 pub mod note_service;
 pub mod prompts;
 pub mod reminder_parser;
+pub mod report_generator;
 pub mod reminder_scheduler;
 pub mod reminder_service;
 pub mod shortcut_manager;

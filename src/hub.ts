@@ -41,6 +41,12 @@ document.getElementById('theme-btn')?.addEventListener('click', () => {
   if (label) label.textContent = isDark ? t('hub.lightMode') : t('hub.darkMode');
 });
 
+// ===== 关于页 GitHub 链接 =====
+document.getElementById('about-github-link')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  open('https://github.com/Tonys-L/Tie');
+});
+
 // ===== 页面切换 =====
 document.querySelectorAll('.nav-item').forEach(item => {
   item.addEventListener('click', () => {
@@ -1030,8 +1036,73 @@ async function loadAiConfig() {
   });
 }
 
+// ===== AI 报告生成（周报/月报）=====
+
+function formatDateISO(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function getLastWeekRange(): { start: string; end: string } {
+  // 上周一到周日（以周一为一周开始）
+  const now = new Date();
+  const day = now.getDay(); // 0=周日, 1=周一
+  const diffToLastMonday = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + diffToLastMonday - 7);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return { start: formatDateISO(monday), end: formatDateISO(sunday) };
+}
+
+function getThisMonthRange(): { start: string; end: string } {
+  // 本月1号到月末
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth(), 1);
+  const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  return { start: formatDateISO(first), end: formatDateISO(last) };
+}
+
+async function generateReport(periodType: 'weekly' | 'monthly') {
+  const btnId = periodType === 'weekly' ? 'btn-generate-weekly-report' : 'btn-generate-monthly-report';
+  const btn = document.getElementById(btnId) as HTMLButtonElement;
+  if (!btn) return;
+
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = t('hub.reportGenerating');
+
+  try {
+    const range = periodType === 'weekly' ? getLastWeekRange() : getThisMonthRange();
+    const draft = await api.generateReport(periodType, range.start, range.end);
+
+    // 创建新便签并填充内容
+    const noteId = await api.createNote();
+    await api.updateNoteContent(noteId, draft.content);
+    await api.updateNoteTitle(noteId, draft.title);
+    await api.openNote(noteId);
+
+    showToast(t('hub.reportGenerated'), 'ok');
+    // 刷新便签列表以显示新建的便签
+    loadNotes();
+  } catch (e) {
+    console.error('生成报告失败:', e);
+    showToast(t('hub.reportGenerateFailed') + ': ' + e, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
+document.getElementById('btn-generate-weekly-report')?.addEventListener('click', () => generateReport('weekly'));
+document.getElementById('btn-generate-monthly-report')?.addEventListener('click', () => generateReport('monthly'));
+
 // 初始加载
 applyLocale();
+// 同步窗口标题栏（Tauri 不会自动同步 <title> 标签到标题栏）
+getCurrentWindow().setTitle(t('app.settings'));
 // 同步语言偏好到后端（托盘菜单等）
 invoke('set_locale', { locale: getLocale() });
 
@@ -1041,6 +1112,7 @@ document.getElementById('lang-btn')?.addEventListener('click', () => {
   setLocale(newLang);
   invoke('set_locale', { locale: newLang });
   applyLocale();
+  getCurrentWindow().setTitle(t('app.settings'));
   const langLabel = document.getElementById('lang-label') as HTMLElement;
   if (langLabel) langLabel.textContent = t('hub.langSwitch');
   const themeLabel = document.getElementById('theme-label') as HTMLElement;
