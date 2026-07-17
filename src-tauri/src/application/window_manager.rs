@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::domain::Note;
@@ -105,10 +107,12 @@ pub fn activate_note_for_reminder(app: &AppHandle, note: &Note, reminder_id: &st
 /// 打开所有已保存便签的窗口（启动时恢复）
 ///
 /// 空便签（无标题且无内容）直接删除（INV-003），不创建窗口。
+/// 检测位置重叠的便签并级联偏移，避免完全遮挡。
 pub fn restore_all_windows(app: &AppHandle) -> Result<usize, String> {
     let state = app.state::<crate::AppState>();
     let notes = state.note_repo.find_all()?;
     let mut count = 0;
+    let mut valid_notes: Vec<&Note> = Vec::new();
     for note in &notes {
         // INV-003：空便签不应存在，启动时清理
         if note.title.is_empty() && note.content.is_empty() {
@@ -121,8 +125,39 @@ pub fn restore_all_windows(app: &AppHandle) -> Result<usize, String> {
         }
         if let Err(e) = open_note_window(app, note) {
             eprintln!("[恢复] 便签 {} 窗口创建失败: {}", note.id, e);
+        } else {
+            valid_notes.push(note);
         }
         count += 1;
     }
+    // 防重叠：检测相同位置的便签，级联偏移 30px
+    resolve_overlaps(app, &valid_notes);
     Ok(count)
+}
+
+/// 检测位置重叠的便签窗口，对后续同位置便签级联偏移
+///
+/// 偏移量 = 重复序号 × 30px（x 和 y 同时偏移），形成层叠效果。
+/// 仅移动窗口位置，不修改 DB 中的 window_state（下次启动仍会检测并偏移）。
+fn resolve_overlaps(app: &AppHandle, notes: &[&Note]) {
+    let mut seen_positions: HashMap<(i32, i32), usize> = HashMap::new();
+    const OFFSET_PX: i32 = 30;
+
+    for note in notes {
+        let key = (note.window_state.pos_x, note.window_state.pos_y);
+        let dup_index = seen_positions.entry(key).or_insert(0);
+        if *dup_index > 0 {
+            let offset = (*dup_index as i32) * OFFSET_PX;
+            let label = format!("note-{}", note.id);
+            if let Some(win) = app.get_webview_window(&label) {
+                let _ = win.set_position(tauri::Position::Logical(
+                    tauri::LogicalPosition::new(
+                        (note.window_state.pos_x + offset) as f64,
+                        (note.window_state.pos_y + offset) as f64,
+                    ),
+                ));
+            }
+        }
+        *dup_index += 1;
+    }
 }

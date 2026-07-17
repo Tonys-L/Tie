@@ -43,6 +43,12 @@ pub fn fire_reminders(
             }
         };
 
+        // 归档便签不触发提醒
+        if note.is_archived {
+            eprintln!("[调度器] 便签已归档，跳过提醒: note_id={}", reminder.note_id);
+            continue;
+        }
+
         // 发送系统通知
         let title = if reminder.note_title.is_empty() {
             "便签提醒".to_string()

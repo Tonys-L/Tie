@@ -272,3 +272,4 @@
 | 2026-07-16 | AI 嗅探扩展 4 种建议类型（todo_split/tidy/style/tag_suggest）；新增"AI 嗅探"支撑能力描述；扩展点分析表新增 AI 嗅探建议类型扩展点 | — | #FEAT-006 |
 | 2026-07-16 | 新增"周报/月报生成"支撑能力（report_generator.rs + prompts/report.rs + generate_report 命令）；扩展点分析表新增报告周期类型扩展点；IPC 命令数修正为 42（历史不一致修正，以代码为准） | — | #FEAT-007 |
 | 2026-07-17 | 新增"AI 文本重写"支撑能力（prompts/rewrite.rs + ai_rewrite_text 命令，5 种操作：tidy/todo_split/style_formal/style_concise/style_mild）；新增"待办清单智能排序"支撑能力（prompts/sort.rs + ai_sort_todos 命令，待办 > 3 时触发）；IPC 命令数 42 → 44 | — | #FEAT-008 |
+| 2026-07-17 | v0.8.0：新增"批量操作"支撑能力（batch_archive_notes/batch_delete_notes/batch_update_color 命令）；删除 NoteColor 枚举（color 改为纯 String，前端定义快捷颜色）；IPC 命令数 44 → 47 | — | #FEAT-010 同步更新 constraints.md |

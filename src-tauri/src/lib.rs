@@ -163,6 +163,9 @@ pub fn run() {
             commands::generate_report,
             commands::ai_rewrite_text,
             commands::ai_sort_todos,
+            commands::batch_archive_notes,
+            commands::batch_delete_notes,
+            commands::batch_update_color,
         ])
         .build(tauri::generate_context!())
         .expect("启动应用失败");

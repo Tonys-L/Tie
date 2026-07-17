@@ -326,3 +326,4 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | 2026-07-15 | 迭代三 v0.4.0：Monthly 改精确日历月；新增 LunarMonthly 重复类型 + tyme4rs 农历库；新增日历视图；ReminderRepository 新增 find_pending_by_date_range；新增 get_reminders_by_month 命令；新增 INV-020（LunarMonthly 农历计算在 application 层） | — | #FEAT-003 同步更新 boundaries.md/glossary.md |
 | 2026-07-15 | 迭代三 v0.4.1：日历视图 7 项增强；find_pending_by_date_range 改为 find_by_date_range（含所有状态）；新增 get_lunar_dates/get_notes_activity_by_month 命令；NoteRepository 新增 find_activity_by_month | — | #FEAT-005 同步更新 boundaries.md |
 | 2026-07-17 | 新增已知限制：tao 0.35.3 Windows `flush_paint_messages` 断言失败偶发崩溃（上游未修复）；新增 GitHub Actions CI/CD（tag v* 触发自动构建 NSIS + 发布 Release） | — | #FEAT-009 |
+| 2026-07-17 | v0.8.0：删除 NoteColor 枚举（color 改为纯 String）；新增批量操作命令 batch_archive_notes/batch_delete_notes/batch_update_color；flash-window 改为 emit_to 定向发送；启动防重叠 resolve_overlaps；归档便签不触发提醒 | — | #FEAT-010 同步更新 boundaries.md |

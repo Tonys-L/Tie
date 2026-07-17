@@ -77,12 +77,19 @@ const searchInput = document.getElementById('search') as HTMLInputElement;
 const sortSelect = document.getElementById('sort-select') as HTMLSelectElement;
 const tagListEl = document.getElementById('tag-list')!;
 
+// ===== 多选状态 =====
+let selectedIds: Set<string> = new Set();
+const batchBar = document.getElementById('batch-bar')!;
+
 document.querySelectorAll('.mgr-tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.mgr-tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     currentTab = tab.getAttribute('data-tab') || 'active';
     if (searchInput) { searchInput.value = ''; searchQuery = ''; searchResults = null; }
+    // 切换 tab 时清空多选
+    selectedIds.clear();
+    updateMultiSelectUI();
     renderList();
   });
 });
@@ -269,9 +276,72 @@ listEl.addEventListener('click', async (e) => {
     e.stopPropagation();
     showDeleteConfirm(deleteBtn.dataset.delete!);
   } else if (noteItem) {
-    api.openNote(noteItem.dataset.id!);
+    const id = noteItem.dataset.id!;
+    // Ctrl+点击进入多选模式
+    if (e.ctrlKey || e.metaKey) {
+      e.stopPropagation();
+      if (selectedIds.has(id)) {
+        selectedIds.delete(id);
+      } else {
+        selectedIds.add(id);
+      }
+      updateMultiSelectUI();
+    } else if (selectedIds.size > 0) {
+      // 已有多选时，单击切换选中
+      e.stopPropagation();
+      if (selectedIds.has(id)) {
+        selectedIds.delete(id);
+      } else {
+        selectedIds.add(id);
+      }
+      updateMultiSelectUI();
+    } else {
+      api.openNote(id);
+    }
   }
 });
+
+// Esc 退出多选
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && selectedIds.size > 0) {
+    selectedIds.clear();
+    updateMultiSelectUI();
+  }
+});
+
+/** 更新多选 UI：高亮选中项 + 显示/隐藏批量操作栏 */
+function updateMultiSelectUI() {
+  // 高亮/取消高亮
+  listEl.querySelectorAll('.note-item').forEach(el => {
+    const id = (el as HTMLElement).dataset.id!;
+    el.classList.toggle('selected', selectedIds.has(id));
+  });
+  // 批量操作栏
+  if (selectedIds.size > 0) {
+    batchBar.style.display = 'flex';
+    const countEl = batchBar.querySelector('.batch-count');
+    if (countEl) countEl.textContent = String(selectedIds.size);
+    // 归档 tab 显示"恢复"，活跃 tab 显示"归档"
+    const archiveBtn = batchBar.querySelector('[data-batch-archive]') as HTMLElement;
+    const restoreBtn = batchBar.querySelector('[data-batch-restore]') as HTMLElement;
+    if (currentTab === 'archived') {
+      if (archiveBtn) archiveBtn.style.display = 'none';
+      if (restoreBtn) restoreBtn.style.display = '';
+    } else {
+      if (archiveBtn) archiveBtn.style.display = '';
+      if (restoreBtn) restoreBtn.style.display = 'none';
+    }
+  } else {
+    batchBar.style.display = 'none';
+  }
+}
+
+/** 清空多选并刷新列表 */
+function clearSelectionAndReload() {
+  selectedIds.clear();
+  updateMultiSelectUI();
+  loadNotes();
+}
 
 // ===== 提醒设置弹窗（在 Hub 页面内，不打开便签窗口）=====
 
@@ -1161,4 +1231,72 @@ document.addEventListener('visibilitychange', () => {
 // Tauri 窗口 focus 时也刷新（并排显示场景）
 getCurrentWindow().onFocusChanged(({ payload: focused }) => {
   if (focused) loadNotes();
+});
+
+// ===== 批量操作栏事件 =====
+
+// 批量归档
+batchBar.querySelector('[data-batch-archive]')?.addEventListener('click', async () => {
+  const ids = [...selectedIds];
+  if (ids.length === 0) return;
+  try {
+    await api.batchArchiveNotes(ids);
+    clearSelectionAndReload();
+  } catch (err) { console.error('批量归档失败:', err); }
+});
+
+// 批量恢复（归档 tab）
+batchBar.querySelector('[data-batch-restore]')?.addEventListener('click', async () => {
+  const ids = [...selectedIds];
+  if (ids.length === 0) return;
+  try {
+    // 逐个恢复（暂无 batch_unarchive 命令）
+    await Promise.all(ids.map(id => api.unarchiveNote(id)));
+    clearSelectionAndReload();
+  } catch (err) { console.error('批量恢复失败:', err); }
+});
+
+// 批量删除（需确认）
+batchBar.querySelector('[data-batch-delete]')?.addEventListener('click', async () => {
+  const ids = [...selectedIds];
+  if (ids.length === 0) return;
+  if (!confirm(t('hub.batchDeleteConfirm').replace('{n}', String(ids.length)))) return;
+  try {
+    await api.batchDeleteNotes(ids);
+    clearSelectionAndReload();
+  } catch (err) { console.error('批量删除失败:', err); }
+});
+
+// 批量改色
+batchBar.querySelector('[data-batch-color]')?.addEventListener('click', () => {
+  const ids = [...selectedIds];
+  if (ids.length === 0) return;
+  // 弹出颜色选择
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const panel = document.createElement('div');
+  panel.style.cssText = 'background:var(--surface);border-radius:10px;padding:12px;box-shadow:0 8px 28px rgba(0,0,0,0.2);display:flex;gap:8px;flex-wrap:wrap;width:200px;';
+  const allColors: Record<string, string> = { amber: '#f59e0b', blue: '#3b82f6', green: '#22c55e', pink: '#ec4899', purple: '#8b5cf6' };
+  Object.entries(allColors).forEach(([name, dot]) => {
+    const c = document.createElement('div');
+    c.style.cssText = `width:28px;height:28px;border-radius:50%;cursor:pointer;background:${dot};border:2px solid rgba(0,0,0,0.1);transition:transform 0.12s;`;
+    c.title = name;
+    c.addEventListener('click', async () => {
+      try { await api.batchUpdateColor(ids, name); } catch (err) { console.error('批量改色失败:', err); }
+      overlay.remove();
+      clearSelectionAndReload();
+    });
+    c.addEventListener('mouseenter', () => c.style.transform = 'scale(1.15)');
+    c.addEventListener('mouseleave', () => c.style.transform = 'scale(1)');
+    panel.appendChild(c);
+  });
+  overlay.appendChild(panel);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+});
+
+// 取消多选
+batchBar.querySelector('[data-batch-cancel]')?.addEventListener('click', () => {
+  selectedIds.clear();
+  updateMultiSelectUI();
 });

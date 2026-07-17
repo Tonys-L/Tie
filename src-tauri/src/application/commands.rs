@@ -1,4 +1,4 @@
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use chrono::Datelike;
 
 use crate::domain::{Note, Reminder};
@@ -684,4 +684,61 @@ fn extract_json_array(text: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+// ============ 批量操作命令 ============
+
+/// 批量归档便签
+#[tauri::command]
+pub async fn batch_archive_notes(app: AppHandle, state: State<'_, AppState>, ids: Vec<String>) -> Result<usize, String> {
+    let mut count = 0;
+    for id in &ids {
+        if let Ok(Some(mut note)) = state.note_repo.find_by_id(id) {
+            note.archive();
+            if state.note_repo.save(&note).is_ok() {
+                count += 1;
+            }
+        }
+    }
+    state.git_sync.schedule_auto_sync(app);
+    Ok(count)
+}
+
+/// 批量删除便签（同时关闭对应窗口）
+#[tauri::command]
+pub async fn batch_delete_notes(app: AppHandle, state: State<'_, AppState>, ids: Vec<String>) -> Result<usize, String> {
+    let mut count = 0;
+    for id in &ids {
+        // 关闭窗口
+        let label = format!("note-{}", id);
+        if let Some(win) = app.get_webview_window(&label) {
+            let _ = win.close();
+        }
+        // 清理图片
+        if let Ok(Some(note)) = state.note_repo.find_by_id(id) {
+            cleanup_removed_images(&note.content, "");
+        }
+        if note_service::delete_note(state.note_repo.as_ref(), state.reminder_repo.as_ref(), id).is_ok() {
+            count += 1;
+        }
+    }
+    state.scheduler.schedule_recalc();
+    state.git_sync.schedule_auto_sync(app);
+    Ok(count)
+}
+
+/// 批量修改便签颜色
+#[tauri::command]
+pub async fn batch_update_color(app: AppHandle, state: State<'_, AppState>, ids: Vec<String>, color: String) -> Result<usize, String> {
+    let mut count = 0;
+    for id in &ids {
+        if let Ok(Some(mut note)) = state.note_repo.find_by_id(id) {
+            note.set_color(color.clone());
+            if state.note_repo.save(&note).is_ok() {
+                count += 1;
+            }
+        }
+    }
+    state.git_sync.schedule_auto_sync(app);
+    Ok(count)
 }

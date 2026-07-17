@@ -22,6 +22,12 @@ export const unarchiveNote = (id: string) => invoke('unarchive_note', { id });
 export const searchNotes = (query: string) => invoke<Note[]>('search_notes', { query });
 export const updateNoteTags = (id: string, tags: string[]) => invoke('update_note_tags', { id, tags });
 
+// ---- 批量操作 ----
+
+export const batchArchiveNotes = (ids: string[]) => invoke<number>('batch_archive_notes', { ids });
+export const batchDeleteNotes = (ids: string[]) => invoke<number>('batch_delete_notes', { ids });
+export const batchUpdateColor = (ids: string[], color: string) => invoke<number>('batch_update_color', { ids, color });
+
 // ---- 提醒 ----
 
 export const createReminder = (noteId: string, noteTitle: string, remindAt: string, repeatType: string) =>
