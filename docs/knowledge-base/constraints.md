@@ -260,6 +260,11 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 - 依赖 WebView2 运行时
 - 数据目录：exe 同级 `data/` 文件夹
 
+### 已知限制
+
+- **tao 0.35.3 Windows 偶发崩溃**：`flush_paint_messages` 断言失败（`event_loop.rs:2344`），点击设置中心等窗口操作时偶现。这是 tao 上游库的已知 bug，当前 tao 0.35.3 已是最新版（Tauri 2.11.5 依赖），上游尚未修复。无法通过业务代码或升级解决，等待 tao 发布修复版本。
+- **CI/CD**：GitHub Actions workflow（`.github/workflows/release.yml`）在 push tag `v*` 时触发，自动构建 NSIS 安装包并发布到 GitHub Release。仅支持 Windows 平台。
+
 ### 编码规范
 
 - Rust：遵循 `cargo fmt` + `cargo clippy`
@@ -309,3 +314,4 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | 2026-07-15 | 迭代一 v0.2.0：Note 新增 tags 字段 + 标签管理能力；NoteRepository 新增 search_notes；新增 search_notes/update_note_tags 命令；新增 INV-018（tags serde default）/INV-019（标签数量/长度限制） | — | #FEAT-002 同步更新 boundaries.md |
 | 2026-07-15 | 迭代三 v0.4.0：Monthly 改精确日历月；新增 LunarMonthly 重复类型 + tyme4rs 农历库；新增日历视图；ReminderRepository 新增 find_pending_by_date_range；新增 get_reminders_by_month 命令；新增 INV-020（LunarMonthly 农历计算在 application 层） | — | #FEAT-003 同步更新 boundaries.md/glossary.md |
 | 2026-07-15 | 迭代三 v0.4.1：日历视图 7 项增强；find_pending_by_date_range 改为 find_by_date_range（含所有状态）；新增 get_lunar_dates/get_notes_activity_by_month 命令；NoteRepository 新增 find_activity_by_month | — | #FEAT-005 同步更新 boundaries.md |
+| 2026-07-17 | 新增已知限制：tao 0.35.3 Windows `flush_paint_messages` 断言失败偶发崩溃（上游未修复）；新增 GitHub Actions CI/CD（tag v* 触发自动构建 NSIS + 发布 Release） | — | #FEAT-009 |
