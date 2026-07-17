@@ -345,7 +345,7 @@ function showContextMenu(e: MouseEvent, note: Note, app: HTMLElement) {
 
   const menu = document.createElement('div');
   menu.id = 'ctx-menu';
-  menu.style.cssText = `position:fixed;z-index:99999;background:var(--surface,#fff);border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:4px 0;box-shadow:0 4px 16px rgba(0,0,0,0.12);min-width:140px;font-size:12px;`;
+  menu.style.cssText = `position:fixed;z-index:99999;background:var(--surface,#fff);border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:4px 0;box-shadow:0 4px 16px rgba(0,0,0,0.12);min-width:140px;font-size:12px;max-height:${Math.floor(window.innerHeight * 0.8)}px;overflow-y:auto;`;
 
   type MenuItem = { label?: string; action?: () => void; type?: string; danger?: boolean };
 
