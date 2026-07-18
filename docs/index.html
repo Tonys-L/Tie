@@ -23,10 +23,11 @@
                 <span class="nav__brand-name">Tie</span>
             </a>
             <nav class="nav__links" aria-label="主导航">
-                <a href="#features">功能</a>
-                <a href="#highlights">特性</a>
-                <a href="#screenshots">截图</a>
-                <a href="#download" class="nav__cta">下载</a>
+                <a href="#features" data-i18n="nav.features">功能</a>
+                <a href="#highlights" data-i18n="nav.highlights">特性</a>
+                <a href="#screenshots" data-i18n="nav.screenshots">截图</a>
+                <a href="#download" class="nav__cta" data-i18n="nav.download">下载</a>
+                <button class="lang-btn" id="langBtn" type="button">EN</button>
             </nav>
             <button class="nav__toggle" id="navToggle" aria-label="切换菜单" aria-expanded="false">
                 <span></span><span></span><span></span>
@@ -51,9 +52,9 @@
                     Tie<span class="hero__title-dot">.</span>
                 </h1>
                 <p class="hero__tagline" data-reveal data-reveal-delay="2">
-                    把便签、提醒与 AI 装进一颗琥珀。
+                    <span data-i18n="hero.tagline">贴出来，想得到</span>
                 </p>
-                <p class="hero__subtitle" data-reveal data-reveal-delay="3">
+                <p class="hero__subtitle" data-reveal data-reveal-delay="3" data-i18n="hero.subtitle">
                     基于 Tauri 2.x 的轻量桌面便签 · Markdown 编辑 · 定时提醒 · 日历视图 · AI 智能能力 · Git 多设备同步
                 </p>
                 <div class="hero__actions" data-reveal data-reveal-delay="4">
@@ -63,24 +64,24 @@
                             <polyline points="7 10 12 15 17 10"/>
                             <line x1="12" y1="15" x2="12" y2="3"/>
                         </svg>
-                        下载 Tie
+                        <span data-i18n="hero.download">下载 Tie</span>
                     </a>
                     <a class="btn btn--ghost" href="https://github.com/Tonys-L/Tie" target="_blank" rel="noopener noreferrer">
                         <svg class="btn__icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                             <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2.01c-3.2.7-3.88-1.54-3.88-1.54-.52-1.32-1.27-1.67-1.27-1.67-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.68 1.24 3.34.95.1-.74.4-1.24.72-1.53-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.46.11-3.05 0 0 .96-.31 3.15 1.18a10.95 10.95 0 0 1 5.74 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.59.23 2.76.11 3.05.74.81 1.18 1.84 1.18 3.1 0 4.42-2.69 5.4-5.25 5.69.41.35.78 1.05.78 2.12v3.14c0 .31.21.68.8.56C20.21 21.38 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/>
                         </svg>
-                        在 GitHub 查看
+                        <span data-i18n="hero.github">在 GitHub 查看</span>
                     </a>
                 </div>
                 <div class="hero__meta" data-reveal data-reveal-delay="5">
                     <span class="hero__meta-item">
-                        <span class="hero__meta-dot"></span>开源 · MIT
+                        <span class="hero__meta-dot"></span><span data-i18n="hero.openSource">开源 · MIT</span>
                     </span>
                     <span class="hero__meta-item">
                         <span class="hero__meta-dot"></span>Tauri 2.x + Rust
                     </span>
                     <span class="hero__meta-item">
-                        <span class="hero__meta-dot"></span>数据完全本地
+                        <span class="hero__meta-dot"></span><span data-i18n="hero.localFirst">数据完全本地</span>
                     </span>
                 </div>
             </div>
@@ -93,9 +94,9 @@
         <section class="section" id="features">
             <div class="container">
                 <header class="section__head" data-reveal>
-                    <span class="section__eyebrow">功能</span>
-                    <h2 class="section__title">把日常的零碎，整理成可执行的清单</h2>
-                    <p class="section__desc">围绕「记下 · 提醒 · 整理 · 同步」四件事，Tie 提供一套互相协作的能力。</p>
+                    <span class="section__eyebrow" data-i18n="features.eyebrow">功能</span>
+                    <h2 class="section__title" data-i18n="features.title">把日常的零碎，整理成可执行的清单</h2>
+                    <p class="section__desc" data-i18n="features.desc">围绕「记下 · 提醒 · 整理 · 同步」四件事，Tie 提供一套互相协作的能力。</p>
                 </header>
 
                 <div class="cards">
@@ -103,72 +104,72 @@
                         <div class="card__icon" aria-hidden="true">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 9h8"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>
                         </div>
-                        <h3 class="card__title">Markdown 编辑</h3>
-                        <p class="card__desc">所见即所得的 Markdown，支持图片拖入插入、待办清单、代码块、表格，所有排版都用键盘完成。</p>
+                        <h3 class="card__title" data-i18n="feat.markdown.title">Markdown 编辑</h3>
+                        <p class="card__desc" data-i18n="feat.markdown.desc">所见即所得的 Markdown，支持图片拖入插入、待办清单、代码块、表格，所有排版都用键盘完成。</p>
                     </article>
 
                     <article class="card" data-reveal data-reveal-delay="1">
                         <div class="card__icon" aria-hidden="true">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
                         </div>
-                        <h3 class="card__title">定时提醒</h3>
-                        <p class="card__desc">一次、每天、每周、每月，并支持农历每月提醒，传统节日与月历节奏一并照顾。</p>
+                        <h3 class="card__title" data-i18n="feat.reminder.title">定时提醒</h3>
+                        <p class="card__desc" data-i18n="feat.reminder.desc">一次、每天、每周、每月，并支持农历每月提醒，传统节日与月历节奏一并照顾。</p>
                     </article>
 
                     <article class="card" data-reveal data-reveal-delay="2">
                         <div class="card__icon" aria-hidden="true">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18"/><path d="M8 2v4"/><path d="M16 2v4"/><path d="M8 14h2"/><path d="M12 14h2"/><path d="M16 14h2"/></svg>
                         </div>
-                        <h3 class="card__title">日历视图</h3>
-                        <p class="card__desc">月历与年历自由切换，提醒分布一目了然，点选日期即可在对应日创建便签。</p>
+                        <h3 class="card__title" data-i18n="feat.calendar.title">日历视图</h3>
+                        <p class="card__desc" data-i18n="feat.calendar.desc">月历与年历自由切换，提醒分布一目了然，点选日期即可在对应日创建便签。</p>
                     </article>
 
                     <article class="card" data-reveal>
                         <div class="card__icon" aria-hidden="true">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12V8a2 2 0 0 0-2-2H4"/><path d="M4 6v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2"/><path d="M4 6l3-3"/><circle cx="9" cy="13" r="1.2"/><circle cx="13" cy="13" r="1.2"/></svg>
                         </div>
-                        <h3 class="card__title">标签管理</h3>
-                        <p class="card__desc">置顶、自定义颜色、透明度、归档，按标签筛选与分组，让便签按你想要的方式排列。</p>
+                        <h3 class="card__title" data-i18n="feat.tags.title">标签管理</h3>
+                        <p class="card__desc" data-i18n="feat.tags.desc">置顶、自定义颜色、透明度、归档，按标签筛选与分组，让便签按你想要的方式排列。</p>
                     </article>
 
                     <article class="card" data-reveal data-reveal-delay="1">
                         <div class="card__icon" aria-hidden="true">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M6 9v6"/><path d="M18 9a3 3 0 1 1-3 3"/><path d="M9 18h6"/></svg>
                         </div>
-                        <h3 class="card__title">Git 多设备同步</h3>
-                        <p class="card__desc">数据完全本地存储，借助 Git 完成多设备同步，没有云端、没有账号，只有你掌控的仓库。</p>
+                        <h3 class="card__title" data-i18n="feat.git.title">Git 多设备同步</h3>
+                        <p class="card__desc" data-i18n="feat.git.desc">数据完全本地存储，借助 Git 完成多设备同步，没有云端、没有账号，只有你掌控的仓库。</p>
                     </article>
 
                     <article class="card" data-reveal data-reveal-delay="2">
                         <div class="card__icon" aria-hidden="true">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3"/><path d="M12 18v3"/><path d="M5 12H2"/><path d="M22 12h-3"/><path d="M19.07 4.93l-2.12 2.12"/><path d="M7.05 16.95l-2.12 2.12"/><path d="M19.07 19.07l-2.12-2.12"/><path d="M7.05 7.05L4.93 4.93"/></svg>
                         </div>
-                        <h3 class="card__title">AI 分析</h3>
-                        <p class="card__desc">保存便签时自动识别提醒、拆分任务、规整文本与推荐标签，把口语化笔记变成结构化待办。</p>
+                        <h3 class="card__title" data-i18n="feat.ai.title">AI 分析</h3>
+                        <p class="card__desc" data-i18n="feat.ai.desc">保存便签时自动识别提醒、拆分任务、规整文本与推荐标签，把口语化笔记变成结构化待办。</p>
                     </article>
 
                     <article class="card" data-reveal>
                         <div class="card__icon" aria-hidden="true">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/><path d="M15 5l3 3"/></svg>
                         </div>
-                        <h3 class="card__title">AI 文本重写</h3>
-                        <p class="card__desc">右键菜单五种操作：规整、转清单、正式、精简、温和，一行操作重塑整段表达。</p>
+                        <h3 class="card__title" data-i18n="feat.rewrite.title">AI 文本重写</h3>
+                        <p class="card__desc" data-i18n="feat.rewrite.desc">右键菜单五种操作：规整、转清单、正式、精简、温和，一行操作重塑整段表达。</p>
                     </article>
 
                     <article class="card" data-reveal data-reveal-delay="1">
                         <div class="card__icon" aria-hidden="true">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/><path d="M11 8v6"/><path d="M8 11h6"/></svg>
                         </div>
-                        <h3 class="card__title">FTS5 全文搜索</h3>
-                        <p class="card__desc">覆盖标题、内容、标签的秒级检索，关键词高亮命中位置，数千条便签也能精准定位。</p>
+                        <h3 class="card__title" data-i18n="feat.search.title">FTS5 全文搜索</h3>
+                        <p class="card__desc" data-i18n="feat.search.desc">覆盖标题、内容、标签的秒级检索，关键词高亮命中位置，数千条便签也能精准定位。</p>
                     </article>
 
                     <article class="card" data-reveal data-reveal-delay="2">
                         <div class="card__icon" aria-hidden="true">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
                         </div>
-                        <h3 class="card__title">便签模板</h3>
-                        <p class="card__desc">自定义常用模板，一键创建日报、周报、会议纪要等结构化便签，省去重复排版。</p>
+                        <h3 class="card__title" data-i18n="feat.template.title">便签模板</h3>
+                        <p class="card__desc" data-i18n="feat.template.desc">自定义常用模板，一键创建日报、周报、会议纪要等结构化便签，省去重复排版。</p>
                     </article>
                 </div>
             </div>
@@ -178,9 +179,9 @@
         <section class="section section--alt" id="highlights">
             <div class="container">
                 <header class="section__head" data-reveal>
-                    <span class="section__eyebrow">特性</span>
-                    <h2 class="section__title">三条不可妥协的底线</h2>
-                    <p class="section__desc">数据归你所有，同步由你掌控，AI 是助手而不是把关人。</p>
+                    <span class="section__eyebrow" data-i18n="highlights.eyebrow">特性</span>
+                    <h2 class="section__title" data-i18n="highlights.title">三条不可妥协的底线</h2>
+                    <p class="section__desc" data-i18n="highlights.desc">数据归你所有，同步由你掌控，AI 是助手而不是把关人。</p>
                 </header>
 
                 <div class="highlights">
@@ -189,12 +190,12 @@
                         <div class="highlight__icon" aria-hidden="true">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
                         </div>
-                        <h3 class="highlight__title">隐私优先 · 本地存储</h3>
-                        <p class="highlight__desc">所有便签、提醒、标签、模板均以本地 SQLite + FTS5 索引存储，无任何云端、无任何统计 SDK，关闭网络 Tie 照常工作。</p>
+                        <h3 class="highlight__title" data-i18n="hl.privacy.title">隐私优先 · 本地存储</h3>
+                        <p class="highlight__desc" data-i18n="hl.privacy.desc">所有便签、提醒、标签、模板均以本地 SQLite + FTS5 索引存储，无任何云端、无任何统计 SDK，关闭网络 Tie 照常工作。</p>
                         <ul class="highlight__list">
-                            <li>SQLite 持久化，FTS5 全文索引</li>
-                            <li>无账号、无登录、无埋点</li>
-                            <li>可一键导出 / 备份整库</li>
+                            <li data-i18n="hl.privacy.l1">SQLite 持久化，FTS5 全文索引</li>
+                            <li data-i18n="hl.privacy.l2">无账号、无登录、无埋点</li>
+                            <li data-i18n="hl.privacy.l3">可一键导出 / 备份整库</li>
                         </ul>
                     </article>
 
@@ -203,12 +204,12 @@
                         <div class="highlight__icon" aria-hidden="true">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="12" r="3"/><path d="M6 9v6"/><path d="M9 18h3a3 3 0 0 0 3-3V9"/></svg>
                         </div>
-                        <h3 class="highlight__title">Git 同步 · 你掌控的仓库</h3>
-                        <p class="highlight__desc">多设备同步通过你自己的 Git 仓库完成，可自建 Gitea / Forgejo / GitHub，提交历史即是便签历史，谁在什么时候改了什么一目了然。</p>
+                        <h3 class="highlight__title" data-i18n="hl.git.title">Git 同步 · 你掌控的仓库</h3>
+                        <p class="highlight__desc" data-i18n="hl.git.desc">多设备同步通过你自己的 Git 仓库完成，可自建 Gitea / Forgejo / GitHub，提交历史即是便签历史，谁在什么时候改了什么一目了然。</p>
                         <ul class="highlight__list">
-                            <li>支持私有 Git 仓库，端到端由你托管</li>
-                            <li>自动 commit / pull / push，冲突可视</li>
-                            <li>无云端账户，无第三方中转</li>
+                            <li data-i18n="hl.git.l1">支持私有 Git 仓库，端到端由你托管</li>
+                            <li data-i18n="hl.git.l2">自动 commit / pull / push，冲突可视</li>
+                            <li data-i18n="hl.git.l3">无云端账户，无第三方中转</li>
                         </ul>
                     </article>
 
@@ -217,12 +218,12 @@
                         <div class="highlight__icon" aria-hidden="true">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.2 6.8H21l-5.5 4 2.1 6.7L12 16.5 6.4 20.5l2.1-6.7L3 9.8h6.8z"/></svg>
                         </div>
-                        <h3 class="highlight__title">AI 能力 · 可插拔的助手</h3>
-                        <p class="highlight__desc">AI 只在你需要时介入：保存时嗅探结构、右键重写文本、待办智能排序、日历一键生成周报 / 月报草稿，全部可关闭、可替换模型。</p>
+                        <h3 class="highlight__title" data-i18n="hl.ai.title">AI 能力 · 可插拔的助手</h3>
+                        <p class="highlight__desc" data-i18n="hl.ai.desc">AI 只在你需要时介入：保存时分析结构、右键重写文本、待办智能排序、日历一键生成周报 / 月报草稿，全部可关闭、可替换模型。</p>
                         <ul class="highlight__list">
-                            <li>支持本地或远端 LLM，配置自由</li>
-                            <li>嗅探 / 重写 / 排序 / 报告四类能力</li>
-                            <li>未启用 AI 时核心功能完全可用</li>
+                            <li data-i18n="hl.ai.l1">支持本地或远端 LLM，配置自由</li>
+                            <li data-i18n="hl.ai.l2">分析 / 重写 / 排序 / 报告四类能力</li>
+                            <li data-i18n="hl.ai.l3">未启用 AI 时核心功能完全可用</li>
                         </ul>
                     </article>
                 </div>
@@ -233,9 +234,9 @@
         <section class="section" id="screenshots">
             <div class="container">
                 <header class="section__head" data-reveal>
-                    <span class="section__eyebrow">预览</span>
-                    <h2 class="section__title">一眼看清 Tie 的工作方式</h2>
-                    <p class="section__desc">截图位置后续将以真实应用截图替换，当前为视觉占位。</p>
+                    <span class="section__eyebrow" data-i18n="screenshots.eyebrow">预览</span>
+                    <h2 class="section__title" data-i18n="screenshots.title">一眼看清 Tie 的工作方式</h2>
+                    <p class="section__desc" data-i18n="screenshots.desc">截图位置后续将以真实应用截图替换，当前为视觉占位。</p>
                 </header>
 
                 <div class="shots">
@@ -248,7 +249,7 @@
                             <span class="t-icon t-icon--md" aria-hidden="true">T</span>
                             <p class="shot__placeholder">主窗口预览位 · 即将替换为真实截图</p>
                         </div>
-                        <figcaption class="shot__caption">主编辑视图 · Markdown 编辑 + 标签 + 提醒</figcaption>
+                        <figcaption class="shot__caption" data-i18n="shot.main.caption">主编辑视图 · Markdown 编辑 + 标签 + 提醒</figcaption>
                     </figure>
 
                     <figure class="shot" data-reveal data-reveal-delay="1">
@@ -265,7 +266,7 @@
                             </div>
                             <p class="shot__placeholder">日历视图预览位</p>
                         </div>
-                        <figcaption class="shot__caption">日历视图 · 月历 + 提醒分布</figcaption>
+                        <figcaption class="shot__caption" data-i18n="shot.cal.caption">日历视图 · 月历 + 提醒分布</figcaption>
                     </figure>
 
                     <figure class="shot" data-reveal data-reveal-delay="2">
@@ -283,7 +284,7 @@
                             </div>
                             <p class="shot__placeholder">AI 能力预览位</p>
                         </div>
-                        <figcaption class="shot__caption">AI 分析 / 重写 / 周报草稿</figcaption>
+                        <figcaption class="shot__caption" data-i18n="shot.ai.caption">AI 分析 / 重写 / 周报草稿</figcaption>
                     </figure>
                 </div>
             </div>
@@ -294,8 +295,8 @@
             <div class="container cta">
                 <div class="cta__inner" data-reveal>
                     <span class="t-icon t-icon--md" aria-hidden="true">T</span>
-                    <h2 class="cta__title">现在就把便签装回桌面</h2>
-                    <p class="cta__desc">前往 GitHub Releases 获取最新版本，支持 Windows / macOS / Linux。</p>
+                    <h2 class="cta__title" data-i18n="cta.title">现在就把便签装回桌面</h2>
+                    <p class="cta__desc" data-i18n="cta.desc">前往 GitHub Releases 获取最新版本，支持 Windows / macOS / Linux。</p>
                     <div class="cta__actions">
                         <a class="btn btn--primary btn--lg" href="https://github.com/Tonys-L/Tie/releases/latest" target="_blank" rel="noopener noreferrer" id="downloadBtnCta">
                             <svg class="btn__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -303,13 +304,13 @@
                                 <polyline points="7 10 12 15 17 10"/>
                                 <line x1="12" y1="15" x2="12" y2="3"/>
                             </svg>
-                            下载最新版
+                            <span data-i18n="cta.download">下载最新版</span>
                         </a>
                         <a class="btn btn--ghost btn--lg" href="https://github.com/Tonys-L/Tie" target="_blank" rel="noopener noreferrer">
-                            查看源码
+                            <span data-i18n="cta.source">查看源码</span>
                         </a>
                     </div>
-                    <p class="cta__note">数据完全本地 · 开源 MIT · Tauri 2.x + Rust + TypeScript</p>
+                    <p class="cta__note" data-i18n="cta.note">数据完全本地 · 开源 MIT · Tauri 2.x + Rust + TypeScript</p>
                 </div>
             </div>
         </section>
@@ -322,15 +323,15 @@
                 <span class="t-icon t-icon--sm" aria-hidden="true">T</span>
                 <div>
                     <div class="footer__name">Tie</div>
-                    <div class="footer__tagline">桌面便签 · 提醒 · AI · 本地优先</div>
+                    <div class="footer__tagline" data-i18n="footer.tagline">桌面便签 · 提醒 · AI · 本地优先</div>
                 </div>
             </div>
 
             <nav class="footer__links" aria-label="页脚导航">
-                <a href="#features">功能</a>
-                <a href="#highlights">特性</a>
-                <a href="#screenshots">截图</a>
-                <a href="https://github.com/Tonys-L/Tie/releases/latest" target="_blank" rel="noopener noreferrer">下载</a>
+                <a href="#features" data-i18n="nav.features">功能</a>
+                <a href="#highlights" data-i18n="nav.highlights">特性</a>
+                <a href="#screenshots" data-i18n="nav.screenshots">截图</a>
+                <a href="https://github.com/Tonys-L/Tie/releases/latest" target="_blank" rel="noopener noreferrer" data-i18n="nav.download">下载</a>
                 <a href="https://github.com/Tonys-L/Tie" target="_blank" rel="noopener noreferrer">GitHub</a>
             </nav>
 
@@ -341,8 +342,8 @@
             </div>
         </div>
         <div class="container footer__bottom">
-            <span>© <span id="yearTag">2026</span> Tie · 用 Tauri 2.x 与 ❤ 制作</span>
-            <a class="footer__back" href="#top">回到顶部 ↑</a>
+            <span>© <span id="yearTag">2026</span> Tie · <span data-i18n="footer.made">用 Tauri 2.x 与 ❤ 制作</span></span>
+            <a class="footer__back" href="#top" data-i18n="footer.backToTop">回到顶部 ↑</a>
         </div>
     </footer>
 

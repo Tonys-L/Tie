@@ -312,6 +312,22 @@ ul {
     color: #ffffff;
 }
 
+.lang-btn {
+    background: none;
+    border: 1px solid rgba(255,255,255,0.2);
+    color: var(--sidebar-text, #94a3b8);
+    padding: 2px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.12s;
+}
+.lang-btn:hover {
+    background: rgba(255,255,255,0.08);
+    color: #e2e8f0;
+}
+
 .nav__toggle {
     display: none;
     flex-direction: column;
