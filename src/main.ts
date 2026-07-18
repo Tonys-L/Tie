@@ -94,7 +94,7 @@ async function initNoteWindow(id: string) {
   getCurrentWindow().listen('flash-window', () => {
     const app = document.getElementById('app')!;
     app.classList.add('flash-highlight');
-    setTimeout(() => app.classList.remove('flash-highlight'), 3600);
+    setTimeout(() => app.classList.remove('flash-highlight'), 5100);
   });
 
   // 监听提醒触发事件：窗口已存在时，后端发送此事件显示横幅

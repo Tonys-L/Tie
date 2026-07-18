@@ -1,5 +1,5 @@
 export default {
-  app: { name: 'AI Notes', settings: 'Settings', note: 'Note' },
+  app: { name: 'Tie', settings: 'Settings', note: 'Note' },
   note: {
     placeholder: 'Write something...',
     noSelection: 'No note selected',

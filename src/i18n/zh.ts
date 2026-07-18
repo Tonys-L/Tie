@@ -1,5 +1,5 @@
 export default {
-  app: { name: 'AI 便签', settings: '设置中心', note: '便签' },
+  app: { name: 'Tie', settings: '设置中心', note: '便签' },
   note: {
     placeholder: '写点什么...',
     noSelection: '未选择便签',

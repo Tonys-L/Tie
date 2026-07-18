@@ -502,8 +502,12 @@
     .about-wrap { padding: 40px 32px; max-width: 520px; text-align: center; }
     .about-logo {
       width: 56px; height: 56px; border-radius: 14px;
-      background: #3b82f6; margin: 0 auto 16px;
+      background: #f59e0b; margin: 0 auto 16px;
       display: flex; align-items: center; justify-content: center;
+    }
+    .about-logo-text {
+      color: #fff; font-size: 36px; font-weight: 900; font-family: Arial, sans-serif;
+      line-height: 1; user-select: none;
     }
     .about-name { font-size: 18px; font-weight: 600; color: var(--text-title); margin-bottom: 4px; }
     .about-version { font-size: 13px; color: var(--text-muted); margin-bottom: 24px; }
@@ -864,10 +868,10 @@
       <div class="page" id="page-about">
         <div class="about-wrap">
           <div class="about-logo">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <span class="about-logo-text">T</span>
           </div>
-          <div class="about-name" data-i18n="app.name">AI 便签</div>
-          <div class="about-version">v0.8.1 · <span data-i18n="hub.desktopApp">桌面便签应用</span></div>
+          <div class="about-name" data-i18n="app.name">Tie</div>
+          <div class="about-version">v0.8.2 · <span data-i18n="hub.desktopApp">桌面便签应用</span></div>
           <div class="about-info">
             <strong data-i18n="hub.aboutFeatures">功能</strong><br>
             <span data-i18n="hub.aboutF1">· Markdown 编辑，支持图片拖入、待办清单</span><br>
