@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicehash/tauri/dev/crates/tauri-config-schema/schema.json",
   "productName": "Tie",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "identifier": "com.tie.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -27,6 +27,15 @@
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMyRTU2Mzg4OUJGNkMwNkUKUldSdXdQYWJpR1BsTXFOczJzeGZYekpidlQvWDc1VTRzcFpoRk5pS0duRDBzOE91TEM4elNIaEUK",
+      "endpoints": [
+        "https://github.com/Tonys-L/Tie/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

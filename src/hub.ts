@@ -3,6 +3,7 @@ import { enable as enableAutoStart, disable as disableAutoStart, isEnabled as is
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { check } from '@tauri-apps/plugin-updater';
 import type { Reminder, ShortcutConfig, Template } from './types';
 import * as api from './api';
 import { COLOR_MAP, escapeHtml, formatDate, localISO, quickDate, repeatLabel } from './utils';
@@ -1236,6 +1237,105 @@ document.addEventListener('visibilitychange', () => {
     loadNotes();
   }
 });
+
+// ===== 更新检查 =====
+
+let pendingUpdate: Awaited<ReturnType<typeof check>> | null = null;
+
+async function checkForUpdate(silent = false): Promise<void> {
+  const statusEl = document.getElementById('update-status');
+  const btn = document.getElementById('btn-check-update');
+  try {
+    if (btn) btn.textContent = '...';
+    if (statusEl && !silent) statusEl.textContent = t('hub.updateChecking') || '检查中...';
+    const update = await check();
+    if (update) {
+      pendingUpdate = update;
+      if (statusEl) {
+        statusEl.textContent = `${t('hub.updateFound') || '发现新版本'} v${update.version}`;
+        statusEl.classList.add('has-update');
+      }
+      showUpdateModal(update);
+    } else {
+      if (statusEl) {
+        statusEl.textContent = t('hub.updateLatest') || '已是最新版本';
+        statusEl.classList.remove('has-update');
+      }
+      if (!silent) {
+        // 手动检查时提示
+      }
+    }
+  } catch (e) {
+    console.error('检查更新失败:', e);
+    if (statusEl && !silent) statusEl.textContent = t('hub.updateCheckFail') || '检查失败';
+  } finally {
+    if (btn) btn.textContent = t('hub.checkUpdate') || '检查更新';
+  }
+}
+
+function showUpdateModal(update: NonNullable<Awaited<ReturnType<typeof check>>>) {
+  const modal = document.getElementById('update-modal') as HTMLElement;
+  const versionEl = document.getElementById('update-modal-version');
+  const notesEl = document.getElementById('update-modal-notes');
+  if (versionEl) versionEl.textContent = `v${update.version}`;
+  if (notesEl) notesEl.textContent = update.body || '';
+  modal.style.display = 'flex';
+}
+
+function closeUpdateModal() {
+  const modal = document.getElementById('update-modal') as HTMLElement;
+  modal.style.display = 'none';
+}
+
+async function downloadAndInstallUpdate() {
+  if (!pendingUpdate) return;
+  const downloadBtn = document.getElementById('update-download') as HTMLButtonElement;
+  const progressEl = document.getElementById('update-progress') as HTMLElement;
+  const progressFill = document.getElementById('progress-fill') as HTMLElement;
+  const progressText = document.getElementById('progress-text') as HTMLElement;
+  try {
+    downloadBtn.disabled = true;
+    downloadBtn.textContent = t('hub.updateDownloading') || '下载中...';
+    progressEl.style.display = 'block';
+    let total = 0;
+    let downloaded = 0;
+    await pendingUpdate.downloadAndInstall((event: { event: string; data?: { chunkLength?: number; contentLength?: number } }) => {
+      switch (event.event) {
+        case 'Started':
+          total = event.data?.contentLength || 0;
+          break;
+        case 'Progress':
+          downloaded += event.data?.chunkLength || 0;
+          if (total > 0) {
+            const pct = Math.round((downloaded / total) * 100);
+            progressFill.style.width = pct + '%';
+            progressText.textContent = `${pct}% (${Math.round(downloaded / 1024 / 1024 * 10) / 10}MB / ${Math.round(total / 1024 / 1024 * 10) / 10}MB)`;
+          }
+          break;
+        case 'Finished':
+          progressFill.style.width = '100%';
+          progressText.textContent = t('hub.updateInstalling') || '安装中...';
+          break;
+      }
+    });
+    // 安装完成，重启应用
+    const { restart } = await import('@tauri-apps/plugin-process');
+    await restart();
+  } catch (e) {
+    console.error('下载安装失败:', e);
+    downloadBtn.disabled = false;
+    downloadBtn.textContent = t('hub.updateDownload') || '下载并安装';
+    progressEl.style.display = 'none';
+    progressText.textContent = t('hub.updateInstallFail') || '安装失败';
+  }
+}
+
+document.getElementById('btn-check-update')?.addEventListener('click', () => checkForUpdate(false));
+document.getElementById('update-later')?.addEventListener('click', closeUpdateModal);
+document.getElementById('update-download')?.addEventListener('click', downloadAndInstallUpdate);
+
+// 启动时延迟 3 秒自动检查更新（静默模式，有更新才弹窗）
+setTimeout(() => checkForUpdate(true), 3000);
 
 // Tauri 窗口 focus 时也刷新（并排显示场景）
 getCurrentWindow().onFocusChanged(({ payload: focused }) => {

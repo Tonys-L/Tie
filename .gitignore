@@ -1,6 +1,10 @@
 # Dependencies
 node_modules/
 
+# Tauri updater signing key (KEEP SECRET!)
+.tauri-updater-key
+.tauri-updater-key.pub
+
 # Build output
 dist/
 src-tauri/target/

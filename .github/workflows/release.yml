@@ -32,14 +32,16 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build Tauri app (NSIS only)
-        run: npm run tauri build
+      - name: Build and release with Tauri Action
+        uses: tauri-apps/tauri-action@v0
         env:
-          # 避免 PowerShell stderr 误判导致构建失败
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           ErrorActionPreference: Continue
-
-      - name: Upload NSIS installer to Release
-        uses: softprops/action-gh-release@v2
         with:
-          files: src-tauri/target/release/bundle/nsis/Tie_*_x64-setup.exe
-          generate_release_notes: true
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Tie v__VERSION__'
+          releaseDraft: false
+          prerelease: false
+          args: --target x86_64-pc-windows-msvc
