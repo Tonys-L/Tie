@@ -1319,8 +1319,8 @@ async function downloadAndInstallUpdate() {
       }
     });
     // 安装完成，重启应用
-    const { restart } = await import('@tauri-apps/plugin-process');
-    await restart();
+    const { relaunch } = await import('@tauri-apps/plugin-process');
+    await relaunch();
   } catch (e) {
     console.error('下载安装失败:', e);
     downloadBtn.disabled = false;
