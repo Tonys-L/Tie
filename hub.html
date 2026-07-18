@@ -518,6 +518,48 @@
     }
     .about-info strong { color: var(--text-title); }
 
+    /* ===== 更新检查 ===== */
+    .about-update { margin-top: 20px; display: flex; align-items: center; gap: 12px; justify-content: center; }
+    .check-update-btn {
+      padding: 6px 16px; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--surface); color: var(--text); cursor: pointer; font-size: 13px;
+      transition: all 0.2s;
+    }
+    .check-update-btn:hover { border-color: #f59e0b; color: #f59e0b; }
+    .update-status { font-size: 12px; color: var(--text-muted); }
+    .update-status.has-update { color: #f59e0b; font-weight: 600; }
+
+    /* ===== 更新弹窗 ===== */
+    .update-modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+      display: flex; align-items: center; justify-content: center; z-index: 9999;
+    }
+    .update-modal {
+      background: var(--surface); border-radius: 12px; padding: 28px 32px;
+      max-width: 420px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    }
+    .update-modal-icon { color: #f59e0b; margin-bottom: 12px; }
+    .update-modal-title { font-size: 16px; font-weight: 600; color: var(--text-title); margin-bottom: 8px; }
+    .update-modal-version { font-size: 14px; color: #f59e0b; font-weight: 600; margin-bottom: 8px; }
+    .update-modal-notes {
+      font-size: 12px; color: var(--text); line-height: 1.6; margin-bottom: 16px;
+      max-height: 200px; overflow-y: auto; white-space: pre-wrap;
+    }
+    .update-modal-progress { margin-bottom: 16px; }
+    .progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-bottom: 6px; }
+    .progress-fill { height: 100%; background: #f59e0b; transition: width 0.3s; width: 0%; }
+    .progress-text { font-size: 11px; color: var(--text-muted); }
+    .update-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .update-btn-secondary, .update-btn-primary {
+      padding: 8px 16px; border-radius: 6px; font-size: 13px; cursor: pointer; border: none;
+      transition: all 0.2s;
+    }
+    .update-btn-secondary { background: var(--border); color: var(--text); }
+    .update-btn-secondary:hover { opacity: 0.85; }
+    .update-btn-primary { background: #f59e0b; color: #fff; }
+    .update-btn-primary:hover { background: #e48f0a; }
+    .update-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
     .content::-webkit-scrollbar { width: 6px; }
     .content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
     .content::-webkit-scrollbar-track { background: transparent; }
@@ -904,6 +946,30 @@
             <strong>GitHub</strong><br>
             <a href="#" id="about-github-link" style="color:var(--primary,#3B82F6);text-decoration:none;">https://github.com/Tonys-L/Tie</a>
           </div>
+          <div class="about-update">
+            <button class="check-update-btn" id="btn-check-update" data-i18n="hub.checkUpdate">检查更新</button>
+            <span class="update-status" id="update-status"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 更新弹窗 -->
+    <div class="update-modal-overlay" id="update-modal" style="display:none">
+      <div class="update-modal">
+        <div class="update-modal-icon">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+        </div>
+        <div class="update-modal-title" id="update-modal-title" data-i18n="hub.updateAvailable">发现新版本</div>
+        <div class="update-modal-version" id="update-modal-version"></div>
+        <div class="update-modal-notes" id="update-modal-notes"></div>
+        <div class="update-modal-progress" id="update-progress" style="display:none">
+          <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+          <span class="progress-text" id="progress-text"></span>
+        </div>
+        <div class="update-modal-actions">
+          <button class="update-btn-secondary" id="update-later" data-i18n="hub.updateLater">稍后</button>
+          <button class="update-btn-primary" id="update-download" data-i18n="hub.updateDownload">下载并安装</button>
         </div>
       </div>
     </div>
