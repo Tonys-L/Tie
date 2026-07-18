@@ -1,12 +1,18 @@
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/Tonys-L/Tie/main/src-tauri/icons/icon.png" width="80" height="80" alt="Tie">
+
 # Tie
 
 > 贴出来，想得到
 
 轻量桌面便签应用，随手记录想法、待办和灵感。
 
-官网：[tie.8421.fun](https://tie.8421.fun)
+官网：[tie.8421.fun](https://tie.8421.fun?lang=zh)
 
 [English](README.en.md)
+
+</div>
 
 ## 功能
 

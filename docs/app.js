@@ -307,10 +307,22 @@
     }
 
     function initI18n() {
-        var saved = null;
-        try { saved = localStorage.getItem("tie-lang"); } catch (e) { /* ignored */ }
-        if (saved && I18N[saved]) {
-            applyLang(saved);
+        // URL ?lang= 参数优先级最高
+        var urlLang = null;
+        try {
+            var m = window.location.search.match(/[?&]lang=(zh|en)(?:&|$)/);
+            if (m) urlLang = m[1];
+        } catch (e) { /* ignored */ }
+
+        if (urlLang && I18N[urlLang]) {
+            applyLang(urlLang);
+            try { localStorage.setItem("tie-lang", urlLang); } catch (e) { /* ignored */ }
+        } else {
+            var saved = null;
+            try { saved = localStorage.getItem("tie-lang"); } catch (e) { /* ignored */ }
+            if (saved && I18N[saved]) {
+                applyLang(saved);
+            }
         }
         var btn = document.getElementById("langBtn");
         if (!btn) return;

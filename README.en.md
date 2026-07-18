@@ -1,12 +1,18 @@
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/Tonys-L/Tie/main/src-tauri/icons/icon.png" width="80" height="80" alt="Tie">
+
 # Tie
 
 > Tie it, find it
 
 Lightweight desktop notes app for capturing ideas, to-dos, and inspiration.
 
-Website: [tie.8421.fun](https://tie.8421.fun)
+Website: [tie.8421.fun](https://tie.8421.fun?lang=en)
 
 [中文](README.md)
+
+</div>
 
 ## Features
 
