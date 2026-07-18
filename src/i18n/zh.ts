@@ -202,7 +202,7 @@ export default {
     parsing: '解析中...',
     parseSuccess: '解析成功',
     parseFailed: '未能识别，请手动填写',
-    sniffEnabled: 'AI 嗅探',
+    sniffEnabled: 'AI 分析',
     sniffEnabledHint: '保存便签时 AI 自动分析并给出建议',
     sniffDetected: '检测到"{time}"，添加提醒？',
     addReminder: '添加提醒',
