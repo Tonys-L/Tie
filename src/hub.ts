@@ -42,11 +42,15 @@ document.getElementById('theme-btn')?.addEventListener('click', () => {
   if (label) label.textContent = isDark ? t('hub.lightMode') : t('hub.darkMode');
 });
 
-// ===== 关于页 GitHub 链接 =====
-document.getElementById('about-github-link')?.addEventListener('click', (e) => {
-  e.preventDefault();
-  open('https://github.com/Tonys-L/Tie');
-});
+// ===== 关于页动态版本号 =====
+(async () => {
+  try {
+    const { getVersion } = await import('@tauri-apps/api/app');
+    const v = await getVersion();
+    const el = document.getElementById('about-version');
+    if (el) el.textContent = `v${v}`;
+  } catch {}
+})();
 
 // ===== 页面切换 =====
 document.querySelectorAll('.nav-item').forEach(item => {

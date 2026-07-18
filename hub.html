@@ -499,24 +499,63 @@
     .cal-modal-create:hover { opacity: 0.9; }
 
     /* ===== 关于页 ===== */
-    .about-wrap { padding: 40px 32px; max-width: 520px; text-align: center; }
+    .about-wrap { padding: 32px 24px; max-width: 520px; text-align: center; overflow-y: auto; }
+    .about-hero { margin-bottom: 24px; }
     .about-logo {
-      width: 56px; height: 56px; border-radius: 14px;
-      background: #f59e0b; margin: 0 auto 16px;
+      width: 64px; height: 64px; border-radius: 16px;
+      background: #f59e0b; margin: 0 auto 12px;
       display: flex; align-items: center; justify-content: center;
     }
     .about-logo-text {
-      color: #fff; font-size: 36px; font-weight: 900; font-family: Arial, sans-serif;
+      color: #fff; font-size: 40px; font-weight: 900; font-family: Arial, sans-serif;
       line-height: 1; user-select: none;
     }
-    .about-name { font-size: 18px; font-weight: 600; color: var(--text-title); margin-bottom: 4px; }
-    .about-version { font-size: 13px; color: var(--text-muted); margin-bottom: 24px; }
-    .about-info {
-      text-align: left; background: var(--surface);
-      border: 1px solid var(--border); border-radius: 10px;
-      padding: 16px; font-size: 12px; color: var(--text); line-height: 2;
+    .about-name { font-size: 20px; font-weight: 700; color: var(--text-title); margin-bottom: 2px; }
+    .about-slogan { font-size: 13px; color: #f59e0b; font-weight: 500; margin-bottom: 4px; }
+    .about-version { font-size: 12px; color: var(--text-muted); }
+    .about-cards {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+      margin-bottom: 20px;
     }
-    .about-info strong { color: var(--text-title); }
+    .about-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px 12px; text-align: left;
+      transition: border-color 0.15s;
+    }
+    .about-card:hover { border-color: #f59e0b; }
+    .about-card-icon {
+      width: 32px; height: 32px; border-radius: 8px;
+      background: #fef3c7; display: flex; align-items: center; justify-content: center;
+      margin-bottom: 8px; color: #d97706;
+    }
+    body.dark .about-card-icon { background: #78350f; color: #fbbf24; }
+    .about-card-title { font-size: 13px; font-weight: 600; color: var(--text-title); margin-bottom: 4px; }
+    .about-card-desc { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+    .about-shortcuts {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px 16px; margin-bottom: 20px; text-align: left;
+    }
+    .about-shortcuts-title { font-size: 12px; font-weight: 600; color: var(--text-title); margin-bottom: 10px; }
+    .about-shortcuts-grid {
+      display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; align-items: center;
+    }
+    .about-shortcuts-grid kbd {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      background: var(--input-bg); border: 1px solid var(--border);
+      font-family: inherit; font-size: 11px; color: var(--text);
+      white-space: nowrap;
+    }
+    .about-shortcuts-grid span { font-size: 12px; color: var(--text-muted); }
+    .about-links {
+      display: flex; gap: 16px; justify-content: center; margin-bottom: 20px;
+    }
+    .about-link {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 13px; color: var(--text-muted); text-decoration: none;
+      transition: color 0.15s;
+    }
+    .about-link:hover { color: #f59e0b; }
+    .about-footer { margin-top: 16px; font-size: 11px; color: var(--text-muted); }
 
     /* ===== 更新检查 ===== */
     .about-update { margin-top: 20px; display: flex; align-items: center; gap: 12px; justify-content: center; }
@@ -909,46 +948,71 @@
       <!-- 关于 -->
       <div class="page" id="page-about">
         <div class="about-wrap">
-          <div class="about-logo">
-            <span class="about-logo-text">T</span>
+          <div class="about-hero">
+            <div class="about-logo">
+              <span class="about-logo-text">T</span>
+            </div>
+            <div class="about-name">Tie</div>
+            <div class="about-slogan" data-i18n="hub.aboutSlogan">贴出来，想得到</div>
+            <div class="about-version" id="about-version"></div>
           </div>
-          <div class="about-name" data-i18n="app.name">Tie</div>
-          <div class="about-version">v0.8.2 · <span data-i18n="hub.desktopApp">桌面便签应用</span></div>
-          <div class="about-info">
-            <strong data-i18n="hub.aboutFeatures">功能</strong><br>
-            <span data-i18n="hub.aboutF1">· Markdown 编辑，支持图片拖入、待办清单</span><br>
-            <span data-i18n="hub.aboutF2">· 定时提醒：一次 / 每天 / 每周 / 每月 / 农历每月</span><br>
-            <span data-i18n="hub.aboutF3">· 日历视图：月历+年历，直观查看提醒分布</span><br>
-            <span data-i18n="hub.aboutF4">· 标签管理、置顶、自定义颜色、透明度、归档</span><br>
-            <span data-i18n="hub.aboutF5">· Git 多设备同步，数据完全本地存储</span><br>
-            <span data-i18n="hub.aboutF6">· AI 嗅探：保存便签自动识别提醒/拆任务/规整/标签</span><br>
-            <span data-i18n="hub.aboutF7">· AI 文本重写：右键菜单 5 种操作（规整/转清单/正式/精简/温和）</span><br>
-            <span data-i18n="hub.aboutF8">· AI 待办排序：待办 > 3 条时按紧急程度智能排序</span><br>
-            <span data-i18n="hub.aboutF9">· AI 周报/月报：日历页一键生成回顾草稿</span><br>
-            <span data-i18n="hub.aboutF10">· 多选批量操作：Ctrl+点击多选，归档/改色/删除</span><br>
-            <span data-i18n="hub.aboutF11">· 启动自动防重叠：重叠便签级联偏移 30px</span><br>
-            <span data-i18n="hub.aboutF12">· FTS5 全文搜索：标题/内容/标签秒级检索，关键词高亮</span><br>
-            <span data-i18n="hub.aboutF13">· 便签模板：自定义模板（会议记录/待办清单等），一键创建</span><br>
-            <br>
-            <strong data-i18n="hub.aboutUsage">使用方式</strong><br>
-            <span data-i18n="hub.aboutU1">· 双击托盘图标 → 新建便签</span><br>
-            <span data-i18n="hub.aboutU2">· 输入 - [ ] 任务 → 查看模式显示可点击 checkbox</span><br>
-            <span data-i18n="hub.aboutU3">· 拖入图片 → 自动保存到本地并插入引用</span><br>
-            <span data-i18n="hub.aboutU4">· 右键便签内容 → 置顶 / 归档 / 删除 / 换色 / AI 重写</span><br>
-            <span data-i18n="hub.aboutU5">· Ctrl+S 保存 · Esc 退出编辑 · Ctrl+N 新建</span><br>
-            <span data-i18n="hub.aboutU6">· Ctrl+Shift+N 全局新建 · Ctrl+Shift+S 显示全部</span><br>
-            <span data-i18n="hub.aboutU7">· 选中文本右键 → ✨ 规整 / 📋 转清单 / 👔 正式 / 📢 精简 / 🤝 温和</span><br>
-            <span data-i18n="hub.aboutU8">· 待办 > 3 条 → 内容顶部出现 ✨ AI 排序按钮</span><br>
-            <span data-i18n="hub.aboutU9">· 日历页顶部 → 📊 生成月报 · 📋 生成周报</span><br>
-            <span data-i18n="hub.aboutU10">· Ctrl+点击便签列表 → 多选 → 底部批量操作栏</span><br>
-            <span data-i18n="hub.aboutU11">· Ctrl+Shift+H 全局切换 Hub · 📋 模板按钮管理/创建便签</span><br>
-            <br>
-            <strong>GitHub</strong><br>
-            <a href="#" id="about-github-link" style="color:var(--primary,#3B82F6);text-decoration:none;">https://github.com/Tonys-L/Tie</a>
+          <div class="about-cards">
+            <div class="about-card">
+              <div class="about-card-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 9h8"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>
+              </div>
+              <div class="about-card-title" data-i18n="hub.aboutEdit">编辑</div>
+              <div class="about-card-desc" data-i18n="hub.aboutEditDesc">Markdown 实时渲染 · 图片拖入 · 待办清单 · 标签 · 模板</div>
+            </div>
+            <div class="about-card">
+              <div class="about-card-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+              </div>
+              <div class="about-card-title" data-i18n="hub.aboutRemind">提醒</div>
+              <div class="about-card-desc" data-i18n="hub.aboutRemindDesc">一次/每天/每周/每月/农历 · 日历视图 · 闪烁通知</div>
+            </div>
+            <div class="about-card">
+              <div class="about-card-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3"/><path d="M12 18v3"/><path d="M5 12H2"/><path d="M22 12h-3"/><path d="M19.07 4.93l-2.12 2.12"/><path d="M7.05 16.95l-2.12 2.12"/><path d="M19.07 19.07l-2.12-2.12"/><path d="M7.05 7.05L4.93 4.93"/></svg>
+              </div>
+              <div class="about-card-title">AI</div>
+              <div class="about-card-desc" data-i18n="hub.aboutAiDesc">分析 · 重写 · 排序 · 周报 · 可关闭可替换</div>
+            </div>
+            <div class="about-card">
+              <div class="about-card-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M6 9v6"/><path d="M18 9a3 3 0 1 1-3 3"/><path d="M9 18h6"/></svg>
+              </div>
+              <div class="about-card-title" data-i18n="hub.aboutSync">同步</div>
+              <div class="about-card-desc" data-i18n="hub.aboutSyncDesc">Git 多设备同步 · 本地 SQLite · 数据完全本地</div>
+            </div>
+          </div>
+          <div class="about-shortcuts">
+            <div class="about-shortcuts-title" data-i18n="hub.aboutShortcuts">快捷键</div>
+            <div class="about-shortcuts-grid">
+              <kbd>Ctrl+Shift+N</kbd><span data-i18n="hub.aboutScNew">新建便签</span>
+              <kbd>Ctrl+Shift+S</kbd><span data-i18n="hub.aboutScShow">显示全部</span>
+              <kbd>Ctrl+Shift+H</kbd><span data-i18n="hub.aboutScHub">切换 Hub</span>
+              <kbd>Ctrl+S</kbd><span data-i18n="hub.aboutScSave">保存</span>
+              <kbd>Ctrl+N</kbd><span data-i18n="hub.aboutScNewNote">便签内新建</span>
+              <kbd>Esc</kbd><span data-i18n="hub.aboutScEsc">退出编辑</span>
+            </div>
+          </div>
+          <div class="about-links">
+            <a class="about-link" href="https://tie.8421.fun" target="_blank" rel="noopener noreferrer">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 4 9 15 15 0 0 1-4 9 15 15 0 0 1-4-9 15 15 0 0 1 4-9z"/></svg>
+              tie.8421.fun
+            </a>
+            <a class="about-link" href="https://github.com/Tonys-L/Tie" target="_blank" rel="noopener noreferrer">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2.01c-3.2.7-3.88-1.54-3.88-1.54-.52-1.32-1.27-1.67-1.27-1.67-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.68 1.24 3.34.95.1-.74.4-1.24.72-1.53-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.46.11-3.05 0 0 .96-.31 3.15 1.18a10.95 10.95 0 0 1 5.74 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.59.23 2.76.11 3.05.74.81 1.18 1.84 1.18 3.1 0 4.42-2.69 5.4-5.25 5.69.41.35.78 1.05.78 2.12v3.14c0 .31.21.68.8.56C20.21 21.38 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/></svg>
+              GitHub
+            </a>
           </div>
           <div class="about-update">
             <button class="check-update-btn" id="btn-check-update" data-i18n="hub.checkUpdate">检查更新</button>
             <span class="update-status" id="update-status"></span>
+          </div>
+          <div class="about-footer">
+            <span>Tauri 2.x · Rust · TypeScript · MIT</span>
           </div>
         </div>
       </div>
