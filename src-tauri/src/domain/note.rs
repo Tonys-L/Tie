@@ -100,12 +100,12 @@ impl Note {
         self.touch();
     }
 
-    /// 更新窗口位置和尺寸
+    /// 更新窗口位置和尺寸（宽高低于最小值时自动修正）
     pub fn update_window_state(&mut self, x: i32, y: i32, width: u32, height: u32) {
         self.window_state.pos_x = x;
         self.window_state.pos_y = y;
-        self.window_state.width = width;
-        self.window_state.height = height;
+        self.window_state.width = width.max(WindowState::MIN_WIDTH);
+        self.window_state.height = height.max(WindowState::MIN_HEIGHT);
         self.touch();
     }
 

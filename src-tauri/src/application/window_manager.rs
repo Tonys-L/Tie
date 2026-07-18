@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
-use crate::domain::Note;
+use crate::domain::{Note, value_objects::WindowState};
 
 /// 闪烁提示：临时置顶 5s 匹配前端动画时长（2.5s × 2 次），立即定向发送 flash-window 事件
 ///
@@ -47,9 +47,14 @@ pub fn open_note_window_with_url(app: &AppHandle, note: &Note, url: &str) -> Res
         note.window_state.pos_x, note.window_state.pos_y,
         note.window_state.width, note.window_state.height);
 
+    // 修正异常尺寸（DB 中可能存了极小值）
+    let w = (note.window_state.width as u32).max(WindowState::MIN_WIDTH) as f64;
+    let h = (note.window_state.height as u32).max(WindowState::MIN_HEIGHT) as f64;
+
     let _window = WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
         .title("便签")
-        .inner_size(note.window_state.width as f64, note.window_state.height as f64)
+        .inner_size(w, h)
+        .min_inner_size(WindowState::MIN_WIDTH as f64, WindowState::MIN_HEIGHT as f64)
         .position(note.window_state.pos_x as f64, note.window_state.pos_y as f64)
         .decorations(false)
         .transparent(true)
@@ -68,9 +73,16 @@ pub fn open_note_window_with_url(app: &AppHandle, note: &Note, url: &str) -> Res
     eprintln!("[窗口] 创建成功: {}", label);
 
     // 新建窗口需要显式置顶+显示，确保出现在最前面
+    // 闪烁延迟 800ms，等前端 JS 加载并注册事件监听后再发送
+    // （新建窗口的前端页面还在加载，立即 emit_to 事件会丢失）
     if let Some(win) = app.get_webview_window(&label) {
         let _ = win.show();
-        flash_window(&win, note.is_pinned);
+        let win_clone = win.clone();
+        let is_pinned = note.is_pinned;
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            flash_window(&win_clone, is_pinned);
+        });
     }
 
     Ok(())

@@ -20,6 +20,9 @@
 | LES-010 | Git 子进程未设 stdin null 导致测试挂起 | 数据同步 | 中 | 已修复 | 2026-07-14 |
 | LES-011 | repeat_config 空置字段违反 YAGNI 原则 | 编码规范 | 低 | 已修复 | 2026-07-14 |
 | LES-012 | tags 字段 JSON 存储须加 serde(default) 防止旧数据反序列化失败 | 数据同步 | 中 | 已修复 | 2026-07-15 |
+| LES-013 | FTS5 默认 tokenizer 不支持中文 | 数据存储 | 中 | 已修复 | 2026-07-18 |
+| LES-014 | FTS5 JOIN 列名歧义 | 数据存储 | 中 | 已修复 | 2026-07-18 |
+| LES-015 | Git 同步 unrelated histories 导致远程数据被删除 | 数据同步 | 致命 | 已修复 | 2026-07-18 |
 
 ---
 
@@ -28,7 +31,7 @@
 按业务分类匹配：
 
 - **编码规范**: LES-001, LES-002, LES-006, LES-011
-- **数据同步**: LES-003, LES-007, LES-008, LES-009, LES-010, LES-012
+- **数据同步**: LES-003, LES-007, LES-008, LES-009, LES-010, LES-012, LES-015
 - **数据存储**: LES-013, LES-014
 - **前端构建**: LES-004
 - **业务逻辑**: LES-005
@@ -217,6 +220,54 @@
 
 ---
 
+## LES-013: FTS5 默认 tokenizer 不支持中文
+
+**问题**: SQLite FTS5 默认 tokenizer 无法对中文进行子串匹配搜索。
+
+**原因**: FTS5 默认使用 unicode61 tokenizer，按空白分词，中文无空格分隔导致整段文本被当作一个 token。
+
+**解决方案**: 改用 trigram tokenizer（`tokenize="trigram"`），按 3 字符滑动窗口生成索引，支持任意语言子串匹配。短查询（< 3 字符）回退到 LIKE 模糊匹配。
+
+**影响文件**: `src-tauri/src/infrastructure/database.rs`, `src-tauri/src/infrastructure/sqlite_note_repo.rs`
+
+**预防**: 需要中文搜索支持时，必须使用 trigram tokenizer 或自定义 tokenizer，不能依赖默认的 unicode61。
+
+---
+
+## LES-014: FTS5 JOIN 列名歧义
+
+**问题**: FTS5 虚拟表与原表 JOIN 时，同名列（如 `id`）产生歧义错误。
+
+**原因**: FTS5 外部内容模式（`content=notes`）的虚拟表包含与原表相同的列名，JOIN 时未指定表名前缀。
+
+**解决方案**: JOIN 查询中所有列名必须指定表别名前缀（如 `notes.id`），避免歧义。
+
+**影响文件**: `src-tauri/src/infrastructure/sqlite_note_repo.rs`
+
+**预防**: 涉及 FTS5 虚拟表与原表 JOIN 时，所有列引用必须带表别名。
+
+---
+
+## LES-015: Git 同步 unrelated histories 导致远程数据被删除
+
+**问题**: 新设备首次同步或换源后同步，远程仓库的全部数据被覆盖为本地数据。用户本意是拉取远程数据，结果远程数据丢失。
+
+**原因**: 新设备的本地仓库由 `git init` 创建，与远程仓库无共同祖先（unrelated histories）。`git merge` 默认拒绝合并不相关历史（Git 2.9+），merge 失败后代码仍继续执行 `git push --force-with-lease`，导致本地少量数据强制覆盖远程大量数据。
+
+此外，旧流程"先导出后拉取"（export→commit→fetch→merge→import→push）在首次同步时，本地 JSON 只包含本地数据，merge 失败后 push 的是不含远程数据的提交。
+
+**解决方案**:
+1. 重构同步流程为"先拉后推"：fetch→merge→import→export→commit→push，确保远程数据先进入本地数据库再导出推送
+2. merge 命令添加 `--allow-unrelated-histories` 参数，允许合并不相关历史的仓库
+3. merge 失败后检查是否仍有未解决的冲突，若有则拒绝 push（不再盲目继续）
+4. push 前添加安全检查：当删除文件占比超过 50% 时拒绝推送，防止覆盖远程数据
+
+**影响文件**: `src-tauri/src/application/git_sync.rs`
+
+**预防**: 任何涉及 force push 的同步逻辑，必须遵循"先拉后推"原则，且 merge 失败时禁止继续 push。详见 INV-024/INV-025。
+
+---
+
 ## 变更记录
 
 | 日期 | 变更内容 | 变更人 | 关联变更 |
@@ -228,3 +279,4 @@
 | 2026-07-14 | 新增 LES-010/011（git stdin null 挂起、repeat_config YAGNI 清理） | — | #REFACTOR-014 |
 | 2026-07-15 | 新增 LES-012（tags serde(default) 兼容性） | — | #FEAT-002 |
 | 2026-07-18 | 新增 LES-013（FTS5 默认 tokenizer 不支持中文）/LES-014（FTS5 JOIN 列名歧义） | — | #FEAT-011 |
+| 2026-07-18 | 新增 LES-015（Git 同步 unrelated histories 导致远程数据被删除） | — | #BUGFIX-001 同步更新 constraints.md |

@@ -1627,15 +1627,22 @@ function showDeleteConfirm(noteId: string, app: HTMLElement) {
 
 // ============ 窗口状态持久化 ============
 
+// 关闭标志：窗口关闭过程中不再保存状态，避免保存极小尺寸
+let isClosing = false;
+win.onCloseRequested(() => { isClosing = true; });
+
 function setupWindowEvents(id: string) {
   let saveTimeout: ReturnType<typeof setTimeout> | undefined;
 
   const saveWindowState = () => {
     if (saveTimeout) clearTimeout(saveTimeout);
     saveTimeout = setTimeout(async () => {
+      if (isClosing) return; // 关闭中不保存，避免写入极小尺寸
       try {
         const pos = await win.outerPosition();
         const size = await win.outerSize();
+        // 最小尺寸校验：宽>=200 高>=150，防止保存异常值
+        if (size.width < 200 || size.height < 150) return;
         await invoke('update_note_window_state', {
           id,
           posX: pos.x,

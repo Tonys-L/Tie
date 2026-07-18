@@ -204,6 +204,8 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | INV-021 | 搜索使用 FTS5 trigram tokenizer（支持 CJK 子串匹配）；查询字符数 < 3 时自动回退到 LIKE 模糊匹配（trigram 要求至少 3 字符）；FTS5 虚拟表采用外部内容模式（content=notes）+ 触发器同步，避免数据复制 | `infrastructure/database.rs` FTS5 迁移 + `sqlite_note_repo.rs` search_notes |
 | INV-022 | 模板表首次启动检测为空时自动种子 3 个默认模板（空白/会议记录/待办清单）；模板 id 格式 `tpl-{uuid}`；模板 category 固定为 `custom`；模板只支持用户自定义，不预设系统模板 | `infrastructure/database.rs` 默认模板种子 + `domain/template.rs` Template::new |
 | INV-023 | 模板必须随 Git 同步：导出到 `sync/templates/{id}.json`，导入时按 `updated_at` 仲裁（last-write-wins），与便签/提醒一致；sync_json_io 的 export_to_json/import_from_json 必须接收 template_repo 参数 | `application/sync_json_io.rs` export_to_json/import_from_json + `application/git_sync.rs` sync/auto_pull_on_startup |
+| INV-024 | Git 同步流程必须遵循"先拉后推"：fetch→merge→import→export→commit→push，禁止先 export 再 fetch/merge，确保远程数据先进入本地数据库后再推送 | `application/git_sync.rs` sync 方法 |
+| INV-025 | Git merge 必须使用 `--allow-unrelated-histories`；merge 失败后必须检查是否仍有未解决冲突，若有则拒绝 push（返回错误）；push 前安全检查：删除文件占比超过 50% 时拒绝推送 | `application/git_sync.rs` sync 方法 |
 
 ### 已知策略缺口
 
@@ -333,3 +335,4 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | 2026-07-18 | v0.8.1：搜索改用 FTS5 trigram tokenizer + LIKE 短查询回退；新增便签模板能力（Template 领域模型 + TemplateRepository + 4 个命令）；新增 toggle_hub 全局快捷键（Ctrl+Shift+H）；Note 新增 highlight 字段（搜索高亮）；新增 INV-021（FTS5 trigram）/INV-022（模板种子） | — | #FEAT-011 同步更新 boundaries.md/glossary.md |
 | 2026-07-18 | 模板 Git 同步：sync_json_io export/import 增加 template_repo 参数 + templates 目录处理；git_sync/note_service/commands/tray_manager/lib.rs 全链路传 template_repo；新增 INV-023（模板必须 Git 同步）；搜索高亮修复（snippet 三列选择 + 选第一个含 `<mark>` 的）；新增 UI 入口：空便签模板快捷条 + 右键菜单"从模板新建" | — | #FEAT-012 同步更新 boundaries.md/glossary.md |
 | 2026-07-18 | UI 修复：i18n 命名空间错误修复（tpl 键在 note 命名空间下新增，hub 保留）；右键菜单改为两项并存——「从模板新建便签」+「应用模板到当前便签」（追加到末尾，非破坏性）；模板快捷条 CSS 改为横向单行滚动；应用图标替换为 TIE 字母图标 | — | #FEAT-013 同步更新 boundaries.md/glossary.md |
+| 2026-07-18 | Bugfix：Git 同步 unrelated histories 导致远程数据被删除；重构 sync 流程为"先拉后推"（fetch→merge→import→export→commit→push）；merge 添加 --allow-unrelated-histories；push 前安全检查（删除>50%拒绝推送）；新增 INV-024（先拉后推）/INV-025（merge 安全保护） | — | #BUGFIX-001 同步更新 lessons/README.md |

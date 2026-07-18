@@ -678,7 +678,6 @@ let calSelectedDate: string | null = null;
 let calView: 'month' | 'year' = 'month';
 let calLunarMap = new Map<number, string>();
 let calNoteActivityDays = new Set<number>();
-let calCreateRepeat = 'none';
 
 async function loadCalendar() {
   if (!calLoaded) {
@@ -709,8 +708,6 @@ async function loadCalendar() {
         renderCalendar();
       });
     });
-    document.getElementById('cal-modal-cancel')?.addEventListener('click', closeCreateReminderModal);
-    document.getElementById('cal-modal-create')?.addEventListener('click', createReminderFromCalendar);
   }
   await renderCalendar();
 }
@@ -921,98 +918,7 @@ function showDayDetail(day: number) {
       invoke('activate_note_by_id', { noteId }).catch(err => console.error('激活便签失败:', err));
     });
   });
-  // 添加"创建提醒"按钮
-  const createBtn = document.createElement('button');
-  createBtn.className = 'btn-secondary cal-create-btn';
-  createBtn.style.cssText = 'margin-top:8px;padding:4px 12px;font-size:11px;width:100%;';
-  createBtn.textContent = '+ ' + t('hub.createReminder');
-  createBtn.addEventListener('click', () => openCreateReminderModal(day));
-  detailEl.appendChild(createBtn);
   detailEl.classList.add('show');
-}
-
-async function openCreateReminderModal(day: number) {
-  const modal = document.getElementById('cal-create-modal') as HTMLElement;
-  const dateEl = document.getElementById('cal-modal-date');
-  const selectEl = document.getElementById('cal-modal-note-select') as HTMLSelectElement;
-  const timeEl = document.getElementById('cal-modal-time') as HTMLInputElement;
-  const repeatsEl = document.getElementById('cal-modal-repeats');
-
-  if (dateEl) {
-    const lunar = calLunarMap.get(day) || '';
-    dateEl.textContent = getLocale() === 'zh' ? `${calYear}年${calMonth}月${day}日 ${lunar}` : `${calYear}-${calMonth}-${day}`;
-  }
-
-  // 加载便签列表
-  try {
-    const notes = await api.getAllNotes();
-    if (selectEl) {
-      selectEl.innerHTML = notes.map(n => `<option value="${n.id}">${escapeHtml(n.title)}</option>`).join('');
-    }
-  } catch (e) {
-    console.error('加载便签列表失败:', e);
-  }
-
-  // 默认时间
-  const pad = (n: number) => String(n).padStart(2, '0');
-  if (timeEl) {
-    timeEl.value = `${calYear}-${pad(calMonth)}-${pad(day)}T09:00`;
-  }
-
-  // 重复类型按钮
-  calCreateRepeat = 'none';
-  if (repeatsEl) {
-    const types = [
-      { key: 'none', label: t('note.once') },
-      { key: 'daily', label: t('note.daily') },
-      { key: 'weekly', label: t('note.weekly') },
-      { key: 'monthly', label: t('note.monthly') },
-      { key: 'lunar_monthly', label: t('note.lunarMonthly') },
-    ];
-    repeatsEl.innerHTML = types.map(tp => `<button class="rbtn${tp.key === 'none' ? ' active' : ''}" data-repeat="${tp.key}">${tp.label}</button>`).join('');
-    repeatsEl.querySelectorAll('.rbtn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        calCreateRepeat = (btn as HTMLElement).dataset.repeat!;
-        repeatsEl.querySelectorAll('.rbtn').forEach(b => b.classList.toggle('active', b === btn));
-      });
-    });
-  }
-
-  modal.style.display = 'flex';
-}
-
-function closeCreateReminderModal() {
-  const modal = document.getElementById('cal-create-modal') as HTMLElement;
-  modal.style.display = 'none';
-}
-
-async function createReminderFromCalendar() {
-  const selectEl = document.getElementById('cal-modal-note-select') as HTMLSelectElement;
-  const timeEl = document.getElementById('cal-modal-time') as HTMLInputElement;
-  const noteId = selectEl?.value;
-  const timeVal = timeEl?.value;
-
-  if (!noteId) return;
-  if (!timeVal) return;
-
-  // datetime-local → ISO
-  const dt = new Date(timeVal);
-  const iso = dt.toISOString();
-
-  try {
-    // 获取便签标题
-    const note = await api.getNote(noteId);
-    await api.createReminder(noteId, note.title, iso, calCreateRepeat);
-    closeCreateReminderModal();
-    await renderMonthView();
-    if (calSelectedDate) {
-      const day = parseInt(calSelectedDate.split('-')[2]);
-      showDayDetail(day);
-    }
-  } catch (e) {
-    console.error('创建提醒失败:', e);
-    alert('创建提醒失败: ' + e);
-  }
 }
 
 // ===== 通用设置 =====

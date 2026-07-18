@@ -37,7 +37,10 @@ impl GitSync {
         config.save(&self.config_path)
     }
 
-    /// 同步流程：导出 → commit → fetch → merge → 导入 → push
+    /// 同步流程：fetch → merge → 导入 → 导出 → commit → push
+    ///
+    /// 核心原则：先拉后推。确保远程数据先进入本地数据库，再导出合并后的数据推送。
+    /// 这样即使本地仓库与远程无共同祖先（unrelated histories），也不会丢失远程数据。
     ///
     /// `create_branch`: 当远程分支不存在时是否创建分支。
     /// - false（默认）：分支不存在且远程有其他分支时返回特殊错误 `BRANCH_NOT_FOUND:<已有分支>`
@@ -84,23 +87,7 @@ impl GitSync {
             git_ops::run_git(&self.sync_dir, &["remote", "set-url", "origin", &auth_url])?;
         }
 
-        // 1. 导出本地数据为 JSON
-        sync_json_io::export_to_json(&self.sync_dir, note_repo, reminder_repo, template_repo)?;
-
-        // 2. 添加并 commit 本地变更
-        git_ops::run_git(&self.sync_dir, &["add", "-A"])?;
-        let status = git_ops::run_git(&self.sync_dir, &["status", "--porcelain"])?;
-        let has_local_changes = !status.trim().is_empty();
-        eprintln!("[同步] git status: {:?}, has_local_changes: {}", status.trim(), has_local_changes);
-
-        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S");
-        let commit_msg = format!("Sync {}", now);
-
-        if has_local_changes {
-            git_ops::run_git(&self.sync_dir, &["commit", "-m", &commit_msg])?;
-        }
-
-        // 3. fetch 远程
+        // 1. fetch 远程
         let _ = git_ops::run_git(&self.sync_dir, &["fetch", "origin", &config.branch]);
 
         // 验证 origin/<branch> ref 是否真实存在
@@ -136,9 +123,24 @@ impl GitSync {
             }
         }
 
+        // 2. merge 远程数据（优先于导出本地数据，确保远程数据先进入本地）
         if has_remote {
             let remote_ref = format!("origin/{}", config.branch);
+            let has_local_commits = git_ops::run_git(&self.sync_dir, &["rev-parse", "HEAD"]).is_ok();
 
+            if !has_local_commits {
+                // 本地无提交（新设备首次同步/.git 被删）
+                // git merge 需要至少一个本地提交，先创建一个空提交作为基线
+                eprintln!("[同步] 本地无提交，创建初始提交后 merge 远程分支 {}", remote_ref);
+                // 先 add + commit 当前文件（.gitignore 等），创建初始提交
+                git_ops::run_git(&self.sync_dir, &["add", "-A"])?;
+                let _ = git_ops::run_git(
+                    &self.sync_dir,
+                    &["commit", "-m", "Initial commit before sync", "--allow-empty"],
+                );
+            }
+
+            // 现在本地一定有提交，可以 merge
             let rev_local = git_ops::run_git(&self.sync_dir, &["rev-parse", "HEAD"])
                 .unwrap_or_default()
                 .trim()
@@ -149,21 +151,74 @@ impl GitSync {
                 .to_string();
 
             if rev_local != rev_remote {
-                // 远程有更新 → merge（JSON 文件可自动合并）
-                let merge_result = git_ops::run_git(&self.sync_dir, &["merge", &remote_ref, "--no-edit"]);
+                // 远程有更新 → merge（使用 --allow-unrelated-histories 处理首次同步/换源场景）
+                let merge_result = git_ops::run_git(
+                    &self.sync_dir,
+                    &["merge", &remote_ref, "--no-edit", "--allow-unrelated-histories"],
+                );
                 if merge_result.is_err() {
                     // 合并冲突 → 用 last-write-wins 解决
                     git_ops::resolve_conflicts(&self.sync_dir)?;
+
+                    // 检查是否仍有未解决的冲突
+                    let unresolved = git_ops::run_git(
+                        &self.sync_dir,
+                        &["diff", "--name-only", "--diff-filter=U"],
+                    )
+                    .unwrap_or_default();
+                    if !unresolved.trim().is_empty() {
+                        return Err(format!(
+                            "同步合并失败，存在无法自动解决的冲突。请检查同步目录。\n未解决文件: {}",
+                            unresolved.trim()
+                        ));
+                    }
+
                     git_ops::run_git(&self.sync_dir, &["add", "-A"])?;
                     let _ = git_ops::run_git(&self.sync_dir, &["commit", "--no-edit"]);
                 }
             }
         }
 
-        // 4. 导入合并后的 JSON 到数据库
+        // 3. 导入远程 JSON 到数据库（merge 后 JSON 包含双方数据，last-write-wins 保护）
         let imported = sync_json_io::import_from_json(&self.sync_dir, note_repo, reminder_repo, template_repo)?;
 
-        // 5. push
+        // 4. 导出本地数据为 JSON（此时 DB 已包含远程数据，clear_dir_json 不会丢失）
+        sync_json_io::export_to_json(&self.sync_dir, note_repo, reminder_repo, template_repo)?;
+
+        // 5. 添加并 commit
+        git_ops::run_git(&self.sync_dir, &["add", "-A"])?;
+        let status = git_ops::run_git(&self.sync_dir, &["status", "--porcelain"])?;
+        let has_local_changes = !status.trim().is_empty();
+        eprintln!("[同步] git status: {:?}, has_local_changes: {}", status.trim(), has_local_changes);
+
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S");
+        let commit_msg = format!("Sync {}", now);
+
+        if has_local_changes {
+            git_ops::run_git(&self.sync_dir, &["commit", "-m", &commit_msg])?;
+        }
+
+        // 6. push 前安全检查：防止推送导致远程大量文件被删除
+        if has_remote {
+            let remote_ref = format!("origin/{}", config.branch);
+            let diff_output = git_ops::run_git(
+                &self.sync_dir,
+                &["diff", "--name-status", &remote_ref, "HEAD"],
+            )
+            .unwrap_or_default();
+
+            let deletions = diff_output.lines().filter(|l| l.starts_with('D')).count();
+            let total_changes = diff_output.lines().count();
+            // 超过 50% 的变更是删除 → 疑似覆盖远程数据，拒绝推送
+            if total_changes > 0 && deletions as f64 / total_changes as f64 > 0.5 {
+                return Err(format!(
+                    "同步安全检查：本次推送将删除远程 {} 个文件（共 {} 个变更），可能覆盖远程数据。请确认远程仓库配置是否正确。",
+                    deletions, total_changes
+                ));
+            }
+        }
+
+        // 7. push
         git_ops::run_git(
             &self.sync_dir,
             &["push", "-u", "origin", &config.branch, "--force-with-lease"],
@@ -501,6 +556,244 @@ mod tests {
         // create_branch=true → 应成功创建新分支
         let result = git_sync.sync(&note_repo, &reminder_repo, &template_repo, true);
         assert!(result.is_ok(), "创建分支同步失败: {:?}", result);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 模拟场景 #1：新设备首次同步——本地无数据，远程已有大量数据
+    /// 修复前：unrelated histories → merge 失败 → force push 覆盖远程
+    /// 修复后：allow-unrelated-histories → 远程数据先导入 DB → 再导出推送 → 远程数据保留
+    #[test]
+    fn test_sync_new_device_with_remote_data() {
+        let dir = temp_dir();
+
+        // === 第一台设备：推送数据到远程 ===
+        let bare_repo = dir.join("remote.git");
+        init_bare_repo(&bare_repo);
+
+        let device1 = dir.join("device1");
+        std::fs::create_dir_all(&device1).unwrap();
+        let git_sync1 = GitSync::new(&device1);
+        let config1 = SyncConfig {
+            repo_url: bare_repo.to_str().unwrap().to_string(),
+            username: "test".to_string(),
+            token: "test".to_string(),
+            branch: "main".to_string(),
+            auto_sync: false,
+        };
+        git_sync1.save_config(&config1).unwrap();
+
+        let note_repo1 = InMemoryNoteRepository::new();
+        let reminder_repo1 = InMemoryReminderRepository::new();
+        let template_repo1 = InMemoryTemplateRepository::new();
+        // 第一台设备有 3 张便签
+        let note_a = Note::new("便签A".to_string(), "amber".to_string());
+        let note_b = Note::new("便签B".to_string(), "blue".to_string());
+        let note_c = Note::new("便签C".to_string(), "green".to_string());
+        note_repo1.save(&note_a).unwrap();
+        note_repo1.save(&note_b).unwrap();
+        note_repo1.save(&note_c).unwrap();
+
+        let result1 = git_sync1.sync(&note_repo1, &reminder_repo1, &template_repo1, false);
+        assert!(result1.is_ok(), "第一台设备同步失败: {:?}", result1);
+
+        // 验证远程有数据
+        let remote_files: Vec<_> = std::fs::read_dir(git_sync1.sync_dir.join("notes"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("json"))
+            .collect();
+        assert_eq!(remote_files.len(), 3, "远程应有 3 个便签 JSON");
+
+        // === 第二台设备：新安装，本地只有 1 张便签 ===
+        let device2 = dir.join("device2");
+        std::fs::create_dir_all(&device2).unwrap();
+        let git_sync2 = GitSync::new(&device2);
+        let config2 = SyncConfig {
+            repo_url: bare_repo.to_str().unwrap().to_string(),
+            username: "test".to_string(),
+            token: "test".to_string(),
+            branch: "main".to_string(),
+            auto_sync: false,
+        };
+        git_sync2.save_config(&config2).unwrap();
+
+        let note_repo2 = InMemoryNoteRepository::new();
+        let reminder_repo2 = InMemoryReminderRepository::new();
+        let template_repo2 = InMemoryTemplateRepository::new();
+        // 新设备只有 1 张便签
+        let note_d = Note::new("新便签D".to_string(), "red".to_string());
+        note_repo2.save(&note_d).unwrap();
+
+        // 执行同步——这是之前导致远程数据丢失的场景
+        let result2 = git_sync2.sync(&note_repo2, &reminder_repo2, &template_repo2, false);
+        assert!(result2.is_ok(), "新设备同步失败: {:?}", result2);
+
+        // ✅ 验证：远程数据没有被覆盖，DB 应包含 4 张便签（3 远程 + 1 本地）
+        let all_notes = note_repo2.find_all().unwrap();
+        let archived = note_repo2.find_archived().unwrap();
+        let total: usize = all_notes.len() + archived.len();
+        assert_eq!(total, 4, "新设备同步后应有 4 张便签（3 远程 + 1 本地），实际: {}", total);
+
+        // 验证远程仓库仍有所有数据（通过再次同步验证）
+        let device3 = dir.join("device3");
+        std::fs::create_dir_all(&device3).unwrap();
+        let git_sync3 = GitSync::new(&device3);
+        let config3 = SyncConfig {
+            repo_url: bare_repo.to_str().unwrap().to_string(),
+            username: "test".to_string(),
+            token: "test".to_string(),
+            branch: "main".to_string(),
+            auto_sync: false,
+        };
+        git_sync3.save_config(&config3).unwrap();
+
+        let note_repo3 = InMemoryNoteRepository::new();
+        let reminder_repo3 = InMemoryReminderRepository::new();
+        let template_repo3 = InMemoryTemplateRepository::new();
+        let result3 = git_sync3.sync(&note_repo3, &reminder_repo3, &template_repo3, false);
+        assert!(result3.is_ok(), "第三台设备拉取失败: {:?}", result3);
+
+        let all_notes3 = note_repo3.find_all().unwrap();
+        let archived3 = note_repo3.find_archived().unwrap();
+        let total3: usize = all_notes3.len() + archived3.len();
+        assert_eq!(total3, 4, "第三台设备应拉取到 4 张便签，实际: {}", total3);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 模拟场景 #4：换源——本地仓库关联 A 仓库，后切换到 B 仓库（B 有数据）
+    /// 修复前：unrelated histories → merge 失败 → force push 覆盖 B 仓库数据
+    /// 修复后：allow-unrelated-histories → 双方数据合并
+    #[test]
+    fn test_sync_switch_remote_repo() {
+        let dir = temp_dir();
+
+        // === 仓库 A ===
+        let repo_a = dir.join("repo_a.git");
+        init_bare_repo(&repo_a);
+
+        // === 仓库 B ===
+        let repo_b = dir.join("repo_b.git");
+        init_bare_repo(&repo_b);
+
+        // 先向仓库 B 推送数据（模拟 B 仓库已有数据）
+        let prep_dir = dir.join("prep");
+        std::fs::create_dir_all(&prep_dir).unwrap();
+        let git_sync_prep = GitSync::new(&prep_dir);
+        let config_prep = SyncConfig {
+            repo_url: repo_b.to_str().unwrap().to_string(),
+            username: "test".to_string(),
+            token: "test".to_string(),
+            branch: "main".to_string(),
+            auto_sync: false,
+        };
+        git_sync_prep.save_config(&config_prep).unwrap();
+
+        let note_repo_prep = InMemoryNoteRepository::new();
+        let reminder_repo_prep = InMemoryReminderRepository::new();
+        let template_repo_prep = InMemoryTemplateRepository::new();
+        let note_b1 = Note::new("仓库B便签1".to_string(), "amber".to_string());
+        let note_b2 = Note::new("仓库B便签2".to_string(), "blue".to_string());
+        note_repo_prep.save(&note_b1).unwrap();
+        note_repo_prep.save(&note_b2).unwrap();
+        let prep_result = git_sync_prep.sync(&note_repo_prep, &reminder_repo_prep, &template_repo_prep, false);
+        assert!(prep_result.is_ok(), "仓库B准备数据失败: {:?}", prep_result);
+
+        // === 主设备：先同步到仓库 A ===
+        let device = dir.join("device");
+        std::fs::create_dir_all(&device).unwrap();
+        let git_sync = GitSync::new(&device);
+
+        let config_a = SyncConfig {
+            repo_url: repo_a.to_str().unwrap().to_string(),
+            username: "test".to_string(),
+            token: "test".to_string(),
+            branch: "main".to_string(),
+            auto_sync: false,
+        };
+        git_sync.save_config(&config_a).unwrap();
+
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+        let template_repo = InMemoryTemplateRepository::new();
+        let note_a1 = Note::new("仓库A便签".to_string(), "green".to_string());
+        note_repo.save(&note_a1).unwrap();
+
+        let result_a = git_sync.sync(&note_repo, &reminder_repo, &template_repo, false);
+        assert!(result_a.is_ok(), "同步到仓库A失败: {:?}", result_a);
+
+        // 验证本地有仓库A的便签
+        let notes_after_a = note_repo.find_all().unwrap();
+        assert_eq!(notes_after_a.len(), 1);
+
+        // === 换源：切换到仓库 B ===
+        let config_b = SyncConfig {
+            repo_url: repo_b.to_str().unwrap().to_string(),
+            username: "test".to_string(),
+            token: "test".to_string(),
+            branch: "main".to_string(),
+            auto_sync: false,
+        };
+        git_sync.save_config(&config_b).unwrap();
+
+        // 执行同步——这是之前导致仓库B数据被覆盖的场景
+        let result_b = git_sync.sync(&note_repo, &reminder_repo, &template_repo, false);
+        assert!(result_b.is_ok(), "换源同步失败: {:?}", result_b);
+
+        // ✅ 验证：仓库 B 的数据没有被覆盖，DB 应包含 3 张便签（1 本地 + 2 远程B）
+        let all_notes = note_repo.find_all().unwrap();
+        let archived = note_repo.find_archived().unwrap();
+        let total: usize = all_notes.len() + archived.len();
+        assert_eq!(total, 3, "换源同步后应有 3 张便签（1 本地 + 2 远程），实际: {}", total);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 模拟场景：.git 目录被删后重新同步（等同于新设备首次同步）
+    #[test]
+    fn test_sync_git_dir_deleted() {
+        let dir = temp_dir();
+
+        // 先推送数据到远程
+        let bare_repo = dir.join("remote.git");
+        init_bare_repo(&bare_repo);
+
+        let git_sync = GitSync::new(&dir);
+        let config = SyncConfig {
+            repo_url: bare_repo.to_str().unwrap().to_string(),
+            username: "test".to_string(),
+            token: "test".to_string(),
+            branch: "main".to_string(),
+            auto_sync: false,
+        };
+        git_sync.save_config(&config).unwrap();
+
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+        let template_repo = InMemoryTemplateRepository::new();
+        let note1 = Note::new("已有便签".to_string(), "amber".to_string());
+        note_repo.save(&note1).unwrap();
+
+        let result1 = git_sync.sync(&note_repo, &reminder_repo, &template_repo, false);
+        assert!(result1.is_ok(), "首次同步失败: {:?}", result1);
+
+        // 模拟 .git 目录被删除
+        std::fs::remove_dir_all(git_sync.sync_dir.join(".git")).unwrap();
+
+        // 再添加一张新便签
+        let note2 = Note::new("新便签".to_string(), "blue".to_string());
+        note_repo.save(&note2).unwrap();
+
+        // 重新同步——本地仓库与远程无共同祖先
+        let result2 = git_sync.sync(&note_repo, &reminder_repo, &template_repo, false);
+        assert!(result2.is_ok(), ".git被删后重新同步失败: {:?}", result2);
+
+        // 验证远程数据没有被覆盖
+        let all_notes = note_repo.find_all().unwrap();
+        let archived = note_repo.find_archived().unwrap();
+        let total: usize = all_notes.len() + archived.len();
+        assert_eq!(total, 2, ".git被删后同步应保留所有便签，实际: {}", total);
 
         std::fs::remove_dir_all(&dir).ok();
     }

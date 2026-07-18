@@ -170,7 +170,7 @@ mod tests {
             let conn = db.lock().unwrap();
             conn.execute(
                 "INSERT INTO notes (id, title, content, color, opacity, pos_x, pos_y, width, height, is_pinned, created_at, updated_at)
-                 VALUES ('note-1', '测试便签', '', 'amber', 1.0, 100, 100, 260, 220, 0, '2026-07-03T00:00:00Z', '2026-07-03T00:00:00Z')",
+                 VALUES ('note-1', '测试便签', '', 'amber', 1.0, 100, 100, 320, 280, 0, '2026-07-03T00:00:00Z', '2026-07-03T00:00:00Z')",
                 (),
             )
             .unwrap();

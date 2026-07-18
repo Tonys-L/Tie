@@ -483,20 +483,6 @@
     .cal-year-month-day { font-size: 9px; text-align: center; color: var(--text-muted); padding: 1px 0; border-radius: 2px; }
     .cal-year-month-day.has-reminder { color: #c2410c; font-weight: 600; background: rgba(245,158,11,0.1); }
     .cal-year-month-day.today { color: #fff; background: var(--sidebar-active); font-weight: 600; }
-    /* 创建提醒弹窗 */
-    .cal-modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); z-index: 9999; display: flex; align-items: center; justify-content: center; }
-    .cal-modal { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; width: 360px; max-width: 90vw; box-shadow: 0 8px 32px rgba(0,0,0,0.2); }
-    .cal-modal-title { font-size: 14px; font-weight: 600; color: var(--text-title); margin-bottom: 16px; }
-    .cal-modal-row { margin-bottom: 12px; }
-    .cal-modal-row label { display: block; font-size: 11px; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
-    .cal-modal-select, .cal-modal-input { width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px; font-family: inherit; }
-    .cal-modal-repeats { display: flex; gap: 4px; flex-wrap: wrap; }
-    .cal-modal-repeats .rbtn { padding: 4px 10px; font-size: 11px; }
-    .cal-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-    .cal-modal-cancel { padding: 6px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); cursor: pointer; font-size: 12px; font-family: inherit; }
-    .cal-modal-create { padding: 6px 16px; border: none; border-radius: 6px; background: var(--sidebar-active); color: #fff; cursor: pointer; font-size: 12px; font-family: inherit; }
-    .cal-modal-cancel:hover { background: var(--surface-hover); }
-    .cal-modal-create:hover { opacity: 0.9; }
 
     /* ===== 关于页 ===== */
     .about-wrap { padding: 32px 24px; max-width: 520px; text-align: center; overflow-y: auto; }
@@ -777,29 +763,6 @@
           <div class="cal-year-grid" id="cal-year-grid"></div>
         </div>
         <div class="cal-detail" id="cal-detail"></div>
-      </div>
-
-      <!-- 创建提醒弹窗 -->
-      <div class="cal-modal-overlay" id="cal-create-modal" style="display:none;">
-        <div class="cal-modal">
-          <div class="cal-modal-title" id="cal-modal-date"></div>
-          <div class="cal-modal-row">
-            <label data-i18n="hub.selectNote">选择便签</label>
-            <select id="cal-modal-note-select" class="cal-modal-select"></select>
-          </div>
-          <div class="cal-modal-row">
-            <label data-i18n="hub.remindTime">提醒时间</label>
-            <input type="datetime-local" id="cal-modal-time" class="cal-modal-input" />
-          </div>
-          <div class="cal-modal-row">
-            <label data-i18n="hub.repeatType">重复类型</label>
-            <div class="cal-modal-repeats" id="cal-modal-repeats"></div>
-          </div>
-          <div class="cal-modal-actions">
-            <button class="cal-modal-cancel" id="cal-modal-cancel" data-i18n="common.cancel">取消</button>
-            <button class="cal-modal-create" id="cal-modal-create" data-i18n="hub.createReminder">创建提醒</button>
-          </div>
-        </div>
       </div>
 
       <!-- 同步设置 -->
