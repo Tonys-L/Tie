@@ -210,6 +210,39 @@
     .batch-btn-cancel { border: none; background: none; color: #94a3b8; font-size: 14px; padding: 2px 6px; }
     .batch-btn-cancel:hover { color: #e2e8f0; }
     .batch-sep { width: 1px; height: 16px; background: rgba(255,255,255,0.15); margin: 0 2px; }
+
+    /* 搜索高亮 */
+    .note-preview mark { background: #fde68a; color: #92400e; padding: 0 2px; border-radius: 2px; }
+
+    /* 模板按钮 */
+    .tpl-btn { padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 12px; cursor: pointer; font-family: inherit; white-space: nowrap; }
+    .tpl-btn:hover { background: var(--surface-hover); }
+
+    /* 模板管理弹窗 */
+    .tpl-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 200; display: flex; align-items: center; justify-content: center; }
+    .tpl-dialog { background: var(--surface, #fff); border-radius: 10px; width: 560px; max-width: 92vw; height: 420px; max-height: 85vh; display: flex; flex-direction: column; box-shadow: 0 10px 40px rgba(0,0,0,0.25); }
+    .tpl-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border, #e2e8f0); font-size: 14px; font-weight: 600; color: var(--text, #1e293b); }
+    .tpl-close { background: none; border: none; font-size: 20px; color: var(--text-muted, #94a3b8); cursor: pointer; padding: 0 4px; }
+    .tpl-close:hover { color: var(--text, #1e293b); }
+    .tpl-body { flex: 1; display: flex; overflow: hidden; }
+    .tpl-list { width: 180px; border-right: 1px solid var(--border, #e2e8f0); overflow-y: auto; padding: 6px; }
+    .tpl-item { padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; color: var(--text, #334155); transition: background 0.1s; }
+    .tpl-item:hover { background: var(--surface-hover, #f1f5f9); }
+    .tpl-item.active { background: #dbeafe; color: #1e40af; }
+    .tpl-editor { flex: 1; padding: 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+    .tpl-empty { color: var(--text-muted, #94a3b8); text-align: center; margin-top: 40px; font-size: 12px; }
+    .tpl-name-input { border: 1px solid var(--border, #e2e8f0); border-radius: 4px; padding: 5px 8px; font-size: 13px; color: var(--text, #1e293b); background: var(--surface, #fff); font-family: inherit; }
+    .tpl-content-input { flex: 1; border: 1px solid var(--border, #e2e8f0); border-radius: 4px; padding: 8px; font-size: 13px; color: var(--text, #1e293b); background: var(--surface, #fff); font-family: inherit; resize: none; outline: none; }
+    .tpl-actions { display: flex; gap: 6px; }
+    .tpl-action-btn { padding: 4px 12px; border: 1px solid var(--border, #e2e8f0); border-radius: 4px; background: var(--surface, #fff); color: var(--text, #334155); font-size: 12px; cursor: pointer; font-family: inherit; }
+    .tpl-action-btn:hover { background: var(--surface-hover, #f1f5f9); }
+    .tpl-action-primary { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+    .tpl-action-primary:hover { background: #2563eb; }
+    .tpl-action-danger { color: #dc2626; border-color: #fca5a5; }
+    .tpl-action-danger:hover { background: #fef2f2; }
+    .tpl-footer { padding: 8px 14px; border-top: 1px solid var(--border, #e2e8f0); }
+    .tpl-btn-new { padding: 5px 12px; border: 1px dashed var(--border, #cbd5e1); border-radius: 4px; background: transparent; color: var(--text-muted, #64748b); font-size: 12px; cursor: pointer; font-family: inherit; width: 100%; }
+    .tpl-btn-new:hover { background: var(--surface-hover, #f1f5f9); color: var(--text, #334155); }
     .note-color { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
     .note-text { flex: 1; min-width: 0; }
     .note-title {
@@ -591,6 +624,7 @@
             <option value="created" data-i18n="hub.sortCreated">按创建时间</option>
             <option value="title" data-i18n="hub.sortTitle">按标题</option>
           </select>
+          <button class="tpl-btn" id="btn-templates" data-i18n="hub.templates" title="便签模板">📋 模板</button>
         </div>
         <div class="mgr-search">
           <input type="text" id="search" data-i18n-placeholder="hub.searchNotes" placeholder="搜索便签..." />
@@ -612,6 +646,25 @@
             <button class="batch-btn batch-btn-danger" data-batch-delete data-i18n="hub.batchDelete">删除</button>
             <span class="batch-sep"></span>
             <button class="batch-btn batch-btn-cancel" data-batch-cancel>✕</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 模板管理弹窗 -->
+      <div class="tpl-overlay" id="tpl-overlay" style="display:none">
+        <div class="tpl-dialog">
+          <div class="tpl-header">
+            <span data-i18n="hub.templates">便签模板</span>
+            <button class="tpl-close" id="tpl-close">&times;</button>
+          </div>
+          <div class="tpl-body">
+            <div class="tpl-list" id="tpl-list"></div>
+            <div class="tpl-editor" id="tpl-editor">
+              <div class="tpl-empty" data-i18n="hub.tplEmpty">点击左侧模板查看，或点击下方按钮新建</div>
+            </div>
+          </div>
+          <div class="tpl-footer">
+            <button class="tpl-btn-new" id="tpl-new" data-i18n="hub.tplNew">+ 新建模板</button>
           </div>
         </div>
       </div>
@@ -788,6 +841,11 @@
                 <input type="text" class="field-input" id="shortcut-show-all" placeholder="ctrl+shift+s" />
                 <div class="field-hint" data-i18n="hub.shortcutFormat">格式：ctrl+alt/shift+字母，如 ctrl+shift+s</div>
               </div>
+              <div class="field">
+                <div class="field-label" data-i18n="hub.toggleHub">切换设置中心</div>
+                <input type="text" class="field-input" id="shortcut-toggle-hub" placeholder="ctrl+shift+h" />
+                <div class="field-hint" data-i18n="hub.shortcutFormat">格式：ctrl+alt/shift+字母，如 ctrl+shift+h</div>
+              </div>
             </div>
           </div>
 
@@ -809,7 +867,7 @@
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
           </div>
           <div class="about-name" data-i18n="app.name">AI 便签</div>
-          <div class="about-version">v0.8.0 · <span data-i18n="hub.desktopApp">桌面便签应用</span></div>
+          <div class="about-version">v0.8.1 · <span data-i18n="hub.desktopApp">桌面便签应用</span></div>
           <div class="about-info">
             <strong data-i18n="hub.aboutFeatures">功能</strong><br>
             <span data-i18n="hub.aboutF1">· Markdown 编辑，支持图片拖入、待办清单</span><br>
@@ -823,6 +881,8 @@
             <span data-i18n="hub.aboutF9">· AI 周报/月报：日历页一键生成回顾草稿</span><br>
             <span data-i18n="hub.aboutF10">· 多选批量操作：Ctrl+点击多选，归档/改色/删除</span><br>
             <span data-i18n="hub.aboutF11">· 启动自动防重叠：重叠便签级联偏移 30px</span><br>
+            <span data-i18n="hub.aboutF12">· FTS5 全文搜索：标题/内容/标签秒级检索，关键词高亮</span><br>
+            <span data-i18n="hub.aboutF13">· 便签模板：自定义模板（会议记录/待办清单等），一键创建</span><br>
             <br>
             <strong data-i18n="hub.aboutUsage">使用方式</strong><br>
             <span data-i18n="hub.aboutU1">· 双击托盘图标 → 新建便签</span><br>
@@ -835,6 +895,7 @@
             <span data-i18n="hub.aboutU8">· 待办 > 3 条 → 内容顶部出现 ✨ AI 排序按钮</span><br>
             <span data-i18n="hub.aboutU9">· 日历页顶部 → 📊 生成月报 · 📋 生成周报</span><br>
             <span data-i18n="hub.aboutU10">· Ctrl+点击便签列表 → 多选 → 底部批量操作栏</span><br>
+            <span data-i18n="hub.aboutU11">· Ctrl+Shift+H 全局切换 Hub · 📋 模板按钮管理/创建便签</span><br>
             <br>
             <strong>GitHub</strong><br>
             <a href="#" id="about-github-link" style="color:var(--primary,#3B82F6);text-decoration:none;">https://github.com/Tonys-L/Tie</a>

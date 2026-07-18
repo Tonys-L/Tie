@@ -29,6 +29,7 @@
 
 - **编码规范**: LES-001, LES-002, LES-006, LES-011
 - **数据同步**: LES-003, LES-007, LES-008, LES-009, LES-010, LES-012
+- **数据存储**: LES-013, LES-014
 - **前端构建**: LES-004
 - **业务逻辑**: LES-005
 
@@ -226,3 +227,4 @@
 | 2026-07-13 | 新增 LES-007/008/009（Windows 控制台窗口、git fetch 分支验证、extract_updated_at bug） | — | #REFACTOR-013 |
 | 2026-07-14 | 新增 LES-010/011（git stdin null 挂起、repeat_config YAGNI 清理） | — | #REFACTOR-014 |
 | 2026-07-15 | 新增 LES-012（tags serde(default) 兼容性） | — | #FEAT-002 |
+| 2026-07-18 | 新增 LES-013（FTS5 默认 tokenizer 不支持中文）/LES-014（FTS5 JOIN 列名歧义） | — | #FEAT-011 |

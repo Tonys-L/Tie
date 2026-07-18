@@ -37,6 +37,7 @@ fn row_to_note(row: &Row) -> rusqlite::Result<Note> {
         tags,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
+        highlight: None,
     })
 }
 
@@ -136,14 +137,57 @@ impl NoteRepository for SqliteNoteRepository {
 
     fn search_notes(&self, query: &str) -> Result<Vec<Note>, String> {
         let conn = self.db.lock()?;
-        let pattern = format!("%{}%", query);
+        let trimmed = query.trim();
+        // trigram tokenizer 要求至少 3 个字符才能生成 trigram；
+        // 短查询（<3 字符）回退到 LIKE 模糊匹配，保证用户体验
+        if trimmed.chars().count() < 3 {
+            let like = format!("%{}%", trimmed);
+            let sql = format!(
+                "SELECT {cols} FROM notes
+                 WHERE title LIKE ?1 OR content LIKE ?1 OR tags LIKE ?1
+                 ORDER BY is_pinned DESC, updated_at DESC",
+                cols = SELECT_COLS
+            );
+            let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+            let notes = stmt
+                .query_map(params![like], |row| row_to_note(row))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            return Ok(notes);
+        }
+        // FTS5 MATCH 查询：标题/内容/标签匹配（trigram tokenizer 支持中文子串）
+        // 对 title(0)/content(1)/tags(2) 三列都生成 snippet，Rust 中选第一个含 <mark> 的返回。
+        // 原因：固定查某列时，若该列无匹配词，snippet 返回该列开头纯文本（无 <mark>），用户看不到高亮。
+        // 注意：JOIN notes_fts 和 notes 后存在同名列，必须用 n. 前缀限定所有列
+        const SELECT_COLS_QUALIFIED: &str = "n.id, n.title, n.content, n.color, n.opacity, n.pos_x, n.pos_y, n.width, n.height, n.is_pinned, n.is_archived, n.tags, n.created_at, n.updated_at";
         let sql = format!(
-            "SELECT {} FROM notes WHERE title LIKE ?1 OR content LIKE ?1 OR tags LIKE ?1 ORDER BY is_pinned DESC, updated_at DESC",
-            SELECT_COLS
+            "SELECT {cols},
+                    snippet(notes_fts, 0, '<mark>', '</mark>', '...', 24) as hl_title,
+                    snippet(notes_fts, 1, '<mark>', '</mark>', '...', 24) as hl_content,
+                    snippet(notes_fts, 2, '<mark>', '</mark>', '...', 24) as hl_tags
+             FROM notes_fts f
+             JOIN notes n ON f.rowid = n.rowid
+             WHERE notes_fts MATCH ?1
+             ORDER BY n.is_pinned DESC, rank",
+            cols = SELECT_COLS_QUALIFIED
         );
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
         let notes = stmt
-            .query_map(params![pattern], row_to_note)
+            .query_map(params![trimmed], |row| {
+                let mut note = row_to_note(row)?;
+                let hl_title: String = row.get("hl_title")?;
+                let hl_content: String = row.get("hl_content")?;
+                let hl_tags: String = row.get("hl_tags")?;
+                // 优先级：title > content > tags，选第一个含 <mark> 的片段
+                note.highlight = Some(
+                    [hl_title, hl_content, hl_tags]
+                        .into_iter()
+                        .find(|s| s.contains("<mark>"))
+                        .unwrap_or_default(),
+                );
+                Ok(note)
+            })
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;

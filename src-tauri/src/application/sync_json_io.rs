@@ -1,17 +1,20 @@
 use std::path::Path;
 
-use crate::domain::{Note, NoteRepository, Reminder, ReminderRepository};
+use crate::domain::{Note, NoteRepository, Reminder, ReminderRepository, Template, TemplateRepository};
 
-/// 导出所有便签和提醒为 JSON 文件
+/// 导出所有便签、提醒和模板为 JSON 文件
 pub fn export_to_json(
     sync_dir: &Path,
     note_repo: &dyn NoteRepository,
     reminder_repo: &dyn ReminderRepository,
+    template_repo: &dyn TemplateRepository,
 ) -> Result<(), String> {
     let notes_dir = sync_dir.join("notes");
     let reminders_dir = sync_dir.join("reminders");
+    let templates_dir = sync_dir.join("templates");
     std::fs::create_dir_all(&notes_dir).map_err(|e| format!("创建目录失败: {}", e))?;
     std::fs::create_dir_all(&reminders_dir).map_err(|e| format!("创建目录失败: {}", e))?;
+    std::fs::create_dir_all(&templates_dir).map_err(|e| format!("创建目录失败: {}", e))?;
 
     // 导出便签（活跃 + 归档）
     let notes = note_repo.find_all().map_err(|e| format!("查询便签失败: {}", e))?;
@@ -37,6 +40,16 @@ pub fn export_to_json(
         std::fs::write(&path, json).map_err(|e| format!("写入文件失败: {}", e))?;
     }
 
+    // 导出模板
+    let templates = template_repo.find_all().map_err(|e| format!("查询模板失败: {}", e))?;
+    clear_dir_json(&templates_dir)?;
+    for template in &templates {
+        let json = serde_json::to_string_pretty(template)
+            .map_err(|e| format!("序列化模板失败: {}", e))?;
+        let path = templates_dir.join(format!("{}.json", template.id));
+        std::fs::write(&path, json).map_err(|e| format!("写入文件失败: {}", e))?;
+    }
+
     Ok(())
 }
 
@@ -45,6 +58,7 @@ pub fn import_from_json(
     sync_dir: &Path,
     note_repo: &dyn NoteRepository,
     reminder_repo: &dyn ReminderRepository,
+    template_repo: &dyn TemplateRepository,
 ) -> Result<usize, String> {
     let mut imported = 0;
 
@@ -97,6 +111,30 @@ pub fn import_from_json(
         }
     }
 
+    // 导入模板（逻辑与便签一致，按 updated_at 仲裁）
+    let templates_dir = sync_dir.join("templates");
+    if templates_dir.exists() {
+        for entry in std::fs::read_dir(&templates_dir).map_err(|e| format!("读取目录失败: {}", e))? {
+            let entry = entry.map_err(|e| format!("读取条目失败: {}", e))?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let content = std::fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))?;
+            let template: Template = serde_json::from_str(&content).map_err(|e| format!("解析模板失败: {}", e))?;
+
+            let should_save = match template_repo.find_by_id(&template.id)? {
+                Some(existing) => template.updated_at > existing.updated_at,
+                None => true,
+            };
+
+            if should_save {
+                template_repo.save(&template)?;
+                imported += 1;
+            }
+        }
+    }
+
     Ok(imported)
 }
 
@@ -138,8 +176,8 @@ pub fn extract_updated_at(json: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::mock_repo::{InMemoryNoteRepository, InMemoryReminderRepository};
-    use crate::domain::{Note, Reminder};
+    use crate::domain::mock_repo::{InMemoryNoteRepository, InMemoryReminderRepository, InMemoryTemplateRepository};
+    use crate::domain::{Note, Reminder, Template};
 
     /// 创建临时目录
     fn temp_dir() -> std::path::PathBuf {
@@ -160,6 +198,7 @@ mod tests {
         let dir = temp_dir();
         let note_repo = InMemoryNoteRepository::new();
         let reminder_repo = InMemoryReminderRepository::new();
+        let template_repo = InMemoryTemplateRepository::new();
 
         // 准备数据
         let note = Note::new("测试".to_string(), "amber".to_string());
@@ -173,15 +212,19 @@ mod tests {
         );
         reminder_repo.save(&reminder).unwrap();
 
+        let template = Template::new("会议记录".to_string(), "## 会议记录".to_string());
+        template_repo.save(&template).unwrap();
+
         // 导出
-        export_to_json(&dir, &note_repo, &reminder_repo).unwrap();
+        export_to_json(&dir, &note_repo, &reminder_repo, &template_repo).unwrap();
 
         // 导入到新仓储
         let note_repo2 = InMemoryNoteRepository::new();
         let reminder_repo2 = InMemoryReminderRepository::new();
-        let imported = import_from_json(&dir, &note_repo2, &reminder_repo2).unwrap();
+        let template_repo2 = InMemoryTemplateRepository::new();
+        let imported = import_from_json(&dir, &note_repo2, &reminder_repo2, &template_repo2).unwrap();
 
-        assert_eq!(imported, 2); // 1 note + 1 reminder
+        assert_eq!(imported, 3); // 1 note + 1 reminder + 1 template
 
         // 验证便签
         let found_note = note_repo2.find_by_id(&note.id).unwrap();
@@ -192,6 +235,11 @@ mod tests {
         let found_reminder = reminder_repo2.find_by_id(&reminder.id).unwrap();
         assert!(found_reminder.is_some());
         assert_eq!(found_reminder.unwrap().note_title, "测试便签");
+
+        // 验证模板
+        let found_template = template_repo2.find_by_id(&template.id).unwrap();
+        assert!(found_template.is_some());
+        assert_eq!(found_template.unwrap().name, "会议记录");
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -218,7 +266,8 @@ mod tests {
 
         // 导入：远程更新 → 覆盖本地
         let reminder_repo = InMemoryReminderRepository::new();
-        let imported = import_from_json(&dir, &note_repo, &reminder_repo).unwrap();
+        let template_repo = InMemoryTemplateRepository::new();
+        let imported = import_from_json(&dir, &note_repo, &reminder_repo, &template_repo).unwrap();
         assert_eq!(imported, 1);
 
         let found = note_repo.find_by_id(&old_note.id).unwrap().unwrap();
@@ -249,7 +298,8 @@ mod tests {
 
         // 导入：本地更新 → 跳过
         let reminder_repo = InMemoryReminderRepository::new();
-        let imported = import_from_json(&dir, &note_repo, &reminder_repo).unwrap();
+        let template_repo = InMemoryTemplateRepository::new();
+        let imported = import_from_json(&dir, &note_repo, &reminder_repo, &template_repo).unwrap();
         assert_eq!(imported, 0); // 本地更新，不覆盖
 
         let found = note_repo.find_by_id(&new_note.id).unwrap().unwrap();
@@ -283,14 +333,76 @@ mod tests {
 
         let note_repo = InMemoryNoteRepository::new();
         let reminder_repo = InMemoryReminderRepository::new();
+        let template_repo = InMemoryTemplateRepository::new();
         let note = Note::new("测试".to_string(), "amber".to_string());
         note_repo.save(&note).unwrap();
 
         // 导出：应清除旧文件
-        export_to_json(&dir, &note_repo, &reminder_repo).unwrap();
+        export_to_json(&dir, &note_repo, &reminder_repo, &template_repo).unwrap();
 
         assert!(!notes_dir.join("old-deleted.json").exists());
         assert!(notes_dir.join(format!("{}.json", note.id)).exists());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_template_sync_roundtrip() {
+        let dir = temp_dir();
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+        let template_repo = InMemoryTemplateRepository::new();
+
+        // 准备模板数据
+        let tpl1 = Template::new("会议记录".to_string(), "## 会议".to_string());
+        let tpl2 = Template::new("待办".to_string(), "- [ ] ".to_string());
+        template_repo.save(&tpl1).unwrap();
+        template_repo.save(&tpl2).unwrap();
+
+        // 导出
+        export_to_json(&dir, &note_repo, &reminder_repo, &template_repo).unwrap();
+
+        // 导入到新仓储
+        let template_repo2 = InMemoryTemplateRepository::new();
+        let note_repo2 = InMemoryNoteRepository::new();
+        let reminder_repo2 = InMemoryReminderRepository::new();
+        let imported = import_from_json(&dir, &note_repo2, &reminder_repo2, &template_repo2).unwrap();
+        assert_eq!(imported, 2);
+
+        // 验证模板内容
+        let all = template_repo2.find_all().unwrap();
+        assert_eq!(all.len(), 2);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_template_import_arbitration() {
+        let dir = temp_dir();
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+
+        // 本地有旧模板
+        let template_repo = InMemoryTemplateRepository::new();
+        let mut old_tpl = Template::new("会议".to_string(), "旧内容".to_string());
+        old_tpl.updated_at = "2026-07-01T00:00:00Z".to_string();
+        template_repo.save(&old_tpl).unwrap();
+
+        // 远程有新模板
+        let mut new_tpl = old_tpl.clone();
+        new_tpl.update_content("会议".to_string(), "新内容".to_string());
+        new_tpl.updated_at = "2026-07-02T00:00:00Z".to_string();
+        let templates_dir = dir.join("templates");
+        std::fs::create_dir_all(&templates_dir).unwrap();
+        let json = serde_json::to_string_pretty(&new_tpl).unwrap();
+        std::fs::write(templates_dir.join(format!("{}.json", new_tpl.id)), json).unwrap();
+
+        // 导入：远程更新 → 覆盖
+        let imported = import_from_json(&dir, &note_repo, &reminder_repo, &template_repo).unwrap();
+        assert_eq!(imported, 1);
+
+        let found = template_repo.find_by_id(&old_tpl.id).unwrap().unwrap();
+        assert_eq!(found.content, "新内容");
 
         std::fs::remove_dir_all(&dir).ok();
     }

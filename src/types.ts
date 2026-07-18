@@ -12,6 +12,8 @@ export interface Note {
   tags: string[];
   created_at: string;
   updated_at: string;
+  /** 搜索高亮片段（仅搜索结果填充，FTS5 snippet 生成，含 <mark> 标签） */
+  highlight?: string;
 }
 
 export interface Reminder {
@@ -34,6 +36,18 @@ export interface SyncConfig {
 export interface ShortcutConfig {
   new_note: string;
   show_all: string;
+  toggle_hub: string;
+}
+
+/** 便签模板（用户自定义） */
+export interface Template {
+  id: string;
+  name: string;
+  content: string;
+  category: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
 }
 
 // ---- AI ----

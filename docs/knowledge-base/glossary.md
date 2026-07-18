@@ -111,7 +111,7 @@
 
 ### 搜索 (Search)
 
-跨活跃+归档便签的全文搜索能力。当前使用 SQLite LIKE 查询匹配标题、内容和标签字段。搜索结果按置顶优先 + 更新时间倒序排列。
+跨活跃+归档便签的全文搜索能力。使用 SQLite FTS5 虚拟表（外部内容模式 `content=notes`）+ trigram tokenizer 支持 CJK 子串匹配，查询字符数 < 3 时自动回退到 LIKE 模糊匹配（trigram 要求至少 3 字符）。搜索结果通过 FTS5 `snippet()` 函数生成带 `<mark>` 标签的高亮片段，存储在 `Note.highlight` 字段。结果按置顶优先 + FTS5 rank 排序。
 
 ---
 
@@ -138,6 +138,20 @@ domain 层定义的数据访问能力契约（`NoteRepository`/`ReminderReposito
 ### 双存储架构 (Dual Storage)
 
 SQLite 作为本地运行时存储（事务/并发安全），JSON 文件作为 Git 同步传输载体（文本可合并）。`data/sync/` 为 Git 仓库根，每实体一个独立 JSON 文件。
+
+---
+
+## T
+
+### 便签模板 (Template)
+
+用户自定义的便签内容模板，支持从模板一键创建便签。存储在 SQLite `templates` 表，首次启动为空时自动种子 3 个默认模板（空白/会议记录/待办清单）。模板 id 格式 `tpl-{uuid}`，category 固定为 `custom`。模板随 Git 同步（导出到 `sync/templates/*.json`，按 `updated_at` 仲裁 last-write-wins）。UI 入口三处：设置中心模板管理弹窗（CRUD）、便签右键菜单"从模板新建"（创建新便签）、空便签编辑区顶部模板快捷条（一键填充当前便签）。
+
+---
+
+### trigram tokenizer
+
+SQLite FTS5 的一种分词器，将文本按 3 字符滑动窗口生成 trigram 索引。支持任意语言（包括 CJK 中文）的子串匹配，适合便签搜索场景。要求查询至少 3 个字符才能生成 trigram，因此短查询（< 3 字符）需回退到 LIKE 模糊匹配。
 
 ---
 
@@ -168,3 +182,6 @@ SQLite 作为本地运行时存储（事务/并发安全），JSON 文件作为 
 | 2026-07-09 | 按模板重构，改为字母排序，补充缩写表 | — | — |
 | 2026-07-13 | 更新 AppState（5 成员）和调度器（事件驱动）词条 | — | #REFACTOR-008 |
 | 2026-07-15 | 新增标签（Tag）和搜索（Search）术语 | — | #FEAT-002 |
+| 2026-07-18 | 更新搜索术语（LIKE → FTS5 trigram + snippet 高亮）；新增便签模板（Template）和 trigram tokenizer 术语 | — | #FEAT-011 同步更新 constraints.md/boundaries.md |
+| 2026-07-18 | 更新便签模板术语：模板随 Git 同步（templates 目录 + updated_at 仲裁）；新增三处 UI 入口（设置中心/右键菜单/空便签快捷条） | — | #FEAT-012 同步更新 constraints.md/boundaries.md |
+| 2026-07-18 | 右键菜单改为两项并存：「从模板新建便签」+「应用模板到当前便签」（追加到末尾，非破坏性）；模板快捷条多模板时横向单行滚动 | — | #FEAT-013 同步更新 constraints.md/boundaries.md |

@@ -1,6 +1,6 @@
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::domain::{Note, NoteRepository, ReminderRepository};
+use crate::domain::{Note, NoteRepository, ReminderRepository, TemplateRepository};
 
 use super::{git_sync::GitSync, window_manager};
 
@@ -105,10 +105,11 @@ pub fn close_note_if_empty(note_repo: &dyn NoteRepository, note_id: &str) {
 pub fn sync_notes(
     note_repo: &dyn NoteRepository,
     reminder_repo: &dyn ReminderRepository,
+    template_repo: &dyn TemplateRepository,
     git_sync: &GitSync,
     create_branch: bool,
 ) -> Result<String, String> {
-    git_sync.sync(note_repo, reminder_repo, create_branch)
+    git_sync.sync(note_repo, reminder_repo, template_repo, create_branch)
 }
 
 #[cfg(test)]

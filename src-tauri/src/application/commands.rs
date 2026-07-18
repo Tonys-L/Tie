@@ -1,7 +1,7 @@
 use tauri::{AppHandle, Manager, State};
 use chrono::Datelike;
 
-use crate::domain::{Note, Reminder};
+use crate::domain::{Note, Reminder, Template};
 use crate::AppState;
 
 use super::{note_service, window_manager};
@@ -306,7 +306,7 @@ pub async fn save_sync_config(state: State<'_, AppState>, config: super::sync_co
 #[tauri::command]
 pub async fn sync_notes(app: AppHandle, state: State<'_, AppState>, create_branch: Option<bool>) -> Result<String, String> {
     eprintln!("[同步] 开始执行同步... create_branch={:?}", create_branch);
-    let result = note_service::sync_notes(state.note_repo.as_ref(), state.reminder_repo.as_ref(), &state.git_sync, create_branch.unwrap_or(false));
+    let result = note_service::sync_notes(state.note_repo.as_ref(), state.reminder_repo.as_ref(), state.template_repo.as_ref(), &state.git_sync, create_branch.unwrap_or(false));
     eprintln!("[同步] 同步完成: {:?}", result);
     use tauri_plugin_notification::NotificationExt;
     match &result {
@@ -741,4 +741,39 @@ pub async fn batch_update_color(app: AppHandle, state: State<'_, AppState>, ids:
     }
     state.git_sync.schedule_auto_sync(app);
     Ok(count)
+}
+
+// ============ Template 命令 ============
+
+/// 查询所有模板
+#[tauri::command]
+pub async fn get_templates(state: State<'_, AppState>) -> Result<Vec<Template>, String> {
+    state.template_repo.find_all()
+}
+
+/// 保存模板（新增或更新）
+#[tauri::command]
+pub async fn save_template(state: State<'_, AppState>, template: Template) -> Result<(), String> {
+    state.template_repo.save(&template)
+}
+
+/// 删除模板
+#[tauri::command]
+pub async fn delete_template(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    state.template_repo.delete(&id)
+}
+
+/// 从模板创建便签（返回新便签 ID）
+#[tauri::command]
+pub async fn create_note_from_template(app: AppHandle, state: State<'_, AppState>, template_id: String) -> Result<String, String> {
+    let template = state.template_repo.find_by_id(&template_id)?
+        .ok_or_else(|| format!("模板不存在: {}", template_id))?;
+    // 创建便签并写入模板内容
+    let mut note = Note::new(template.name.clone(), "amber".to_string());
+    note.update_content(template.content);
+    state.note_repo.save(&note)?;
+    // 打开便签窗口
+    window_manager::open_note_window(&app, &note)?;
+    state.git_sync.schedule_auto_sync(app);
+    Ok(note.id)
 }

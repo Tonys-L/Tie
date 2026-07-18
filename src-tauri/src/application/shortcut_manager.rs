@@ -10,6 +10,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 pub struct ShortcutConfig {
     pub new_note: String,
     pub show_all: String,
+    pub toggle_hub: String,
 }
 
 impl Default for ShortcutConfig {
@@ -17,6 +18,7 @@ impl Default for ShortcutConfig {
         Self {
             new_note: "ctrl+shift+n".to_string(),
             show_all: "ctrl+shift+s".to_string(),
+            toggle_hub: "ctrl+shift+h".to_string(),
         }
     }
 }
@@ -65,10 +67,12 @@ impl ShortcutManager {
         let gs = app.global_shortcut();
         let _ = gs.unregister(old_config.new_note.as_str());
         let _ = gs.unregister(old_config.show_all.as_str());
+        let _ = gs.unregister(old_config.toggle_hub.as_str());
 
         // 注册新快捷键
         let new_note_key = config.new_note.clone();
         let show_all_key = config.show_all.clone();
+        let toggle_hub_key = config.toggle_hub.clone();
 
         gs.on_shortcut(new_note_key.as_str(), move |app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
@@ -89,6 +93,13 @@ impl ShortcutManager {
         })
         .map_err(|e| format!("注册快捷键 '{}' 失败: {}", show_all_key, e))?;
 
+        gs.on_shortcut(toggle_hub_key.as_str(), move |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                super::window_manager::toggle_hub_window(app);
+            }
+        })
+        .map_err(|e| format!("注册快捷键 '{}' 失败: {}", toggle_hub_key, e))?;
+
         // 注册成功，保存配置
         config.save(&self.config_path)?;
         *self.current_config.lock().unwrap() = config;
@@ -104,6 +115,7 @@ pub fn setup_shortcuts(app: &AppHandle) -> Result<(), String> {
 
     let new_note_key = config.new_note.clone();
     let show_all_key = config.show_all.clone();
+    let toggle_hub_key = config.toggle_hub.clone();
 
     gs.on_shortcut(new_note_key.as_str(), move |app, _shortcut, event| {
         if event.state == ShortcutState::Pressed {
@@ -123,6 +135,13 @@ pub fn setup_shortcuts(app: &AppHandle) -> Result<(), String> {
         }
     })
     .map_err(|e| format!("注册快捷键 '{}' 失败: {}", show_all_key, e))?;
+
+    gs.on_shortcut(toggle_hub_key.as_str(), move |app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            super::window_manager::toggle_hub_window(app);
+        }
+    })
+    .map_err(|e| format!("注册快捷键 '{}' 失败: {}", toggle_hub_key, e))?;
 
     Ok(())
 }

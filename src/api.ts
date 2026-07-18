@@ -1,7 +1,7 @@
 // ============ API 层：统一封装所有 invoke 调用 ============
 
 import { invoke } from '@tauri-apps/api/core';
-import type { Note, Reminder, SyncConfig, ShortcutConfig, AiConfig, ReminderDraft, Suggestion, ReportDraft } from './types';
+import type { Note, Reminder, SyncConfig, ShortcutConfig, AiConfig, ReminderDraft, Suggestion, ReportDraft, Template } from './types';
 
 // ---- 便签 ----
 
@@ -66,6 +66,13 @@ export const saveShortcutConfig = (config: ShortcutConfig) => invoke('save_short
 
 export const getDataDir = () => invoke<string>('get_data_dir');
 export const openDataDir = () => invoke('open_data_dir');
+
+// ---- 模板 ----
+
+export const getTemplates = () => invoke<Template[]>('get_templates');
+export const saveTemplate = (template: Template) => invoke('save_template', { template });
+export const deleteTemplate = (id: string) => invoke('delete_template', { id });
+export const createNoteFromTemplate = (templateId: string) => invoke<string>('create_note_from_template', { templateId });
 
 // ---- AI ----
 

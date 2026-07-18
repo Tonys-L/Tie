@@ -71,6 +71,17 @@ impl Database {
 
             CREATE INDEX IF NOT EXISTS idx_reminders_status  ON reminders(status);
             CREATE INDEX IF NOT EXISTS idx_reminders_note_id ON reminders(note_id);
+
+            -- 模板表（用户自定义便签模板）
+            CREATE TABLE IF NOT EXISTS templates (
+                id          TEXT PRIMARY KEY,
+                name        TEXT NOT NULL,
+                content     TEXT NOT NULL DEFAULT '',
+                category    TEXT NOT NULL DEFAULT 'custom',
+                sort_order  INTEGER NOT NULL DEFAULT 0,
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL
+            );
             ",
         )
         .map_err(|e| e.to_string())?;
@@ -143,6 +154,55 @@ impl Database {
         if !has_tags {
             conn.execute_batch("ALTER TABLE notes ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';")
                 .map_err(|e| e.to_string())?;
+        }
+
+        // FTS5 全文搜索虚拟表（外部内容模式，不复制数据）
+        // 检查 FTS5 是否可用 + 虚拟表是否已存在
+        let has_fts: bool = {
+            let mut stmt = conn
+                .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='notes_fts'")
+                .map_err(|e| e.to_string())?;
+            stmt.exists([]).map_err(|e| e.to_string())?
+        };
+
+        if !has_fts {
+            // 创建 FTS5 虚拟表 + 触发器 + 全量同步已有数据
+            conn.execute_batch(
+                "CREATE VIRTUAL TABLE notes_fts USING fts5(
+                    title, content, tags,
+                    content=notes, content_rowid=rowid,
+                    tokenize='trigram'
+                );
+
+                CREATE TRIGGER notes_ai AFTER INSERT ON notes BEGIN
+                    INSERT INTO notes_fts(rowid, title, content, tags) VALUES (new.rowid, new.title, new.content, new.tags);
+                END;
+                CREATE TRIGGER notes_ad AFTER DELETE ON notes BEGIN
+                    INSERT INTO notes_fts(notes_fts, rowid, title, content, tags) VALUES('delete', old.rowid, old.title, old.content, old.tags);
+                END;
+                CREATE TRIGGER notes_au AFTER UPDATE ON notes BEGIN
+                    INSERT INTO notes_fts(notes_fts, rowid, title, content, tags) VALUES('delete', old.rowid, old.title, old.content, old.tags);
+                    INSERT INTO notes_fts(rowid, title, content, tags) VALUES (new.rowid, new.title, new.content, new.tags);
+                END;
+
+                INSERT INTO notes_fts(rowid, title, content, tags) SELECT rowid, title, content, tags FROM notes;",
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        // 默认模板：首次启动（templates 表为空）时插入 3 个预设模板
+        let template_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM templates", [], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
+        if template_count == 0 {
+            let now = chrono::Utc::now().to_rfc3339();
+            conn.execute_batch(&format!(
+                "INSERT INTO templates (id, name, content, category, sort_order, created_at, updated_at) VALUES
+                ('tpl-blank', '空白', '', 'custom', 0, '{now}', '{now}'),
+                ('tpl-meeting', '会议记录', '## 会议记录\n\n**日期**：\n**参会**：\n\n### 议题\n\n### 决议\n\n### 待办\n- [ ] ', 'custom', 1, '{now}', '{now}'),
+                ('tpl-todo', '待办清单', '## 待办清单\n\n- [ ] \n- [ ] \n- [ ] ', 'custom', 2, '{now}', '{now}');",
+            ))
+            .map_err(|e| e.to_string())?;
         }
 
         Ok(())

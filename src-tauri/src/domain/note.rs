@@ -22,6 +22,9 @@ pub struct Note {
     pub tags: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// 搜索高亮片段（仅搜索结果填充，FTS5 snippet 生成，格式：<mark>关键词</mark>）
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub highlight: Option<String>,
 }
 
 /// 标签业务规则常量
@@ -44,6 +47,7 @@ impl Note {
             tags: Vec::new(),
             created_at: now.clone(),
             updated_at: now,
+            highlight: None,
         }
     }
 

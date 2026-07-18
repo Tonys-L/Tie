@@ -1,4 +1,4 @@
-use super::{Note, Reminder};
+use super::{Note, Reminder, Template};
 
 /// Note 仓储接口（领域层定义契约，基础设施层实现）
 ///
@@ -25,6 +25,21 @@ pub trait NoteRepository: Send + Sync {
 
     /// 查询指定月份内有创建或更新活动的日期集合（日历视图用）
     fn find_activity_by_month(&self, year: i32, month: u32) -> Result<Vec<u32>, String>;
+}
+
+/// Template 仓储接口（用户自定义便签模板）
+pub trait TemplateRepository: Send + Sync {
+    /// 保存模板（新增或更新）
+    fn save(&self, template: &Template) -> Result<(), String>;
+
+    /// 查找所有模板（按 sort_order 排序）
+    fn find_all(&self) -> Result<Vec<Template>, String>;
+
+    /// 根据 ID 查找模板
+    fn find_by_id(&self, id: &str) -> Result<Option<Template>, String>;
+
+    /// 删除模板
+    fn delete(&self, id: &str) -> Result<(), String>;
 }
 
 /// Reminder 仓储接口

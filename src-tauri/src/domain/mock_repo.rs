@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use chrono::Datelike;
 
-use super::{Note, NoteRepository, Reminder, ReminderRepository};
+use super::{Note, NoteRepository, Reminder, ReminderRepository, Template, TemplateRepository};
 
 /// In-memory Note 仓储（仅用于测试）
 pub struct InMemoryNoteRepository {
@@ -195,5 +195,45 @@ impl ReminderRepository for InMemoryReminderRepository {
             })
             .cloned()
             .collect())
+    }
+}
+
+/// In-memory Template 仓储（仅用于测试）
+pub struct InMemoryTemplateRepository {
+    templates: Mutex<HashMap<String, Template>>,
+}
+
+impl InMemoryTemplateRepository {
+    pub fn new() -> Self {
+        Self {
+            templates: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl TemplateRepository for InMemoryTemplateRepository {
+    fn save(&self, template: &Template) -> Result<(), String> {
+        self.templates
+            .lock()
+            .unwrap()
+            .insert(template.id.clone(), template.clone());
+        Ok(())
+    }
+
+    fn find_all(&self) -> Result<Vec<Template>, String> {
+        Ok(self.templates.lock().unwrap().values().cloned().collect())
+    }
+
+    fn find_by_id(&self, id: &str) -> Result<Option<Template>, String> {
+        Ok(self.templates.lock().unwrap().get(id).cloned())
+    }
+
+    fn delete(&self, id: &str) -> Result<(), String> {
+        self.templates
+            .lock()
+            .unwrap()
+            .remove(id)
+            .map(|_| ())
+            .ok_or_else(|| format!("模板不存在: {}", id))
     }
 }

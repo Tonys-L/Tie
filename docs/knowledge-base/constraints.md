@@ -201,6 +201,9 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | INV-018 | Note.tags 字段使用 `#[serde(default)]` 确保旧版 JSON 同步文件反序列化为空数组而非报错 | `domain/note.rs` Note 结构体 |
 | INV-019 | 标签数量上限 10 个（MAX_TAGS），单个标签长度上限 20 字符（MAX_TAG_LEN）；set_tags 自动 trim/去重/截断 | `domain/note.rs` set_tags/add_tag |
 | INV-020 | LunarMonthly 重复类型的 next_trigger 在 application 层计算（domain 层返回 None），因为农历转换依赖外部库 tyme4rs，不能放入 domain 层 | `domain/reminder.rs` next_trigger + `application/lunar_calendar.rs` lunar_next_month + `application/reminder_service.rs` fire_reminders |
+| INV-021 | 搜索使用 FTS5 trigram tokenizer（支持 CJK 子串匹配）；查询字符数 < 3 时自动回退到 LIKE 模糊匹配（trigram 要求至少 3 字符）；FTS5 虚拟表采用外部内容模式（content=notes）+ 触发器同步，避免数据复制 | `infrastructure/database.rs` FTS5 迁移 + `sqlite_note_repo.rs` search_notes |
+| INV-022 | 模板表首次启动检测为空时自动种子 3 个默认模板（空白/会议记录/待办清单）；模板 id 格式 `tpl-{uuid}`；模板 category 固定为 `custom`；模板只支持用户自定义，不预设系统模板 | `infrastructure/database.rs` 默认模板种子 + `domain/template.rs` Template::new |
+| INV-023 | 模板必须随 Git 同步：导出到 `sync/templates/{id}.json`，导入时按 `updated_at` 仲裁（last-write-wins），与便签/提醒一致；sync_json_io 的 export_to_json/import_from_json 必须接收 template_repo 参数 | `application/sync_json_io.rs` export_to_json/import_from_json + `application/git_sync.rs` sync/auto_pull_on_startup |
 
 ### 已知策略缺口
 
@@ -327,3 +330,6 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | 2026-07-15 | 迭代三 v0.4.1：日历视图 7 项增强；find_pending_by_date_range 改为 find_by_date_range（含所有状态）；新增 get_lunar_dates/get_notes_activity_by_month 命令；NoteRepository 新增 find_activity_by_month | — | #FEAT-005 同步更新 boundaries.md |
 | 2026-07-17 | 新增已知限制：tao 0.35.3 Windows `flush_paint_messages` 断言失败偶发崩溃（上游未修复）；新增 GitHub Actions CI/CD（tag v* 触发自动构建 NSIS + 发布 Release） | — | #FEAT-009 |
 | 2026-07-17 | v0.8.0：删除 NoteColor 枚举（color 改为纯 String）；新增批量操作命令 batch_archive_notes/batch_delete_notes/batch_update_color；flash-window 改为 emit_to 定向发送；启动防重叠 resolve_overlaps；归档便签不触发提醒 | — | #FEAT-010 同步更新 boundaries.md |
+| 2026-07-18 | v0.8.1：搜索改用 FTS5 trigram tokenizer + LIKE 短查询回退；新增便签模板能力（Template 领域模型 + TemplateRepository + 4 个命令）；新增 toggle_hub 全局快捷键（Ctrl+Shift+H）；Note 新增 highlight 字段（搜索高亮）；新增 INV-021（FTS5 trigram）/INV-022（模板种子） | — | #FEAT-011 同步更新 boundaries.md/glossary.md |
+| 2026-07-18 | 模板 Git 同步：sync_json_io export/import 增加 template_repo 参数 + templates 目录处理；git_sync/note_service/commands/tray_manager/lib.rs 全链路传 template_repo；新增 INV-023（模板必须 Git 同步）；搜索高亮修复（snippet 三列选择 + 选第一个含 `<mark>` 的）；新增 UI 入口：空便签模板快捷条 + 右键菜单"从模板新建" | — | #FEAT-012 同步更新 boundaries.md/glossary.md |
+| 2026-07-18 | UI 修复：i18n 命名空间错误修复（tpl 键在 note 命名空间下新增，hub 保留）；右键菜单改为两项并存——「从模板新建便签」+「应用模板到当前便签」（追加到末尾，非破坏性）；模板快捷条 CSS 改为横向单行滚动；应用图标替换为 TIE 字母图标 | — | #FEAT-013 同步更新 boundaries.md/glossary.md |

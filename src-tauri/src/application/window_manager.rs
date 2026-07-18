@@ -161,3 +161,33 @@ fn resolve_overlaps(app: &AppHandle, notes: &[&Note]) {
         *dup_index += 1;
     }
 }
+
+/// 切换 Hub（设置中心）窗口可见性：已显示则隐藏，隐藏或未创建则显示
+pub fn toggle_hub_window(app: &AppHandle) {
+    use crate::application::locale_manager;
+    if let Some(window) = app.get_webview_window("hub") {
+        // 已存在：切换可见性
+        if window.is_visible().unwrap_or(false) {
+            let _ = window.hide();
+        } else {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+        return;
+    }
+    // 不存在：创建新窗口
+    let _window = WebviewWindowBuilder::new(app, "hub", WebviewUrl::App("hub.html".into()))
+        .title(locale_manager::menu_hub_title())
+        .inner_size(640.0, 520.0)
+        .decorations(true)
+        .transparent(false)
+        .resizable(true)
+        .always_on_top(false)
+        .disable_drag_drop_handler()
+        .build();
+
+    if _window.is_err() {
+        eprintln!("[快捷键] 切换 Hub 窗口失败");
+    }
+}

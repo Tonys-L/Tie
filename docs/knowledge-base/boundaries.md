@@ -17,20 +17,61 @@
 - 透明度范围 0.3~1.0
 - 标签数量上限 10 个，单标签长度上限 20 字符（INV-019）
 - 搜索范围跨活跃+归档，匹配标题+内容+标签
+- 搜索使用 FTS5 trigram tokenizer（CJK 子串匹配），查询 < 3 字符回退 LIKE
+- 搜索结果支持高亮片段（FTS5 snippet 生成 `<mark>` 标签）
 
 **变化点**:
 - 前端渲染方式（当前 Markdown + 待办清单交互，未来可能富文本）
 - 颜色选项扩展
-- 搜索实现（当前 LIKE，未来可能 FTS5）
+- 搜索 tokenizer（当前 trigram，未来可能引入分词器优化中文匹配）
 
 **对应代码**:
-- `src-tauri/src/domain/note.rs`（领域模型，含 tags 字段 + set_tags/add_tag/remove_tag）
+- `src-tauri/src/domain/note.rs`（领域模型，含 tags 字段 + set_tags/add_tag/remove_tag + highlight 搜索高亮片段）
 - `src-tauri/src/domain/repositories.rs`（NoteRepository trait，含 search_notes）
 - `src-tauri/src/application/commands.rs`（命令入口，含 search_notes/update_note_tags）
 - `src-tauri/src/application/note_service.rs`（便签编排：create_note 创建+开窗口、close_note_if_empty 空便签自动删除 INV-003、sync_notes 同步机制）
 - `src-tauri/src/application/window_manager.rs`（窗口管理）
+- `src-tauri/src/infrastructure/database.rs`（FTS5 虚拟表 + 触发器迁移）
+- `src-tauri/src/infrastructure/sqlite_note_repo.rs`（search_notes 实现：FTS5 MATCH + snippet + LIKE 短查询回退）
 - `src/main.ts`（前端入口，含标签栏）
-- `src/hub.ts`（Hub 前端，含后端搜索+标签侧边栏+排序）
+- `src/hub.ts`（Hub 前端，含后端搜索+标签侧边栏+排序+高亮渲染）
+
+---
+
+### 便签模板
+
+**能力定义**: 用户自定义便签模板，支持从模板一键创建便签，并随 Git 跨设备同步。
+
+**业务规则**:
+- 模板表首次启动为空时自动种子 3 个默认模板（空白/会议记录/待办清单）（INV-022）
+- 模板 id 格式 `tpl-{uuid}`，category 固定为 `custom`
+- 模板仅用户自定义，不预设系统模板
+- 从模板创建便签：复制模板内容到新便签，自动打开窗口
+- 模板 CRUD：新建/编辑（名称+内容）/删除
+- 模板必须随 Git 同步：导出到 `sync/templates/{id}.json`，导入时按 `updated_at` 仲裁（last-write-wins），与便签/提醒一致（INV-023）
+
+**UI 入口**:
+- 设置中心模板管理弹窗（CRUD + 从模板新建）
+- 便签右键菜单两项并存：
+  - 「从模板新建便签」→ 创建新便签并打开新窗口
+  - 「应用模板到当前便签」→ 在当前便签 content 末尾追加 `\n\n` + 模板内容（非破坏性，不覆盖已有内容）
+- 空便签编辑区顶部模板快捷条（一键填充当前便签内容，仅当内容为空时显示；多模板时横向单行滚动不换行）
+
+**变化点**:
+- 模板分类（当前仅 custom，未来可能扩展分类）
+- 模板默认种子数据（当前 3 个，未来可能调整）
+
+**对应代码**:
+- `src-tauri/src/domain/template.rs`（Template 领域模型）
+- `src-tauri/src/domain/repositories.rs`（TemplateRepository trait）
+- `src-tauri/src/domain/mock_repo.rs`（InMemoryTemplateRepository 测试用 mock）
+- `src-tauri/src/infrastructure/sqlite_template_repo.rs`（SQLite 实现）
+- `src-tauri/src/infrastructure/database.rs`（templates 表 DDL + 默认种子）
+- `src-tauri/src/application/commands.rs`（get_templates/save_template/delete_template/create_note_from_template 命令）
+- `src-tauri/src/application/sync_json_io.rs`（模板导出/导入 + updated_at 仲裁）
+- `src-tauri/src/application/git_sync.rs`（sync/auto_pull_on_startup 传 template_repo）
+- `src/hub.ts`（模板管理弹窗 + CRUD UI）
+- `src/main.ts`（空便签模板快捷条 setupTemplateQuickBar + 右键菜单 showTemplatePicker）
 
 ---
 
@@ -234,9 +275,10 @@
 | 同步协议 | Git HTTPS | 可能换 WebSocket/云服务 | 重写 git_sync 模块 |
 | 重复类型 | Daily/Weekly/Monthly(精确月)/LunarMonthly(农历月) | 可能新增更多重复类型 | 修改 `next_trigger()` + `lunar_calendar.rs` |
 | 通知方式 | 系统通知 + 弹窗 | 可能加邮件/推送 | 新增通知通道模块 |
-| 快捷键 | 可配置（2 个动作） | 可能新增动作 | `shortcut_manager.rs` + `shortcut_config.json` |
+| 快捷键 | 可配置（3 个动作：new_note/show_all/toggle_hub） | 可能新增动作 | `shortcut_manager.rs` + `shortcut_config.json` |
 | 标签管理 | 手动标签 + 数量/长度限制 | 可能自动标签/标签颜色 | `domain/note.rs` tags 字段 |
-| 搜索方式 | SQLite LIKE 查询 | 可能引入 FTS5 全文索引 | `sqlite_note_repo.rs` search_notes |
+| 搜索方式 | FTS5 trigram tokenizer + LIKE 短查询回退 | 可能引入分词器优化中文匹配 | `sqlite_note_repo.rs` search_notes + `database.rs` FTS5 虚拟表 |
+| 便签模板 | 用户自定义模板（内置 3 个默认种子） | 可能扩展模板分类 | `domain/template.rs` + `sqlite_template_repo.rs` |
 | AI 嗅探建议类型 | reminder/todo_split/tidy/style/tag_suggest 5 种 | 可能新增更多建议类型 | `reminder_parser.rs` match 分支 + `prompts/sniff.rs` |
 | 报告周期类型 | Weekly/Monthly 2 种 | 可能新增自定义周期 | `report_generator.rs` ReportPeriod 枚举 + `commands.rs` generate_report 参数 |
 | AI 文本重写操作 | tidy/todo_split/style_formal/style_concise/style_mild 5 种 | 可能新增更多操作类型 | `prompts/rewrite.rs` RewriteOperation 枚举 + `commands.rs` ai_rewrite_text |
@@ -273,3 +315,6 @@
 | 2026-07-16 | 新增"周报/月报生成"支撑能力（report_generator.rs + prompts/report.rs + generate_report 命令）；扩展点分析表新增报告周期类型扩展点；IPC 命令数修正为 42（历史不一致修正，以代码为准） | — | #FEAT-007 |
 | 2026-07-17 | 新增"AI 文本重写"支撑能力（prompts/rewrite.rs + ai_rewrite_text 命令，5 种操作：tidy/todo_split/style_formal/style_concise/style_mild）；新增"待办清单智能排序"支撑能力（prompts/sort.rs + ai_sort_todos 命令，待办 > 3 时触发）；IPC 命令数 42 → 44 | — | #FEAT-008 |
 | 2026-07-17 | v0.8.0：新增"批量操作"支撑能力（batch_archive_notes/batch_delete_notes/batch_update_color 命令）；删除 NoteColor 枚举（color 改为纯 String，前端定义快捷颜色）；IPC 命令数 44 → 47 | — | #FEAT-010 同步更新 constraints.md |
+| 2026-07-18 | v0.8.1：搜索改用 FTS5 trigram tokenizer + LIKE 短查询回退 + snippet 高亮；新增"便签模板"能力（Template 领域模型 + TemplateRepository + 4 个命令 get_templates/save_template/delete_template/create_note_from_template + 默认种子）；快捷键新增 toggle_hub 动作（3 个动作）；IPC 命令数 47 → 51 | — | #FEAT-011 同步更新 constraints.md/glossary.md |
+| 2026-07-18 | 模板能力扩展：模板 Git 同步（sync_json_io export/import 增加 templates 目录 + updated_at 仲裁）；搜索高亮修复（snippet 三列选择 + 选第一个含 `<mark>` 的）；新增 UI 入口三处——设置中心模板管理弹窗、便签右键菜单"从模板新建"、空便签编辑区顶部模板快捷条；新增 INV-023（模板必须 Git 同步） | — | #FEAT-012 同步更新 constraints.md/glossary.md |
+| 2026-07-18 | UI 修复：i18n 命名空间错误（tpl 键从 hub 移到 note）；模板快捷条 CSS 改为横向单行滚动（不换行不挤压内容区）；右键菜单改为两项并存——「从模板新建便签」+「应用模板到当前便签」（追加到末尾，非破坏性）；新增 showTemplateApplier；应用图标替换为 TIE 字母图标（替换 src-tauri/icons 全部 35 个文件） | — | #FEAT-013 同步更新 constraints.md/glossary.md |

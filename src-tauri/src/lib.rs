@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use application::{commands, reminder_scheduler, shortcut_manager, tray_manager};
-use infrastructure::{Database, SqliteNoteRepository, SqliteReminderRepository};
+use infrastructure::{Database, SqliteNoteRepository, SqliteReminderRepository, SqliteTemplateRepository};
 use tauri::Manager;
 
 /// 用户主动退出标志（区别于窗口全部关闭导致的退出）
@@ -19,6 +19,7 @@ pub static USER_QUIT: AtomicBool = AtomicBool::new(false);
 pub struct AppState {
     pub note_repo: Box<dyn domain::NoteRepository>,
     pub reminder_repo: Box<dyn domain::ReminderRepository>,
+    pub template_repo: Box<dyn domain::TemplateRepository>,
     pub git_sync: application::git_sync::GitSync,
     pub shortcut_manager: application::shortcut_manager::ShortcutManager,
     pub scheduler: application::reminder_scheduler::ReminderScheduler,
@@ -75,7 +76,8 @@ pub fn run() {
             eprintln!("[setup] 数据库初始化成功");
 
             let note_repo = Box::new(SqliteNoteRepository::new(db.clone()));
-            let reminder_repo = Box::new(SqliteReminderRepository::new(db));
+            let reminder_repo = Box::new(SqliteReminderRepository::new(db.clone()));
+            let template_repo = Box::new(SqliteTemplateRepository::new(db));
             let git_sync = application::git_sync::GitSync::new(&db_dir);
             let shortcut_mgr = application::shortcut_manager::ShortcutManager::new(&db_dir);
             let scheduler = application::reminder_scheduler::ReminderScheduler::new();
@@ -83,6 +85,7 @@ pub fn run() {
             app.manage(AppState {
                 note_repo,
                 reminder_repo,
+                template_repo,
                 git_sync,
                 shortcut_manager: shortcut_mgr,
                 scheduler,
@@ -106,7 +109,7 @@ pub fn run() {
             // ---- 自动同步：启动时拉取 ----
             {
                 let state = app.state::<AppState>();
-                state.git_sync.auto_pull_on_startup(state.note_repo.as_ref(), state.reminder_repo.as_ref());
+                state.git_sync.auto_pull_on_startup(state.note_repo.as_ref(), state.reminder_repo.as_ref(), state.template_repo.as_ref());
             }
 
             // ---- 恢复所有便签窗口 ----
@@ -166,6 +169,10 @@ pub fn run() {
             commands::batch_archive_notes,
             commands::batch_delete_notes,
             commands::batch_update_color,
+            commands::get_templates,
+            commands::save_template,
+            commands::delete_template,
+            commands::create_note_from_template,
         ])
         .build(tauri::generate_context!())
         .expect("启动应用失败");

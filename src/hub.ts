@@ -3,7 +3,7 @@ import { enable as enableAutoStart, disable as disableAutoStart, isEnabled as is
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { Reminder, ShortcutConfig } from './types';
+import type { Reminder, ShortcutConfig, Template } from './types';
 import * as api from './api';
 import { COLOR_MAP, escapeHtml, formatDate, localISO, quickDate, repeatLabel } from './utils';
 import { initLocale, t, applyLocale, getLocale, setLocale, getLocaleTag } from './i18n';
@@ -231,7 +231,13 @@ function renderList() {
   listEl.innerHTML = sorted.map(n => {
     const color = COLOR_MAP[n.color] || COLOR_MAP.amber;
     const title = n.title || t('hub.noTitle');
-    const preview = (n.content || '').replace(/[#*`>\-\[\]]/g, '').slice(0, 60) || t('hub.noContent');
+    // 搜索模式：使用 FTS5 highlight 片段（含 <mark> 标签），否则普通预览
+    const preview = isSearchMode && n.highlight
+      ? n.highlight
+      : (n.content || '').replace(/[#*`>\-\[\]]/g, '').slice(0, 60) || t('hub.noContent');
+    const previewHtml = isSearchMode && n.highlight
+      ? preview  // highlight 已是 HTML（<mark> 包裹），直接渲染
+      : escapeHtml(preview);
     const isArchived = archivedNotes.some(a => a.id === n.id);
     const showTag = isSearchMode || currentTab === 'reminders';
     const tag = showTag ? (isArchived ? `<span class="note-tag archived">${t('hub.archived')}</span>` : `<span class="note-tag active">${t('hub.activeNotes')}</span>`) : '';
@@ -243,7 +249,7 @@ function renderList() {
 	      ? `<button class="act-btn restore" data-restore="${n.id}" title="${t('hub.restore')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button>`
 	      : `<button class="act-btn reminder" data-reminder="${n.id}" data-title="${escapeHtml(title)}" title="${t('hub.reminders')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></button><button class="act-btn archive" data-archive="${n.id}" title="${t('note.archive')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg></button>`;
     const reminderBadge = n._reminderCount > 0 ? `<span class="reminder-badge">${n._reminderCount}</span>` : '';
-    return `<div class="note-item" data-id="${n.id}"><div class="note-color" style="background:${color}"></div><div class="note-text"><div class="note-title">${escapeHtml(title)} ${tag}</div><div class="note-preview">${escapeHtml(preview)}</div>${tagsHtml}</div>${reminderBadge}<span class="note-date">${dateStr}</span><div class="note-actions">${actionBtn}<button class="act-btn delete" data-delete="${n.id}" title="${t('note.delete')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button></div></div>`;
+    return `<div class="note-item" data-id="${n.id}"><div class="note-color" style="background:${color}"></div><div class="note-text"><div class="note-title">${escapeHtml(title)} ${tag}</div><div class="note-preview">${previewHtml}</div>${tagsHtml}</div>${reminderBadge}<span class="note-date">${dateStr}</span><div class="note-actions">${actionBtn}<button class="act-btn delete" data-delete="${n.id}" title="${t('note.delete')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button></div></div>`;
   }).join('');
 }
 
@@ -618,12 +624,14 @@ async function loadShortcutConfig() {
     const config = await api.getShortcutConfig();
     (document.getElementById('shortcut-new-note') as HTMLInputElement).value = config.new_note;
     (document.getElementById('shortcut-show-all') as HTMLInputElement).value = config.show_all;
+    (document.getElementById('shortcut-toggle-hub') as HTMLInputElement).value = config.toggle_hub || 'ctrl+shift+h';
   } catch (e) { console.error('加载快捷键配置失败:', e); }
 
   function getShortcutConfig(): ShortcutConfig {
     return {
       new_note: (document.getElementById('shortcut-new-note') as HTMLInputElement).value.trim().toLowerCase(),
       show_all: (document.getElementById('shortcut-show-all') as HTMLInputElement).value.trim().toLowerCase(),
+      toggle_hub: (document.getElementById('shortcut-toggle-hub') as HTMLInputElement).value.trim().toLowerCase(),
     };
   }
 
@@ -637,7 +645,7 @@ async function loadShortcutConfig() {
 
   document.getElementById('shortcut-save-btn')?.addEventListener('click', async () => {
     const config = getShortcutConfig();
-    if (!config.new_note || !config.show_all) {
+    if (!config.new_note || !config.show_all || !config.toggle_hub) {
       showShortcutStatus(t('hub.shortcutEmpty'), 'err');
       return;
     }
@@ -652,6 +660,7 @@ async function loadShortcutConfig() {
   document.getElementById('shortcut-reset-btn')?.addEventListener('click', () => {
     (document.getElementById('shortcut-new-note') as HTMLInputElement).value = 'ctrl+shift+n';
     (document.getElementById('shortcut-show-all') as HTMLInputElement).value = 'ctrl+shift+s';
+    (document.getElementById('shortcut-toggle-hub') as HTMLInputElement).value = 'ctrl+shift+h';
   });
 }
 
@@ -1299,4 +1308,138 @@ batchBar.querySelector('[data-batch-color]')?.addEventListener('click', () => {
 batchBar.querySelector('[data-batch-cancel]')?.addEventListener('click', () => {
   selectedIds.clear();
   updateMultiSelectUI();
+});
+
+// ===== 模板管理 =====
+let tplList: Template[] = [];
+let tplSelectedId: string | null = null;
+
+async function loadTemplates() {
+  try {
+    tplList = await api.getTemplates();
+  } catch (e) {
+    console.error('加载模板失败:', e);
+    tplList = [];
+  }
+  tplSelectedId = null;
+  renderTplList();
+  renderTplEditor();
+}
+
+function renderTplList() {
+  const listEl = document.getElementById('tpl-list')!;
+  if (tplList.length === 0) {
+    listEl.innerHTML = `<div class="tpl-empty">${t('hub.tplEmpty')}</div>`;
+    return;
+  }
+  listEl.innerHTML = tplList.map(tp =>
+    `<div class="tpl-item ${tplSelectedId === tp.id ? 'active' : ''}" data-tpl-id="${escapeHtml(tp.id)}">${escapeHtml(tp.name)}</div>`
+  ).join('');
+  listEl.querySelectorAll('[data-tpl-id]').forEach(item => {
+    item.addEventListener('click', () => {
+      tplSelectedId = (item as HTMLElement).dataset.tplId!;
+      renderTplList();
+      renderTplEditor();
+    });
+  });
+}
+
+function renderTplEditor() {
+  const editorEl = document.getElementById('tpl-editor')!;
+  const tpl = tplList.find(tp => tp.id === tplSelectedId);
+  if (!tpl) {
+    editorEl.innerHTML = `<div class="tpl-empty">${t('hub.tplEmpty')}</div>`;
+    return;
+  }
+  editorEl.innerHTML = `
+    <input type="text" class="tpl-name-input" id="tpl-name" value="${escapeHtml(tpl.name)}" placeholder="${t('hub.tplName')}" />
+    <textarea class="tpl-content-input" id="tpl-content" placeholder="${t('hub.tplContent')}">${escapeHtml(tpl.content)}</textarea>
+    <div class="tpl-actions">
+      <button class="tpl-action-btn tpl-action-primary" id="tpl-save-btn">${t('hub.tplSave')}</button>
+      <button class="tpl-action-btn" id="tpl-create-from-btn">${t('hub.tplCreateFrom')}</button>
+      <button class="tpl-action-btn tpl-action-danger" id="tpl-delete-btn">${t('hub.tplDelete')}</button>
+    </div>
+  `;
+  document.getElementById('tpl-save-btn')?.addEventListener('click', async () => {
+    const name = (document.getElementById('tpl-name') as HTMLInputElement).value.trim();
+    const content = (document.getElementById('tpl-content') as HTMLTextAreaElement).value;
+    if (!name) {
+      showToast(t('hub.tplNameRequired'), 'err');
+      return;
+    }
+    try {
+      const updated: Template = { ...tpl, name, content, updated_at: new Date().toISOString() };
+      await api.saveTemplate(updated);
+      const idx = tplList.findIndex(tp => tp.id === tpl.id);
+      if (idx >= 0) tplList[idx] = updated;
+      renderTplList();
+      showToast(t('hub.tplSaved'), 'ok');
+    } catch (e) {
+      showToast(t('hub.saveFailed') + ': ' + e, 'err');
+    }
+  });
+  document.getElementById('tpl-create-from-btn')?.addEventListener('click', async () => {
+    try {
+      await api.createNoteFromTemplate(tpl.id);
+      closeTplDialog();
+      showToast(t('hub.tplCreated'), 'ok');
+      loadNotes();
+    } catch (e) {
+      showToast(t('hub.saveFailed') + ': ' + e, 'err');
+    }
+  });
+  document.getElementById('tpl-delete-btn')?.addEventListener('click', async () => {
+    if (!confirm(t('hub.tplDeleteConfirm'))) return;
+    try {
+      await api.deleteTemplate(tpl.id);
+      tplList = tplList.filter(tp => tp.id !== tpl.id);
+      tplSelectedId = null;
+      renderTplList();
+      renderTplEditor();
+      showToast(t('hub.tplDeleted'), 'ok');
+    } catch (e) {
+      showToast(t('hub.saveFailed') + ': ' + e, 'err');
+    }
+  });
+}
+
+function openTplDialog() {
+  const overlay = document.getElementById('tpl-overlay')!;
+  overlay.style.display = 'flex';
+  loadTemplates();
+}
+
+function closeTplDialog() {
+  const overlay = document.getElementById('tpl-overlay')!;
+  overlay.style.display = 'none';
+}
+
+document.getElementById('btn-templates')?.addEventListener('click', openTplDialog);
+document.getElementById('tpl-close')?.addEventListener('click', closeTplDialog);
+document.getElementById('tpl-overlay')?.addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeTplDialog();
+});
+
+// 新建模板（前端生成 id，后端 INSERT ON CONFLICT 处理）
+document.getElementById('tpl-new')?.addEventListener('click', async () => {
+  const now = new Date().toISOString();
+  const newTpl: Template = {
+    id: 'tpl-' + (crypto.randomUUID?.() ?? Date.now().toString(36) + Math.random().toString(36).slice(2)),
+    name: t('hub.tplNew').replace('+ ', '') || '新模板',
+    content: '',
+    category: 'custom',
+    sort_order: tplList.length,
+    created_at: now,
+    updated_at: now,
+  };
+  try {
+    await api.saveTemplate(newTpl);
+    tplList.push(newTpl);
+    tplSelectedId = newTpl.id;
+    renderTplList();
+    renderTplEditor();
+    showToast(t('hub.tplNewCreated'), 'ok');
+  } catch (e) {
+    showToast(t('hub.saveFailed') + ': ' + e, 'err');
+  }
 });

@@ -5,7 +5,7 @@ use std::time::Duration;
 use super::git_ops;
 use super::sync_config::SyncConfig;
 use super::sync_json_io;
-use crate::domain::{NoteRepository, ReminderRepository};
+use crate::domain::{NoteRepository, ReminderRepository, TemplateRepository};
 use tauri::Manager;
 
 /// Git 同步管理器：持有路径与防抖状态，编排同步流程
@@ -46,6 +46,7 @@ impl GitSync {
         &self,
         note_repo: &dyn NoteRepository,
         reminder_repo: &dyn ReminderRepository,
+        template_repo: &dyn TemplateRepository,
         create_branch: bool,
     ) -> Result<String, String> {
         let config = self.load_config()?;
@@ -84,7 +85,7 @@ impl GitSync {
         }
 
         // 1. 导出本地数据为 JSON
-        sync_json_io::export_to_json(&self.sync_dir, note_repo, reminder_repo)?;
+        sync_json_io::export_to_json(&self.sync_dir, note_repo, reminder_repo, template_repo)?;
 
         // 2. 添加并 commit 本地变更
         git_ops::run_git(&self.sync_dir, &["add", "-A"])?;
@@ -160,7 +161,7 @@ impl GitSync {
         }
 
         // 4. 导入合并后的 JSON 到数据库
-        let imported = sync_json_io::import_from_json(&self.sync_dir, note_repo, reminder_repo)?;
+        let imported = sync_json_io::import_from_json(&self.sync_dir, note_repo, reminder_repo, template_repo)?;
 
         // 5. push
         git_ops::run_git(
@@ -216,7 +217,7 @@ impl GitSync {
 
             if should_sync {
                 eprintln!("[自动同步] 开始同步...");
-                match state.git_sync.sync(state.note_repo.as_ref(), state.reminder_repo.as_ref(), false) {
+                match state.git_sync.sync(state.note_repo.as_ref(), state.reminder_repo.as_ref(), state.template_repo.as_ref(), false) {
                     Ok(msg) => eprintln!("[自动同步] {}", msg),
                     Err(e) => eprintln!("[自动同步] 失败: {}", e),
                 }
@@ -229,6 +230,7 @@ impl GitSync {
         &self,
         note_repo: &dyn NoteRepository,
         reminder_repo: &dyn ReminderRepository,
+        template_repo: &dyn TemplateRepository,
     ) {
         let config = match self.load_config() {
             Ok(c) => c,
@@ -239,7 +241,7 @@ impl GitSync {
         }
 
         eprintln!("[自动同步] 启动时拉取远程数据...");
-        match self.sync(note_repo, reminder_repo, false) {
+        match self.sync(note_repo, reminder_repo, template_repo, false) {
             Ok(msg) => eprintln!("[自动同步] {}", msg),
             Err(e) => eprintln!("[自动同步] 启动拉取失败: {}", e),
         }
@@ -249,7 +251,7 @@ impl GitSync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::mock_repo::{InMemoryNoteRepository, InMemoryReminderRepository};
+    use crate::domain::mock_repo::{InMemoryNoteRepository, InMemoryReminderRepository, InMemoryTemplateRepository};
     use crate::domain::Note;
 
     use std::process::Stdio;
@@ -343,9 +345,10 @@ mod tests {
         let git_sync = GitSync::new(&dir);
         let note_repo = InMemoryNoteRepository::new();
         let reminder_repo = InMemoryReminderRepository::new();
+        let template_repo = InMemoryTemplateRepository::new();
 
         // 未配置仓库地址应返回错误
-        let result = git_sync.sync(&note_repo, &reminder_repo, false);
+        let result = git_sync.sync(&note_repo, &reminder_repo, &template_repo, false);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("请先配置"));
 
@@ -358,9 +361,10 @@ mod tests {
         let git_sync = GitSync::new(&dir);
         let note_repo = InMemoryNoteRepository::new();
         let reminder_repo = InMemoryReminderRepository::new();
+        let template_repo = InMemoryTemplateRepository::new();
 
         // 未配置自动同步 → 应直接返回，不报错
-        git_sync.auto_pull_on_startup(&note_repo, &reminder_repo);
+        git_sync.auto_pull_on_startup(&note_repo, &reminder_repo, &template_repo);
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -388,11 +392,12 @@ mod tests {
         // 准备测试数据
         let note_repo = InMemoryNoteRepository::new();
         let reminder_repo = InMemoryReminderRepository::new();
+        let template_repo = InMemoryTemplateRepository::new();
         let note = Note::new("测试便签".to_string(), "amber".to_string());
         note_repo.save(&note).unwrap();
 
         // 第一次同步：远程为空 → 首次推送
-        let result = git_sync.sync(&note_repo, &reminder_repo, false);
+        let result = git_sync.sync(&note_repo, &reminder_repo, &template_repo, false);
         assert!(result.is_ok(), "首次同步失败: {:?}", result);
         let msg = result.unwrap();
         assert!(msg.contains("已推送") || msg.contains("已是最新"), "意外消息: {}", msg);
@@ -401,7 +406,7 @@ mod tests {
         assert!(git_sync.sync_dir.join("notes").join(format!("{}.json", note.id)).exists());
 
         // 第二次同步：无变更 → 已是最新
-        let result2 = git_sync.sync(&note_repo, &reminder_repo, false);
+        let result2 = git_sync.sync(&note_repo, &reminder_repo, &template_repo, false);
         assert!(result2.is_ok(), "第二次同步失败: {:?}", result2);
 
         std::fs::remove_dir_all(&dir).ok();
@@ -429,11 +434,12 @@ mod tests {
 
         let note_repo = InMemoryNoteRepository::new();
         let reminder_repo = InMemoryReminderRepository::new();
+        let template_repo = InMemoryTemplateRepository::new();
         let note = Note::new("测试".to_string(), "amber".to_string());
         note_repo.save(&note).unwrap();
 
         // 首次推送 main
-        let _ = git_sync.sync(&note_repo, &reminder_repo, false).unwrap();
+        let _ = git_sync.sync(&note_repo, &reminder_repo, &template_repo, false).unwrap();
 
         // 切换到不存在的分支 master
         let config_master = SyncConfig {
@@ -446,7 +452,7 @@ mod tests {
         git_sync.save_config(&config_master).unwrap();
 
         // 同步应返回 BRANCH_NOT_FOUND 错误
-        let result = git_sync.sync(&note_repo, &reminder_repo, false);
+        let result = git_sync.sync(&note_repo, &reminder_repo, &template_repo, false);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.starts_with("BRANCH_NOT_FOUND:"), "意外错误: {}", err);
@@ -475,11 +481,12 @@ mod tests {
 
         let note_repo = InMemoryNoteRepository::new();
         let reminder_repo = InMemoryReminderRepository::new();
+        let template_repo = InMemoryTemplateRepository::new();
         let note = Note::new("测试".to_string(), "amber".to_string());
         note_repo.save(&note).unwrap();
 
         // 先推送 main
-        let _ = git_sync.sync(&note_repo, &reminder_repo, false).unwrap();
+        let _ = git_sync.sync(&note_repo, &reminder_repo, &template_repo, false).unwrap();
 
         // 切换到 master 并用 create_branch=true
         let config_master = SyncConfig {
@@ -492,7 +499,7 @@ mod tests {
         git_sync.save_config(&config_master).unwrap();
 
         // create_branch=true → 应成功创建新分支
-        let result = git_sync.sync(&note_repo, &reminder_repo, true);
+        let result = git_sync.sync(&note_repo, &reminder_repo, &template_repo, true);
         assert!(result.is_ok(), "创建分支同步失败: {:?}", result);
 
         std::fs::remove_dir_all(&dir).ok();
