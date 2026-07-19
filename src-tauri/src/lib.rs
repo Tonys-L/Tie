@@ -134,6 +134,7 @@ pub fn run() {
             commands::update_note_title,
             commands::update_note_style,
             commands::update_note_window_state,
+            commands::restore_window_on_top,
             commands::delete_note,
             commands::archive_note,
             commands::unarchive_note,

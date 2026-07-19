@@ -263,6 +263,8 @@ function renderNote(note: Note) {
   app.querySelector('[data-banner-close]')!.addEventListener('click', () => {
     banner.style.display = 'none';
     app.classList.remove('reminder-flash');
+    // 恢复窗口原始置顶状态
+    invoke('restore_window_on_top', { id: note.id });
   });
   // 贪睡按钮：5分钟后再次提醒
   app.querySelector('[data-banner-snooze]')!.addEventListener('click', async () => {
@@ -271,6 +273,7 @@ function renderNote(note: Note) {
     }
     banner.style.display = 'none';
     app.classList.remove('reminder-flash');
+    invoke('restore_window_on_top', { id: note.id });
   });
   // 完成按钮：标记提醒为已完成
   app.querySelector('[data-banner-done]')!.addEventListener('click', async () => {
@@ -279,6 +282,7 @@ function renderNote(note: Note) {
     }
     banner.style.display = 'none';
     app.classList.remove('reminder-flash');
+    invoke('restore_window_on_top', { id: note.id });
   });
 
   // ---- 右键菜单 ----
@@ -1380,21 +1384,21 @@ function showReminderPanel(note: Note, app: HTMLElement) {
         <button class="rd-close" data-reminder-close>&times;</button>
       </div>
       <div class="rd-quick">
-        <button class="qbtn" data-quick="1h">${t('note.oneHour')}</button>
-	        <button class="qbtn" data-quick="3h">${t('note.threeHours')}</button>
-	        <button class="qbtn" data-quick="tomorrow">${t('note.tomorrow')}</button>
-	        <button class="qbtn" data-quick="week">${t('note.nextMonday')}</button>
-      </div>
-      <input type="datetime-local" class="rd-datetime" data-remind-at value="${localISO(defaultTime)}">
-      <div class="rd-repeat">
-        <button class="rbtn active" data-repeat="none">${t('note.once')}</button>
-	        <button class="rbtn" data-repeat="daily">${t('note.daily')}</button>
-	        <button class="rbtn" data-repeat="weekly">${t('note.weekly')}</button>
-	        <button class="rbtn" data-repeat="monthly">${t('note.monthly')}</button>
-        <button class="rbtn" data-repeat="lunar_monthly">${t('note.lunarMonthly')}</button>
-      </div>
-      <div class="rd-existing" data-reminder-list></div>
-      <button class="rd-save" data-save-reminder>${t('note.setReminder')}</button>
+	        <button class="qbtn" data-quick="1h">${t('note.oneHour')}</button>
+		        <button class="qbtn" data-quick="3h">${t('note.threeHours')}</button>
+		        <button class="qbtn" data-quick="tomorrow">${t('note.tomorrow')}</button>
+		        <button class="qbtn" data-quick="week">${t('note.nextMonday')}</button>
+	      </div>
+	      <div class="rd-repeat">
+	        <button class="rbtn active" data-repeat="none">${t('note.once')}</button>
+		        <button class="rbtn" data-repeat="daily">${t('note.daily')}</button>
+		        <button class="rbtn" data-repeat="weekly">${t('note.weekly')}</button>
+		        <button class="rbtn" data-repeat="monthly">${t('note.monthly')}</button>
+	        <button class="rbtn" data-repeat="lunar_monthly">${t('note.lunarMonthly')}</button>
+	      </div>
+	      <button class="rd-save" data-save-reminder>${t('note.setReminder')}</button>
+	      <input type="datetime-local" class="rd-datetime" data-remind-at value="${localISO(defaultTime)}">
+	      <div class="rd-existing" data-reminder-list></div>
     </div>
   `;
   app.appendChild(overlay);

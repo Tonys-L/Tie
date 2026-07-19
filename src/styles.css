@@ -948,6 +948,7 @@ html, body {
   cursor: pointer;
   transition: all 0.12s;
   font-family: inherit;
+  margin-bottom: 8px;
 }
 
 .rd-save:hover {

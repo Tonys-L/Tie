@@ -96,12 +96,12 @@ pub fn activate_note_for_reminder(app: &AppHandle, note: &Note, reminder_id: &st
     let label = format!("note-{}", note.id);
 
     if let Some(window) = app.get_webview_window(&label) {
-        // 窗口已存在 → 显示+聚焦+发送事件+闪烁
+        // 窗口已存在 → 显示+聚焦+置顶+发送事件
         let _ = window.show();
         let _ = window.set_focus();
+        let _ = window.set_always_on_top(true);
         let _ = app.emit_to(&label, "reminder-triggered", serde_json::json!({ "reminder_id": reminder_id }));
         eprintln!("[调度器] 窗口已存在，发送 reminder-triggered 事件: note_id={}, reminder_id={}", note.id, reminder_id);
-        flash_window(&window, note.is_pinned);
         Ok(())
     } else {
         // 窗口不存在 → 创建新窗口（URL 带 reminder + rid 参数）

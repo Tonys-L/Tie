@@ -137,7 +137,18 @@ pub async fn delete_note(app: AppHandle, state: State<'_, AppState>, id: String)
     result
 }
 
-/// 归档便签
+/// 恢复便签窗口的置顶状态为便签自身的 is_pinned 值
+/// 用于提醒触发时临时置顶后，用户操作横幅后恢复原始状态
+#[tauri::command]
+pub async fn restore_window_on_top(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let note = state.note_repo.find_by_id(&id)?.ok_or("便签不存在")?;
+    let label = format!("note-{}", id);
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.set_always_on_top(note.is_pinned);
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn archive_note(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     let mut note = state.note_repo.find_by_id(&id)?.ok_or("便签不存在")?;
