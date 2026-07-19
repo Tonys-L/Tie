@@ -1501,14 +1501,17 @@ function setupAiSniffButton(note: Note, app: HTMLElement): void {
       });
   });
 
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
     if (btn.disabled) return;
+
     // 加载状态：禁止重复点击
     btn.disabled = true;
     const originalHTML = btn.innerHTML;
     btn.innerHTML = `<span style="font-size:11px;">${t('hub.sniffLoading')}</span>`;
+    console.log('[ai-analyze] 灯泡点击，force=true, content=', note.content?.substring(0, 100));
 
     sniffAfterSave(note, true, (suggestions) => {
+      console.log('[ai-analyze] 回调触发, suggestions=', suggestions);
       // 恢复按钮
       btn.innerHTML = originalHTML;
       // 重新检查配置状态以决定是否启用（配置可能在加载时已就绪）
@@ -1548,6 +1551,7 @@ function showSniffEmptyHint(app: HTMLElement): void {
  * 失败时通过可选回调通知调用方。
  */
 async function sniffAfterSave(note: Note, force: boolean = false, onDone?: (suggestions: Suggestion[]) => void): Promise<void> {
+  console.log('[ai-analyze] sniffAfterSave, force=', force, 'content长度=', note.content?.length);
   if (!force) {
     // 内容未变则跳过
     const lastContent = sniffContentMap.get(note.id);
@@ -1566,15 +1570,17 @@ async function sniffAfterSave(note: Note, force: boolean = false, onDone?: (sugg
   }
 
   // 嗅探完全异步，不阻塞保存流程；失败静默
+  console.log('[ai-analyze] 调用 sniff_suggestions, content=', note.content?.substring(0, 80));
   invoke<Suggestion[]>('sniff_suggestions', { content: note.content })
     .then(suggestions => {
+      console.log('[ai-analyze] sniff_suggestions 返回, 数量=', suggestions?.length, suggestions);
       if (suggestions && suggestions.length > 0) {
         showSuggestionPanel(note, suggestions);
       }
       if (onDone) onDone(suggestions || []);
     })
     .catch(err => {
-      console.error('嗅探失败:', err);
+      console.error('AI分析失败:', err);
       // 失败时给用户提示，而非静默显示"未发现可优化项"
       const msg = typeof err === 'string' ? err : (err as Error).message || String(err);
       showToast(t('hub.sniffFailed') + ': ' + msg, 'error');

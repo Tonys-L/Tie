@@ -1,0 +1,7 @@
+- [x] glossary.md 中包含 `img:filename{width=N}` 语法定义
+- [x] glossary.md 中包含图片拖拽调整大小功能说明
+- [x] boundaries.md 中 delete_note 命令职责包含"关闭便签窗口"
+- [x] boundaries.md 中说明窗口关闭使用 destroy
+- [x] constraints.md 中包含图片宽度语法约束（`{` 为文件名终止符）
+- [x] constraints.md 中包含 delete_note 必须关闭窗口的约束/不变量
+- [x] 所有更新文档的变更记录已填写

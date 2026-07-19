@@ -1,0 +1,8 @@
+﻿- [x] flows.md 中 Git 同步流程图为"先拉后推"（fetch→merge→import→export→commit→push）
+- [x] flows.md 异常处理表包含 merge 失败后安全检查和 push 删除>50%拒绝
+- [x] flows.md 便签窗口生命周期图包含 delete_note → destroy 路径
+- [x] flows.md 跨模块事件联动表包含 delete_note → window destroy 事件
+- [x] constraints.md 包含 INV-027（窗口最小尺寸 200×150，三处校验）
+- [x] lessons/README.md 包含 LES-016（onCloseRequested 改变默认关闭行为）
+- [x] lessons/README.md 文件索引和检索指引已更新
+- [x] 所有更新文档的变更记录已填写

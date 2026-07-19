@@ -95,15 +95,13 @@ struct SniffResponse {
 ///
 /// 未知类型跳过。各类型在数据为空时跳过（不 push 建议）。
 pub async fn sniff_suggestions(content: &str, config: &AiConfig) -> Result<Vec<Suggestion>, AiError> {
-    // 1. 未配置：静默跳过
+    // 未配置：静默跳过
     if !config.is_configured() {
+        log::info!("AI分析跳过：AI 未配置（api_key 为空）");
         return Ok(vec![]);
     }
-    // 2. 用户关闭嗅探：静默跳过
-    if !config.sniff_enabled {
-        return Ok(vec![]);
-    }
-    // 3. 调用 AI
+    // sniff_enabled 仅控制保存时自动分析，手动触发（灯泡）不受此开关限制
+    // 调用 AI
     let messages = build_sniff_messages(content);
     let service = AiService::new(config.clone());
     let resp = service.call(messages).await?;
