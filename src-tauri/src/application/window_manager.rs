@@ -25,11 +25,15 @@ fn flash_window(window: &tauri::WebviewWindow, restore_on_top: bool) {
 
 /// 为便签创建并显示独立窗口
 pub fn open_note_window(app: &AppHandle, note: &Note) -> Result<(), String> {
-    open_note_window_with_url(app, note, "index.html")
+    open_note_window_with_url(app, note, "index.html", note.is_pinned)
 }
 
 /// 为便签创建窗口，可指定自定义 URL（如带参数 ?reminder=1）
-pub fn open_note_window_with_url(app: &AppHandle, note: &Note, url: &str) -> Result<(), String> {
+///
+/// `keep_on_top`: 闪烁动画结束后是否保持置顶。
+///   - 普通打开：传 `note.is_pinned`（恢复便签自身的置顶状态）
+///   - 提醒触发：传 `true`（持续置顶直到用户操作横幅，由 restore_window_on_top 恢复）
+pub fn open_note_window_with_url(app: &AppHandle, note: &Note, url: &str, keep_on_top: bool) -> Result<(), String> {
     let label = format!("note-{}", note.id);
     eprintln!("[窗口] 尝试创建窗口: label={}", label);
 
@@ -78,10 +82,9 @@ pub fn open_note_window_with_url(app: &AppHandle, note: &Note, url: &str) -> Res
     if let Some(win) = app.get_webview_window(&label) {
         let _ = win.show();
         let win_clone = win.clone();
-        let is_pinned = note.is_pinned;
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(800));
-            flash_window(&win_clone, is_pinned);
+            flash_window(&win_clone, keep_on_top);
         });
     }
 
@@ -90,23 +93,26 @@ pub fn open_note_window_with_url(app: &AppHandle, note: &Note, url: &str) -> Res
 
 /// 提醒触发时激活便签窗口
 ///
-/// - 窗口已存在：显示+聚焦+发送 reminder-triggered 事件（携带 reminder_id）+闪烁
-/// - 窗口不存在：创建新窗口（URL 带 reminder + rid 参数）
+/// - 窗口已存在：显示+闪烁（含持续置顶）+发送 reminder-triggered 事件
+/// - 窗口不存在：创建新窗口（URL 带 reminder + rid 参数），keep_on_top=true 保持置顶
+///
+/// 置顶持续到用户操作横幅（关闭/贪睡/完成），由前端调用 restore_window_on_top 恢复 is_pinned。
 pub fn activate_note_for_reminder(app: &AppHandle, note: &Note, reminder_id: &str) -> Result<(), String> {
     let label = format!("note-{}", note.id);
 
     if let Some(window) = app.get_webview_window(&label) {
-        // 窗口已存在 → 显示+聚焦+置顶+发送事件
+        // 窗口已存在 → 显示+闪烁（flash_window 内部立即置顶 + 5s 后保持置顶）+ 发送事件
         let _ = window.show();
+        let _ = window.unminimize();
+        flash_window(&window, true);
         let _ = window.set_focus();
-        let _ = window.set_always_on_top(true);
         let _ = app.emit_to(&label, "reminder-triggered", serde_json::json!({ "reminder_id": reminder_id }));
         eprintln!("[调度器] 窗口已存在，发送 reminder-triggered 事件: note_id={}, reminder_id={}", note.id, reminder_id);
         Ok(())
     } else {
-        // 窗口不存在 → 创建新窗口（URL 带 reminder + rid 参数）
+        // 窗口不存在 → 创建新窗口（URL 带 reminder + rid 参数），keep_on_top=true 保持置顶
         let url = format!("index.html?reminder=1&rid={}", reminder_id);
-        match open_note_window_with_url(app, note, &url) {
+        match open_note_window_with_url(app, note, &url, true) {
             Ok(_) => {
                 eprintln!("[调度器] 便签窗口已弹出: note_id={}, reminder_id={}", note.id, reminder_id);
                 Ok(())

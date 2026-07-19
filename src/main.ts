@@ -2,9 +2,10 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { marked } from 'marked';
 import type { Note, Reminder, SniffResult, Suggestion, AiConfig, Template } from './types';
-import { COLORS, escapeHtml, localISO, repeatLabel } from './utils';
+import { COLORS, escapeHtml, repeatLabel } from './utils';
 import { initLocale, t, applyLocale, getLocaleTag } from './i18n';
 import { getTemplates, createNoteFromTemplate } from './api';
+import { DateTimeSegmentPicker } from './datetime-picker';
 import './styles.css';
 
 initLocale();
@@ -1389,6 +1390,9 @@ function showReminderPanel(note: Note, app: HTMLElement) {
 		        <button class="qbtn" data-quick="tomorrow">${t('note.tomorrow')}</button>
 		        <button class="qbtn" data-quick="week">${t('note.nextMonday')}</button>
 	      </div>
+	      <div class="rd-datetime-row">
+	        <div class="rd-datetime" data-remind-at-dts tabindex="0"></div>
+	      </div>
 	      <div class="rd-repeat">
 	        <button class="rbtn active" data-repeat="none">${t('note.once')}</button>
 		        <button class="rbtn" data-repeat="daily">${t('note.daily')}</button>
@@ -1396,9 +1400,8 @@ function showReminderPanel(note: Note, app: HTMLElement) {
 		        <button class="rbtn" data-repeat="monthly">${t('note.monthly')}</button>
 	        <button class="rbtn" data-repeat="lunar_monthly">${t('note.lunarMonthly')}</button>
 	      </div>
-	      <button class="rd-save" data-save-reminder>${t('note.setReminder')}</button>
-	      <input type="datetime-local" class="rd-datetime" data-remind-at value="${localISO(defaultTime)}">
 	      <div class="rd-existing" data-reminder-list></div>
+	      <button class="rd-save" data-save-reminder>${t('note.setReminder')}</button>
     </div>
   `;
   app.appendChild(overlay);
@@ -1407,16 +1410,26 @@ function showReminderPanel(note: Note, app: HTMLElement) {
   loadReminders(note.id, overlay);
 
   // 关闭
-  overlay.querySelector('[data-reminder-close]')!.addEventListener('click', () => overlay.remove());
+  const closeOverlay = () => {
+    dts.destroy();
+    overlay.remove();
+  };
+  overlay.querySelector('[data-reminder-close]')!.addEventListener('click', closeOverlay);
   overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) overlay.remove();
+    if (e.target === overlay) closeOverlay();
+  });
+
+  // 初始化日期时间分段选择器：单输入框 yyyy-MM-dd HH:mm
+  // 点击段高亮，滚轮/上下箭头调值，左右箭头切段，数字键直接输入
+  const dtsContainer = overlay.querySelector('[data-remind-at-dts]') as HTMLElement;
+  const dts = new DateTimeSegmentPicker(dtsContainer, {
+    initialValue: new Date(defaultTime),
   });
 
   // 快捷时间按钮
   let selectedRepeat = 'none';
   overlay.querySelectorAll('[data-quick]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const input = overlay.querySelector('[data-remind-at]') as HTMLInputElement;
       const now = new Date();
       const type = (btn as HTMLElement).dataset.quick;
       if (type === '1h') {
@@ -1432,7 +1445,7 @@ function showReminderPanel(note: Note, app: HTMLElement) {
         now.setDate(now.getDate() + daysUntilMonday);
         now.setHours(9, 0, 0, 0);
       }
-      input.value = localISO(now);
+      dts.setValue(now);
     });
   });
 
@@ -1450,8 +1463,7 @@ function showReminderPanel(note: Note, app: HTMLElement) {
 
   // 保存
   overlay.querySelector('[data-save-reminder]')!.addEventListener('click', async () => {
-    const input = overlay.querySelector('[data-remind-at]') as HTMLInputElement;
-    const dt = new Date(input.value);
+    const dt = dts.getValue();
     if (isNaN(dt.getTime())) return;
     const remindAt = dt.toISOString();
     try {
@@ -1464,6 +1476,7 @@ function showReminderPanel(note: Note, app: HTMLElement) {
       // 新建提醒成功，更新提醒按钮状态为橙色
       const btn = app.querySelector('.reminder-btn');
       if (btn) btn.classList.add('has-reminder');
+      dts.destroy();
       overlay.remove();
     } catch (e) {
       console.error('创建提醒失败:', e);

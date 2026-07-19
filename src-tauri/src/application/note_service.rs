@@ -46,7 +46,7 @@ pub fn open_note_with_flag(
         return Ok(());
     }
     let url = format!("index.html?id={}&flag={}", note.id, flag);
-    window_manager::open_note_window_with_url(app, &note, &url)
+    window_manager::open_note_window_with_url(app, &note, &url, note.is_pinned)
 }
 
 /// 更新便签样式（颜色、透明度、置顶）并同步窗口置顶状态
