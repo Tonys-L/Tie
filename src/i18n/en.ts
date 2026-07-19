@@ -205,6 +205,7 @@ export default {
     aiAssistant: 'AI Assistant',
     sniffLoading: 'AI analyzing...',
     sniffNoSuggestions: 'No suggestions',
+    sniffFailed: 'Sniff failed',
     executeFailed: 'Failed',
     generateWeeklyReport: 'Generate Weekly Report',
     generateMonthlyReport: 'Generate Monthly Report',

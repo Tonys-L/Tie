@@ -205,6 +205,7 @@ export default {
     aiAssistant: 'AI 助手',
     sniffLoading: 'AI 分析中...',
     sniffNoSuggestions: '未发现可优化项',
+    sniffFailed: '嗅探失败',
     executeFailed: '执行失败',
     generateWeeklyReport: '生成周报',
     generateMonthlyReport: '生成月报',

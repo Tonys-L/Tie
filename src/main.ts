@@ -1575,6 +1575,9 @@ async function sniffAfterSave(note: Note, force: boolean = false, onDone?: (sugg
     })
     .catch(err => {
       console.error('嗅探失败:', err);
+      // 失败时给用户提示，而非静默显示"未发现可优化项"
+      const msg = typeof err === 'string' ? err : (err as Error).message || String(err);
+      showToast(t('hub.sniffFailed') + ': ' + msg, 'error');
       if (onDone) onDone([]);
     });
 }
