@@ -1,6 +1,6 @@
 [package]
 name = "tie"
-version = "0.8.4"
+version = "0.8.5"
 description = "Tie"
 authors = ["you"]
 edition = "2021"
