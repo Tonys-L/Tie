@@ -18,6 +18,21 @@ pub struct GitSync {
     last_sync_trigger: Mutex<std::time::Instant>,
 }
 
+/// 同步流程的阶段间上下文：在各阶段函数之间传递状态
+///
+/// 设计意图：避免阶段函数之间通过重复读取文件或重复计算来获取状态，
+/// 同时避免函数签名中出现过多的零散参数（参数列表越长，调用方越容易写错）。
+/// 通过 `..ctx.clone()` 在更新阶段保留前序阶段已计算的字段。
+#[derive(Clone)]
+struct SyncContext {
+    /// 已加载的同步配置（包含 repo_url/username/token/branch 等）
+    config: SyncConfig,
+    /// 带认证信息的仓库 URL（HTTPS 嵌入用户名+token，本地路径则原样返回）
+    auth_url: String,
+    /// 远程 origin/<branch> ref 是否真实存在（不存在表示首次推送或远程仓库为空）
+    has_remote: bool,
+}
+
 impl GitSync {
     pub fn new(data_dir: &Path) -> Self {
         Self {
@@ -52,6 +67,27 @@ impl GitSync {
         template_repo: &dyn TemplateRepository,
         create_branch: bool,
     ) -> Result<String, String> {
+        // 阶段 1：加载配置 + 初始化仓库 + git config
+        let ctx = self.validate_and_prepare()?;
+
+        // 阶段 2：设置 remote + fetch + 验证 origin/branch ref
+        let ctx = self.fetch_and_check_remote(&ctx, create_branch)?;
+
+        // 阶段 3：merge 远程数据（含 unrelated histories + 冲突解决）
+        self.merge_remote(&ctx)?;
+
+        // 阶段 4：双向数据同步（导入远程 JSON → 导出本地 JSON）
+        let imported = self.sync_data_bidirectional(note_repo, reminder_repo, template_repo)?;
+
+        // 阶段 5：commit + push 安全检查 + push
+        let (has_local_changes, commit_msg) = self.commit_and_push(&ctx)?;
+
+        // 生成状态消息
+        Ok(self.build_sync_message(has_local_changes, ctx.has_remote, imported, commit_msg))
+    }
+
+    /// 阶段 1：加载配置 + init_repo + 分支名一致性 + git config
+    fn validate_and_prepare(&self) -> Result<SyncContext, String> {
         let config = self.load_config()?;
         if config.repo_url.is_empty() {
             return Err("请先配置同步仓库地址".to_string());
@@ -60,7 +96,6 @@ impl GitSync {
         git_ops::init_repo(&self.sync_dir, &config.branch)?;
 
         // 确保本地分支名与配置一致（用户可能修改过分支名）
-        // 如果当前分支名与配置不同，重命名本地分支
         let current_branch = git_ops::run_git(&self.sync_dir, &["branch", "--show-current"])
             .unwrap_or_default()
             .trim()
@@ -79,42 +114,40 @@ impl GitSync {
 
         let auth_url = config.auth_url()?;
 
-        // 设置远程
+        Ok(SyncContext {
+            config,
+            auth_url,
+            has_remote: false,
+        })
+    }
+
+    /// 阶段 2：设置 remote + fetch + 验证 origin/branch ref
+    fn fetch_and_check_remote(&self, ctx: &SyncContext, create_branch: bool) -> Result<SyncContext, String> {
         let remote_check = git_ops::run_git(&self.sync_dir, &["remote", "get-url", "origin"]);
         if remote_check.is_err() {
-            git_ops::run_git(&self.sync_dir, &["remote", "add", "origin", &auth_url])?;
+            git_ops::run_git(&self.sync_dir, &["remote", "add", "origin", &ctx.auth_url])?;
         } else {
-            git_ops::run_git(&self.sync_dir, &["remote", "set-url", "origin", &auth_url])?;
+            git_ops::run_git(&self.sync_dir, &["remote", "set-url", "origin", &ctx.auth_url])?;
         }
 
-        // 1. fetch 远程
-        let _ = git_ops::run_git(&self.sync_dir, &["fetch", "origin", &config.branch]);
+        // fetch 远程
+        let _ = git_ops::run_git(&self.sync_dir, &["fetch", "origin", &ctx.config.branch]);
 
         // 验证 origin/<branch> ref 是否真实存在
-        // git fetch 即使远程分支不存在也可能返回成功（exit code 0），必须检查 ref
-        let remote_ref = format!("origin/{}", config.branch);
-        let rev_remote_result = git_ops::run_git(&self.sync_dir, &["rev-parse", &remote_ref]);
-        let has_remote = rev_remote_result.is_ok();
+        let remote_ref = format!("origin/{}", ctx.config.branch);
+        let has_remote = git_ops::run_git(&self.sync_dir, &["rev-parse", &remote_ref]).is_ok();
         eprintln!("[同步] remote ref exists: {}", has_remote);
 
         if !has_remote {
-            // origin/<branch> 不存在，检查远程仓库是否有任何分支
-            match git_ops::list_remote_branches(&auth_url) {
+            match git_ops::list_remote_branches(&ctx.auth_url) {
                 Ok(branches) if !branches.is_empty() => {
-                    // 远程有分支但不是配置的分支名
                     if create_branch {
-                        // 用户已确认创建分支，跳过检查直接 push
-                        eprintln!("[同步] 用户确认创建分支 {}", config.branch);
+                        eprintln!("[同步] 用户确认创建分支 {}", ctx.config.branch);
                     } else {
-                        // 返回特殊错误，前端检测前缀后弹窗让用户选择
-                        return Err(format!(
-                            "BRANCH_NOT_FOUND:{}",
-                            branches.join(", ")
-                        ));
+                        return Err(format!("BRANCH_NOT_FOUND:{}", branches.join(", ")));
                     }
                 }
                 Ok(_) => {
-                    // 远程仓库为空（无分支），首次推送
                     eprintln!("[同步] 远程仓库为空，首次推送");
                 }
                 Err(e) => {
@@ -123,69 +156,87 @@ impl GitSync {
             }
         }
 
-        // 2. merge 远程数据（优先于导出本地数据，确保远程数据先进入本地）
-        if has_remote {
-            let remote_ref = format!("origin/{}", config.branch);
-            let has_local_commits = git_ops::run_git(&self.sync_dir, &["rev-parse", "HEAD"]).is_ok();
+        Ok(SyncContext {
+            has_remote,
+            ..ctx.clone()
+        })
+    }
 
-            if !has_local_commits {
-                // 本地无提交（新设备首次同步/.git 被删）
-                // git merge 需要至少一个本地提交，先创建一个空提交作为基线
-                eprintln!("[同步] 本地无提交，创建初始提交后 merge 远程分支 {}", remote_ref);
-                // 先 add + commit 当前文件（.gitignore 等），创建初始提交
-                git_ops::run_git(&self.sync_dir, &["add", "-A"])?;
-                let _ = git_ops::run_git(
-                    &self.sync_dir,
-                    &["commit", "-m", "Initial commit before sync", "--allow-empty"],
-                );
-            }
-
-            // 现在本地一定有提交，可以 merge
-            let rev_local = git_ops::run_git(&self.sync_dir, &["rev-parse", "HEAD"])
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-            let rev_remote = git_ops::run_git(&self.sync_dir, &["rev-parse", &remote_ref])
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-
-            if rev_local != rev_remote {
-                // 远程有更新 → merge（使用 --allow-unrelated-histories 处理首次同步/换源场景）
-                let merge_result = git_ops::run_git(
-                    &self.sync_dir,
-                    &["merge", &remote_ref, "--no-edit", "--allow-unrelated-histories"],
-                );
-                if merge_result.is_err() {
-                    // 合并冲突 → 用 last-write-wins 解决
-                    git_ops::resolve_conflicts(&self.sync_dir)?;
-
-                    // 检查是否仍有未解决的冲突
-                    let unresolved = git_ops::run_git(
-                        &self.sync_dir,
-                        &["diff", "--name-only", "--diff-filter=U"],
-                    )
-                    .unwrap_or_default();
-                    if !unresolved.trim().is_empty() {
-                        return Err(format!(
-                            "同步合并失败，存在无法自动解决的冲突。请检查同步目录。\n未解决文件: {}",
-                            unresolved.trim()
-                        ));
-                    }
-
-                    git_ops::run_git(&self.sync_dir, &["add", "-A"])?;
-                    let _ = git_ops::run_git(&self.sync_dir, &["commit", "--no-edit"]);
-                }
-            }
+    /// 阶段 3：merge 远程数据（含 unrelated histories + 冲突解决）
+    fn merge_remote(&self, ctx: &SyncContext) -> Result<(), String> {
+        if !ctx.has_remote {
+            return Ok(());
         }
 
-        // 3. 导入远程 JSON 到数据库（merge 后 JSON 包含双方数据，last-write-wins 保护）
+        let remote_ref = format!("origin/{}", ctx.config.branch);
+        let has_local_commits = git_ops::run_git(&self.sync_dir, &["rev-parse", "HEAD"]).is_ok();
+
+        if !has_local_commits {
+            // 本地无提交（新设备首次同步/.git 被删）
+            eprintln!("[同步] 本地无提交，创建初始提交后 merge 远程分支 {}", remote_ref);
+            git_ops::run_git(&self.sync_dir, &["add", "-A"])?;
+            let _ = git_ops::run_git(
+                &self.sync_dir,
+                &["commit", "-m", "Initial commit before sync", "--allow-empty"],
+            );
+        }
+
+        let rev_local = git_ops::run_git(&self.sync_dir, &["rev-parse", "HEAD"])
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let rev_remote = git_ops::run_git(&self.sync_dir, &["rev-parse", &remote_ref])
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+
+        if rev_local == rev_remote {
+            return Ok(());
+        }
+
+        // 远程有更新 → merge（使用 --allow-unrelated-histories 处理首次同步/换源场景）
+        let merge_result = git_ops::run_git(
+            &self.sync_dir,
+            &["merge", &remote_ref, "--no-edit", "--allow-unrelated-histories"],
+        );
+        if merge_result.is_err() {
+            // 合并冲突 → 用 last-write-wins 解决
+            git_ops::resolve_conflicts(&self.sync_dir)?;
+
+            // 检查是否仍有未解决的冲突
+            let unresolved = git_ops::run_git(
+                &self.sync_dir,
+                &["diff", "--name-only", "--diff-filter=U"],
+            )
+            .unwrap_or_default();
+            if !unresolved.trim().is_empty() {
+                return Err(format!(
+                    "同步合并失败，存在无法自动解决的冲突。请检查同步目录。\n未解决文件: {}",
+                    unresolved.trim()
+                ));
+            }
+
+            git_ops::run_git(&self.sync_dir, &["add", "-A"])?;
+            let _ = git_ops::run_git(&self.sync_dir, &["commit", "--no-edit"]);
+        }
+
+        Ok(())
+    }
+
+    /// 阶段 4：双向数据同步（导入远程 JSON → 导出本地 JSON）
+    fn sync_data_bidirectional(
+        &self,
+        note_repo: &dyn NoteRepository,
+        reminder_repo: &dyn ReminderRepository,
+        template_repo: &dyn TemplateRepository,
+    ) -> Result<usize, String> {
         let imported = sync_json_io::import_from_json(&self.sync_dir, note_repo, reminder_repo, template_repo)?;
-
-        // 4. 导出本地数据为 JSON（此时 DB 已包含远程数据，clear_dir_json 不会丢失）
         sync_json_io::export_to_json(&self.sync_dir, note_repo, reminder_repo, template_repo)?;
+        Ok(imported)
+    }
 
-        // 5. 添加并 commit
+    /// 阶段 5：commit + push 安全检查 + push
+    fn commit_and_push(&self, ctx: &SyncContext) -> Result<(bool, String), String> {
         git_ops::run_git(&self.sync_dir, &["add", "-A"])?;
         let status = git_ops::run_git(&self.sync_dir, &["status", "--porcelain"])?;
         let has_local_changes = !status.trim().is_empty();
@@ -198,9 +249,9 @@ impl GitSync {
             git_ops::run_git(&self.sync_dir, &["commit", "-m", &commit_msg])?;
         }
 
-        // 6. push 前安全检查：防止推送导致远程大量文件被删除
-        if has_remote {
-            let remote_ref = format!("origin/{}", config.branch);
+        // push 前安全检查：防止推送导致远程大量文件被删除
+        if ctx.has_remote {
+            let remote_ref = format!("origin/{}", ctx.config.branch);
             let diff_output = git_ops::run_git(
                 &self.sync_dir,
                 &["diff", "--name-status", &remote_ref, "HEAD"],
@@ -209,7 +260,7 @@ impl GitSync {
 
             let deletions = diff_output.lines().filter(|l| l.starts_with('D')).count();
             let total_changes = diff_output.lines().count();
-            // 超过 50% 的变更是删除 → 疑似覆盖远程数据，拒绝推送
+            // 超过 50% 的变更是删除 → 疑似覆盖远程数据，拒绝推送（INV-025）
             if total_changes > 0 && deletions as f64 / total_changes as f64 > 0.5 {
                 return Err(format!(
                     "同步安全检查：本次推送将删除远程 {} 个文件（共 {} 个变更），可能覆盖远程数据。请确认远程仓库配置是否正确。",
@@ -218,29 +269,33 @@ impl GitSync {
             }
         }
 
-        // 7. push
         git_ops::run_git(
             &self.sync_dir,
-            &["push", "-u", "origin", &config.branch, "--force-with-lease"],
+            &["push", "-u", "origin", &ctx.config.branch, "--force-with-lease"],
         )
         .map_err(|e| format!("推送失败: {}", e))?;
 
+        Ok((has_local_changes, commit_msg))
+    }
+
+    /// 根据同步结果生成状态消息
+    fn build_sync_message(&self, has_local_changes: bool, has_remote: bool, imported: usize, commit_msg: String) -> String {
         if has_local_changes && has_remote {
             if imported > 0 {
-                Ok(format!("已同步（{}，远程更新 {} 条）", commit_msg, imported))
+                format!("已同步（{}，远程更新 {} 条）", commit_msg, imported)
             } else {
-                Ok(format!("已推送本地变更（{}）", commit_msg))
+                format!("已推送本地变更（{}）", commit_msg)
             }
         } else if has_local_changes {
-            Ok(format!("已推送本地变更（{}）", commit_msg))
+            format!("已推送本地变更（{}）", commit_msg)
         } else if has_remote {
             if imported > 0 {
-                Ok(format!("已拉取远程更新（{} 条）", imported))
+                format!("已拉取远程更新（{} 条）", imported)
             } else {
-                Ok("已是最新".to_string())
+                "已是最新".to_string()
             }
         } else {
-            Ok("已是最新".to_string())
+            "已是最新".to_string()
         }
     }
 
