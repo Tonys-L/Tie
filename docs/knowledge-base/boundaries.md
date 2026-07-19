@@ -29,7 +29,8 @@
 **对应代码**:
 - `src-tauri/src/domain/note.rs`（领域模型，含 tags 字段 + set_tags/add_tag/remove_tag + highlight 搜索高亮片段）
 - `src-tauri/src/domain/repositories.rs`（NoteRepository trait，含 search_notes）
-- `src-tauri/src/application/commands.rs`（命令入口，含 search_notes/update_note_tags）
+- `src-tauri/src/application/commands/`（命令入口模块，含 search_notes/update_note_tags，按业务域拆分为 7 个子模块）
+- `src-tauri/src/application/image_service.rs`（图片文件名提取、孤儿图片清理、图片目录管理，被 commands/image_commands 和 commands/note_commands 复用）
 - `src-tauri/src/application/note_service.rs`（便签编排：create_note 创建+开窗口、close_note_if_empty 空便签自动删除 INV-003、sync_notes 同步机制）
 - `src-tauri/src/application/window_manager.rs`（窗口管理）
 - `src-tauri/src/infrastructure/database.rs`（FTS5 虚拟表 + 触发器迁移）
@@ -68,7 +69,7 @@
 - `src-tauri/src/domain/mock_repo.rs`（InMemoryTemplateRepository 测试用 mock）
 - `src-tauri/src/infrastructure/sqlite_template_repo.rs`（SQLite 实现）
 - `src-tauri/src/infrastructure/database.rs`（templates 表 DDL + 默认种子）
-- `src-tauri/src/application/commands.rs`（get_templates/save_template/delete_template/create_note_from_template 命令）
+- `src-tauri/src/application/commands/`（get_templates/save_template/delete_template/create_note_from_template 命令，位于 template_commands.rs）
 - `src-tauri/src/application/sync_json_io.rs`（模板导出/导入 + updated_at 仲裁）
 - `src-tauri/src/application/git_sync.rs`（sync/auto_pull_on_startup 传 template_repo）
 - `src/hub.ts`（模板管理弹窗 + CRUD UI）
@@ -96,7 +97,7 @@
 **对应代码**:
 - `src-tauri/src/domain/reminder.rs`（领域模型 + 状态机）
 - `src-tauri/src/application/reminder_scheduler.rs`（事件驱动调度：单定时器 + Notify + 触发编排 通知+弹窗+状态更新）
-- `src-tauri/src/application/commands.rs`（提醒命令）
+- `src-tauri/src/application/commands/`（提醒命令，位于 reminder_commands.rs）
 
 ---
 
@@ -136,7 +137,7 @@
 
 - 前端通过 `@tauri-apps/api/core` 的 `invoke` 调用后端命令
 - 后端通过 `window.emit` / `emit_to` 向前端发送事件（如 `flash-window`、`reminder-triggered`）
-- 44 个命令集中在 `application/commands.rs`
+- 44 个命令集中在 `application/commands` 模块（按业务域拆分为 7 个子模块：note/reminder/sync/ai/template/image/system）
 - 可能并发的命令必须 `async` 避免死锁
 
 ### 前端多页面边界
@@ -173,7 +174,7 @@
 **对应代码**:
 - `src-tauri/src/application/reminder_parser.rs`（`sniff_suggestions` 函数 + `Suggestion` 结构）
 - `src-tauri/src/application/prompts/sniff.rs`（嗅探 Prompt 模板）
-- `src-tauri/src/application/commands.rs`（`sniff_suggestions` 命令入口）
+- `src-tauri/src/application/commands/`（`sniff_suggestions` 命令入口，位于 ai_commands.rs）
 
 ### 周报/月报生成
 
@@ -193,7 +194,7 @@
 **对应代码**:
 - `src-tauri/src/application/report_generator.rs`（`generate_report` 函数 + `ReportPeriod`/`ReportDraft` 结构）
 - `src-tauri/src/application/prompts/report.rs`（报告 Prompt 模板）
-- `src-tauri/src/application/commands.rs`（`generate_report` 命令入口）
+- `src-tauri/src/application/commands/`（`generate_report` 命令入口，位于 ai_commands.rs）
 
 ### AI 文本重写
 
@@ -212,7 +213,7 @@
 
 **对应代码**:
 - `src-tauri/src/application/prompts/rewrite.rs`（`RewriteOperation` 枚举 + `build_rewrite_messages`）
-- `src-tauri/src/application/commands.rs`（`ai_rewrite_text` 命令入口）
+- `src-tauri/src/application/commands/`（`ai_rewrite_text` 命令入口，位于 ai_commands.rs）
 - `src/main.ts`（右键菜单 + `rewriteText` 前端逻辑）
 
 ### 待办清单智能排序
@@ -232,7 +233,7 @@
 
 **对应代码**:
 - `src-tauri/src/application/prompts/sort.rs`（`build_sort_messages` 排序 Prompt）
-- `src-tauri/src/application/commands.rs`（`ai_sort_todos` 命令 + `extract_json_array` 辅助函数）
+- `src-tauri/src/application/commands/`（`ai_sort_todos` 命令 + `extract_json_array` 辅助函数，位于 ai_commands.rs）
 - `src/main.ts`（`extractTodoItems`/`applySortedTodos`/`setupTodoSortButton` 前端逻辑）
 
 ---
@@ -320,3 +321,4 @@
 | 2026-07-19 | 补充 delete_note 窗口关闭行为 | AI | v0.8.5 |
 | 2026-07-18 | UI 修复：i18n 命名空间错误（tpl 键从 hub 移到 note）；模板快捷条 CSS 改为横向单行滚动（不换行不挤压内容区）；右键菜单改为两项并存——「从模板新建便签」+「应用模板到当前便签」（追加到末尾，非破坏性）；新增 showTemplateApplier；应用图标替换为 TIE 字母图标（替换 src-tauri/icons 全部 35 个文件） | — | #FEAT-013 同步更新 constraints.md/glossary.md |
 | 2026-07-19 | 合并 reminder_service 到 reminder_scheduler（删除 reminder_service.rs）；fire_reminders 成为 reminder_scheduler 的 pub fn；对应代码列表合并为单条；消除 pass-through 浅模块 | — | #REFACTOR-015 同步更新 constraints.md |
+| 2026-07-19 | 拆分 commands.rs（814 行）为 commands/ 目录 7 个子模块（note/reminder/sync/ai/template/image/mod）；新增 application/image_service.rs（图片文件名提取/孤儿清理/目录管理，从 commands 下沉为 service）；commands/mod.rs 用 `pub use *` glob 重导出（保留 `#[tauri::command]` 生成的 `__cmd__xxx` 辅助项，lib.rs 调用路径 `commands::xxx` 不变）；更新对应代码列表中所有 commands.rs 引用 | AI | #REFACTOR-017 同步更新 constraints.md |

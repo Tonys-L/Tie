@@ -136,7 +136,7 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 
 - 每个模块对应一个明确的业务能力
 - 模块间通过接口通信，禁止直接访问其他模块内部实现
-- 所有 `#[tauri::command]` 集中在 `application/commands.rs`
+- 所有 `#[tauri::command]` 集中在 `application/commands` 模块（`commands/mod.rs` 门面 + 按业务域拆分的子模块），禁止散落到 domain/infrastructure 层
 - 窗口/托盘/快捷键/调度器各自独立模块，互不直接调用
 - `reminder_scheduler` 的窗口操作（显示/聚焦/闪烁）必须委托 `window_manager`，禁止直接操作窗口属性
 - 闪烁提示逻辑（临时置顶 300ms + 恢复）统一由 `window_manager::flash_window` 提供，禁止在其他模块重复实现
@@ -222,7 +222,7 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 - 核心层（domain）禁止出现 tauri/rusqlite/tokio 等技术框架代码；serde/uuid/chrono 作为值对象工具库允许
 - 核心层内禁止互相依赖
 - 禁止循环依赖
-- 禁止在 commands.rs 之外定义 `#[tauri::command]`
+- 禁止在 `application/commands` 模块之外定义 `#[tauri::command]`
 - 禁止用 `emit_to` 向正在初始化的窗口同步发送事件（死锁）
 
 ### 设计禁止
@@ -342,3 +342,4 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | 2026-07-19 | 新增 INV-026 + 图片宽度语法约束 | AI | v0.8.5 |
 | 2026-07-19 | 新增 INV-027（窗口最小尺寸 200×150 三处校验） | AI | v0.8.5 同步更新 flows.md |
 | 2026-07-19 | 合并 reminder_service 到 reminder_scheduler（删除 reminder_service.rs）；fire_reminders 成为 reminder_scheduler 的 pub fn；更新模块边界/禁止事项/INV-020 检查位置 | AI | #REFACTOR-015 同步更新 boundaries.md |
+| 2026-07-19 | 拆分 commands.rs 为 commands 模块（commands/ 目录 + 7 个子模块）；模块边界第 139 行"application/commands.rs"→"application/commands 模块"；禁止事项第 225 行同步；新增 application/image_service.rs 承载图片处理业务逻辑 | AI | #REFACTOR-017 同步更新 boundaries.md |
