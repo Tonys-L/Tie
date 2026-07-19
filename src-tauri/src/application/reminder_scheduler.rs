@@ -6,8 +6,9 @@ use tauri_plugin_notification::NotificationExt;
 use tokio::sync::Notify;
 use tokio::time::{Instant, sleep_until};
 
-use crate::domain::{NoteRepository, ReminderRepository, RepeatType};
-use super::{lunar_calendar, window_manager};
+use crate::domain::reminder::{AdvanceResult, CalendarAdapter};
+use crate::domain::{Note, NoteRepository, ReminderRepository};
+use super::{lunar_calendar::TymeCalendarAdapter, window_manager};
 
 /// 提醒调度器：事件驱动 + 单定时器
 ///
@@ -83,11 +84,67 @@ fn check_and_fire(app: &AppHandle) {
     fire_reminders(app, state.note_repo.as_ref(), state.reminder_repo.as_ref());
 }
 
-/// 触发所有到期提醒（编排逻辑）
+/// 提醒通知器 trait：把"发送通知 + 弹出窗口"抽象为可注入接口
 ///
-/// 查询到期提醒 → 发送系统通知 → 弹出便签窗口 → 更新提醒状态。
+/// 设计目的：让 `fire_reminders_with_deps` 的核心逻辑可注入 mock 测试，
+/// 脱离 Tauri AppHandle 依赖（INV-028）。
+pub trait ReminderNotifier {
+    /// 发送系统通知（标题 + 正文 + note_id）
+    fn notify(&self, title: &str, body: &str, note_id: &str) -> Result<(), String>;
+    /// 弹出便签窗口（委托 window_manager）
+    fn activate_window(&self, note: &Note, reminder_id: &str) -> Result<(), String>;
+}
+
+/// `ReminderNotifier` 的 Tauri 实现：包装 AppHandle 调用系统通知 + window_manager
+pub struct TauriReminderNotifier {
+    app: AppHandle,
+}
+
+impl TauriReminderNotifier {
+    pub fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+impl ReminderNotifier for TauriReminderNotifier {
+    fn notify(&self, title: &str, body: &str, note_id: &str) -> Result<(), String> {
+        self.app
+            .notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .extra("note_id", note_id)
+            .auto_cancel()
+            .show()
+            .map_err(|e| e.to_string())
+    }
+
+    fn activate_window(&self, note: &Note, reminder_id: &str) -> Result<(), String> {
+        window_manager::activate_note_for_reminder(&self.app, note, reminder_id)
+    }
+}
+
+/// 触发所有到期提醒（Tauri 入口包装）
+///
+/// 构造 `TauriReminderNotifier` + `TymeCalendarAdapter`，调用可测试的 `fire_reminders_with_deps`。
+/// 外部调用方（check_and_fire）接口保持不变。
 pub fn fire_reminders(
     app: &AppHandle,
+    note_repo: &dyn NoteRepository,
+    reminder_repo: &dyn ReminderRepository,
+) {
+    let notifier = TauriReminderNotifier::new(app.clone());
+    let calendar = TymeCalendarAdapter;
+    fire_reminders_with_deps(&notifier, &calendar, note_repo, reminder_repo);
+}
+
+/// 触发所有到期提醒（可测试入口）
+///
+/// 接收 trait object 而非 AppHandle，核心逻辑可注入 mock 测试（INV-028）。
+/// 编排流程：查询到期提醒 → 发送通知 → 弹出窗口 → 推进状态 → save。
+pub fn fire_reminders_with_deps(
+    notifier: &dyn ReminderNotifier,
+    calendar: &dyn CalendarAdapter,
     note_repo: &dyn NoteRepository,
     reminder_repo: &dyn ReminderRepository,
 ) {
@@ -143,62 +200,30 @@ pub fn fire_reminders(
             summary
         };
 
-        match app
-            .notification()
-            .builder()
-            .title(&title)
-            .body(&body)
-            .extra("note_id", &reminder.note_id)
-            .auto_cancel()
-            .show()
-        {
+        match notifier.notify(&title, &body, &reminder.note_id) {
             Ok(_) => eprintln!("[调度器] 通知发送成功"),
             Err(e) => eprintln!("[调度器] 发送通知失败: {}", e),
         }
 
-        // 弹出便签窗口（委托 window_manager）
-        match window_manager::activate_note_for_reminder(app, &note, &reminder.id) {
+        // 弹出便签窗口
+        match notifier.activate_window(&note, &reminder.id) {
             Ok(_) => {}
             Err(e) => eprintln!("[调度器] 弹出便签窗口失败: {}", e),
         }
 
-        // 更新状态（经 domain 方法 + save）
-        if reminder.is_repeating() {
-            let mut updated = reminder.clone();
-            if updated.reset_for_next_trigger() {
-                // Daily/Weekly/Monthly：domain 层计算下次触发
-                if let Err(e) = reminder_repo.save(&updated) {
-                    eprintln!("[调度器] 更新周期提醒失败: {}", e);
-                }
-            } else if reminder.repeat_type == RepeatType::LunarMonthly {
-                // LunarMonthly：domain 层无法计算，由 application 层调用农历库
-                match lunar_calendar::lunar_next_month(&updated.remind_at) {
-                    Some(next_time) => {
-                        updated.remind_at = next_time;
-                        if let Err(e) = reminder_repo.save(&updated) {
-                            eprintln!("[调度器] 更新农历周期提醒失败: {}", e);
-                        }
-                    }
-                    None => {
-                        eprintln!("[调度器] 农历计算失败，标记为已触发: {}", updated.remind_at);
-                        updated.mark_triggered();
-                        if let Err(e) = reminder_repo.save(&updated) {
-                            eprintln!("[调度器] 标记提醒已触发失败: {}", e);
-                        }
-                    }
-                }
-            } else {
-                updated.mark_triggered();
-                if let Err(e) = reminder_repo.save(&updated) {
-                    eprintln!("[调度器] 标记提醒已触发失败: {}", e);
-                }
+        // 推进状态：domain 层 advance_state 统一处理 Once/Daily/Weekly/Monthly/LunarMonthly
+        let mut updated = reminder.clone();
+        let result = updated.advance_state(calendar);
+        match result {
+            AdvanceResult::ResetToNext => {
+                eprintln!("[调度器] 周期提醒已重置: id={} next={}", updated.id, updated.remind_at);
             }
-        } else {
-            let mut updated = reminder.clone();
-            updated.mark_triggered();
-            if let Err(e) = reminder_repo.save(&updated) {
-                eprintln!("[调度器] 标记提醒已触发失败: {}", e);
+            AdvanceResult::MarkedTriggered => {
+                eprintln!("[调度器] 一次性提醒已标记触发: id={}", updated.id);
             }
+        }
+        if let Err(e) = reminder_repo.save(&updated) {
+            eprintln!("[调度器] 保存提醒状态失败: {}", e);
         }
     }
 }
@@ -223,6 +248,9 @@ fn parse_instant(iso_time: &str) -> Instant {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::reminder::{Reminder, ReminderStatus, RepeatType};
+    use crate::domain::mock_repo::{InMemoryNoteRepository, InMemoryReminderRepository};
+    use crate::domain::Note;
 
     #[test]
     fn test_parse_instant_future_time() {
@@ -284,5 +312,174 @@ mod tests {
         scheduler.schedule_recalc();
         // 验证 Arc 引用计数正确
         assert_eq!(Arc::strong_count(&notify), 2); // scheduler 内部 1 + notify 变量 1
+    }
+
+    // ============ fire_reminders_with_deps mock 测试 ============
+
+    /// Mock 通知器：记录所有调用
+    struct MockNotifier {
+        notify_calls: std::sync::Mutex<Vec<(String, String, String)>>,
+        activate_calls: std::sync::Mutex<Vec<(String, String)>>,
+    }
+    impl MockNotifier {
+        fn new() -> Self {
+            Self {
+                notify_calls: std::sync::Mutex::new(vec![]),
+                activate_calls: std::sync::Mutex::new(vec![]),
+            }
+        }
+    }
+    impl ReminderNotifier for MockNotifier {
+        fn notify(&self, title: &str, body: &str, note_id: &str) -> Result<(), String> {
+            self.notify_calls.lock().unwrap().push((
+                title.to_string(),
+                body.to_string(),
+                note_id.to_string(),
+            ));
+            Ok(())
+        }
+        fn activate_window(&self, note: &Note, reminder_id: &str) -> Result<(), String> {
+            self.activate_calls.lock().unwrap().push((
+                note.id.clone(),
+                reminder_id.to_string(),
+            ));
+            Ok(())
+        }
+    }
+
+    /// Mock 农历适配器：返回固定值
+    struct MockCalendar { next: Option<String> }
+    impl CalendarAdapter for MockCalendar {
+        fn lunar_next_month(&self, _iso: &str) -> Option<String> { self.next.clone() }
+    }
+
+    fn make_note(id: &str, title: &str, content: &str, archived: bool) -> Note {
+        let mut note = Note::new(title.to_string(), content.to_string());
+        note.id = id.to_string();
+        note.is_archived = archived;
+        note
+    }
+
+    fn make_due_reminder(id: &str, note_id: &str, note_title: &str, repeat: RepeatType) -> Reminder {
+        let past = "2020-01-01T00:00:00Z";
+        let mut r = Reminder::new(note_id.to_string(), note_title.to_string(), past.to_string(), repeat.as_str().to_string());
+        r.id = id.to_string();
+        r
+    }
+
+    #[test]
+    fn test_fire_reminders_with_deps_no_due() {
+        // 无到期提醒 → 不调用 notifier
+        let notifier = MockNotifier::new();
+        let calendar = MockCalendar { next: None };
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+
+        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo);
+
+        assert_eq!(notifier.notify_calls.lock().unwrap().len(), 0);
+        assert_eq!(notifier.activate_calls.lock().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_fire_reminders_with_deps_archived_note_skipped() {
+        // 归档便签 → 跳过提醒（不发通知、不弹窗）
+        let notifier = MockNotifier::new();
+        let calendar = MockCalendar { next: None };
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+
+        let note = make_note("note-1", "归档便签", "内容", true);
+        note_repo.save(&note).unwrap();
+        let reminder = make_due_reminder("rem-1", "note-1", "归档便签", RepeatType::Once);
+        reminder_repo.save(&reminder).unwrap();
+
+        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo);
+
+        assert_eq!(notifier.notify_calls.lock().unwrap().len(), 0, "归档便签不应发通知");
+        assert_eq!(notifier.activate_calls.lock().unwrap().len(), 0, "归档便签不应弹窗");
+        // 提醒状态保持 Pending（未触发）
+        let saved = reminder_repo.find_by_id("rem-1").unwrap().unwrap();
+        assert_eq!(saved.status, ReminderStatus::Pending);
+    }
+
+    #[test]
+    fn test_fire_reminders_with_deps_once_reminder_marked_triggered() {
+        // 一次性到期提醒 → 发通知 + 弹窗 + 标记 Triggered
+        let notifier = MockNotifier::new();
+        let calendar = MockCalendar { next: None };
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+
+        let note = make_note("note-1", "测试便签", "内容", false);
+        note_repo.save(&note).unwrap();
+        let reminder = make_due_reminder("rem-1", "note-1", "测试便签", RepeatType::Once);
+        reminder_repo.save(&reminder).unwrap();
+
+        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo);
+
+        assert_eq!(notifier.notify_calls.lock().unwrap().len(), 1);
+        assert_eq!(notifier.activate_calls.lock().unwrap().len(), 1);
+        let saved = reminder_repo.find_by_id("rem-1").unwrap().unwrap();
+        assert_eq!(saved.status, ReminderStatus::Triggered);
+    }
+
+    #[test]
+    fn test_fire_reminders_with_deps_daily_reminder_reset_to_next() {
+        // Daily 周期提醒 → 发通知 + 保持 Pending + remind_at 推进到下一天
+        let notifier = MockNotifier::new();
+        let calendar = MockCalendar { next: None };
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+
+        let note = make_note("note-1", "周期便签", "内容", false);
+        note_repo.save(&note).unwrap();
+        let reminder = make_due_reminder("rem-1", "note-1", "周期便签", RepeatType::Daily);
+        reminder_repo.save(&reminder).unwrap();
+
+        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo);
+
+        let saved = reminder_repo.find_by_id("rem-1").unwrap().unwrap();
+        assert_eq!(saved.status, ReminderStatus::Pending, "Daily 应保持 Pending");
+        assert!(saved.remind_at.contains("2020-01-02"), "remind_at 应推进到次日");
+    }
+
+    #[test]
+    fn test_fire_reminders_with_deps_lunar_monthly_success() {
+        // LunarMonthly 周期提醒 + 农历计算成功 → 保持 Pending + remind_at 推进
+        let notifier = MockNotifier::new();
+        let calendar = MockCalendar { next: Some("2020-02-01T00:00:00Z".to_string()) };
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+
+        let note = make_note("note-1", "农历便签", "内容", false);
+        note_repo.save(&note).unwrap();
+        let reminder = make_due_reminder("rem-1", "note-1", "农历便签", RepeatType::LunarMonthly);
+        reminder_repo.save(&reminder).unwrap();
+
+        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo);
+
+        let saved = reminder_repo.find_by_id("rem-1").unwrap().unwrap();
+        assert_eq!(saved.status, ReminderStatus::Pending, "LunarMonthly 成功应保持 Pending");
+        assert_eq!(saved.remind_at, "2020-02-01T00:00:00Z");
+    }
+
+    #[test]
+    fn test_fire_reminders_with_deps_lunar_monthly_fail_marked_triggered() {
+        // LunarMonthly 周期提醒 + 农历计算失败 → 标记 Triggered
+        let notifier = MockNotifier::new();
+        let calendar = MockCalendar { next: None };
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+
+        let note = make_note("note-1", "农历便签", "内容", false);
+        note_repo.save(&note).unwrap();
+        let reminder = make_due_reminder("rem-1", "note-1", "农历便签", RepeatType::LunarMonthly);
+        reminder_repo.save(&reminder).unwrap();
+
+        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo);
+
+        let saved = reminder_repo.find_by_id("rem-1").unwrap().unwrap();
+        assert_eq!(saved.status, ReminderStatus::Triggered, "LunarMonthly 失败应标记 Triggered");
     }
 }

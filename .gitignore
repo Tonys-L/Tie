@@ -30,3 +30,6 @@ ai_config.json
 
 # Trae internal
 .trae-html-share-packages/
+
+# 临时评审/分析文件
+.tmp/

@@ -80,6 +80,38 @@ pub struct Reminder {
     pub updated_at: String,
 }
 
+/// next_trigger 返回值：区分"不再触发"、"domain 可计算"、"需外部计算"
+///
+/// 设计目的：让 domain 层的 seam 完整，调用方无需用 `repeat_type` 二次判别。
+/// - `None`：一次性提醒或无下次触发
+/// - `DateTime(s)`：Daily/Weekly/Monthly，domain 直接计算
+/// - `External`：LunarMonthly，需 `CalendarAdapter` 提供农历计算
+#[derive(Debug, Clone, PartialEq)]
+pub enum NextTrigger {
+    None,
+    DateTime(String),
+    External,
+}
+
+/// advance_state 返回值：状态推进结果
+#[derive(Debug, Clone, PartialEq)]
+pub enum AdvanceResult {
+    /// 周期提醒已重置到下次时间，保持 Pending
+    ResetToNext,
+    /// 一次性提醒或外部计算失败，已标记为 Triggered
+    MarkedTriggered,
+}
+
+/// 农历计算适配器 trait（domain 层定义接口，application 层提供实现）
+///
+/// 设计目的：保留 INV-020 的核心意图（domain 不依赖 tyme4rs），
+/// 同时恢复 seam 完整性 — LunarMonthly 的下次时间由 trait 方法提供，
+/// 调用方无需用 `repeat_type` 二次判别。
+pub trait CalendarAdapter: Send + Sync {
+    /// 计算农历月份+1后的公历 ISO 时间（失败返回 None）
+    fn lunar_next_month(&self, iso_time: &str) -> Option<String>;
+}
+
 impl Reminder {
     /// 创建新提醒
     pub fn new(note_id: String, note_title: String, remind_at: String, repeat_type: String) -> Self {
@@ -143,15 +175,21 @@ impl Reminder {
 
     /// 计算下次触发时间
     ///
-    /// LunarMonthly 返回 None，由 application 层调用 lunar_calendar 计算农历月份推移。
-    pub fn next_trigger(&self) -> Option<String> {
+    /// 返回 `NextTrigger` enum 区分三种情况：
+    /// - `None`：一次性提醒（Once）或无下次触发
+    /// - `DateTime(s)`：Daily/Weekly/Monthly，domain 直接计算
+    /// - `External`：LunarMonthly，需 `CalendarAdapter` 提供农历计算
+    pub fn next_trigger(&self) -> NextTrigger {
         if !self.is_repeating() {
-            return None;
+            return NextTrigger::None;
         }
-        let current = chrono::DateTime::parse_from_rfc3339(&self.remind_at).ok()?;
-        let next = match self.repeat_type {
-            RepeatType::Daily => current + chrono::Duration::days(1),
-            RepeatType::Weekly => current + chrono::Duration::days(7),
+        let current = match chrono::DateTime::parse_from_rfc3339(&self.remind_at) {
+            Ok(c) => c,
+            Err(_) => return NextTrigger::None,
+        };
+        match self.repeat_type {
+            RepeatType::Daily => NextTrigger::DateTime((current + chrono::Duration::days(1)).to_rfc3339()),
+            RepeatType::Weekly => NextTrigger::DateTime((current + chrono::Duration::days(7)).to_rfc3339()),
             RepeatType::Monthly => {
                 // 精确日历月：月份+1，月末溢出取目标月最后一天
                 let naive = current.naive_utc();
@@ -172,24 +210,48 @@ impl Reminder {
                         first_after.pred_opt().unwrap()
                     });
                 let next_naive = chrono::NaiveDateTime::new(next_date, naive.time());
-                chrono::DateTime::<chrono::FixedOffset>::from_naive_utc_and_offset(next_naive, *current.offset())
+                let next = chrono::DateTime::<chrono::FixedOffset>::from_naive_utc_and_offset(next_naive, *current.offset());
+                NextTrigger::DateTime(next.to_rfc3339())
             }
-            RepeatType::LunarMonthly => return None, // 农历计算在 application 层
-            RepeatType::Once => return None,
-        };
-        Some(next.to_rfc3339())
+            RepeatType::LunarMonthly => NextTrigger::External,
+            RepeatType::Once => NextTrigger::None,
+        }
     }
 
-    /// 周期提醒触发后重置为下一个周期（保持 Pending 状态）
-    /// 如果不是周期提醒，返回 false（调用方应改为 mark_triggered）
-    pub fn reset_for_next_trigger(&mut self) -> bool {
-        if let Some(next) = self.next_trigger() {
-            self.remind_at = next;
-            self.snoozed_until = None;
-            self.touch();
-            true
-        } else {
-            false
+    /// 状态推进：触发后根据重复类型决定下一步动作
+    ///
+    /// - Once：mark_triggered，返回 MarkedTriggered
+    /// - Daily/Weekly/Monthly：重置 remind_at 为下次时间，返回 ResetToNext
+    /// - LunarMonthly：通过 `calendar` trait 计算农历月份+1；成功返回 ResetToNext，失败 mark_triggered 返回 MarkedTriggered
+    ///
+    /// 设计目的：把状态推进逻辑从 application 层下沉到 domain 层，
+    /// 消除 fire_reminders 中"if repeat_type == LunarMonthly"的二次判别。
+    pub fn advance_state(&mut self, calendar: &dyn CalendarAdapter) -> AdvanceResult {
+        match self.next_trigger() {
+            NextTrigger::None => {
+                self.mark_triggered();
+                AdvanceResult::MarkedTriggered
+            }
+            NextTrigger::DateTime(next) => {
+                self.remind_at = next;
+                self.snoozed_until = None;
+                self.touch();
+                AdvanceResult::ResetToNext
+            }
+            NextTrigger::External => {
+                match calendar.lunar_next_month(&self.remind_at) {
+                    Some(next) => {
+                        self.remind_at = next;
+                        self.snoozed_until = None;
+                        self.touch();
+                        AdvanceResult::ResetToNext
+                    }
+                    None => {
+                        self.mark_triggered();
+                        AdvanceResult::MarkedTriggered
+                    }
+                }
+            }
         }
     }
 
@@ -247,8 +309,10 @@ mod tests {
             "2026-07-03T08:00:00Z".to_string(),
             "daily".to_string(),
         );
-        let next = r.next_trigger().unwrap();
-        assert!(next.contains("2026-07-04"));
+        match r.next_trigger() {
+            NextTrigger::DateTime(s) => assert!(s.contains("2026-07-04")),
+            _ => panic!("expected DateTime"),
+        }
     }
 
     #[test]
@@ -260,9 +324,10 @@ mod tests {
             "weekly".to_string(),
         );
         assert!(r.is_repeating());
-        let next = r.next_trigger().unwrap();
-        // 7 天后
-        assert!(next.contains("2026-07-10"));
+        match r.next_trigger() {
+            NextTrigger::DateTime(s) => assert!(s.contains("2026-07-10")),
+            _ => panic!("expected DateTime"),
+        }
     }
 
     #[test]
@@ -274,9 +339,10 @@ mod tests {
             "monthly".to_string(),
         );
         assert!(r.is_repeating());
-        let next = r.next_trigger().unwrap();
-        // 精确日历月：7月3日 → 8月3日
-        assert!(next.contains("2026-08-03"));
+        match r.next_trigger() {
+            NextTrigger::DateTime(s) => assert!(s.contains("2026-08-03")),
+            _ => panic!("expected DateTime"),
+        }
     }
 
     #[test]
@@ -288,8 +354,10 @@ mod tests {
             "2026-01-31T08:00:00Z".to_string(),
             "monthly".to_string(),
         );
-        let next = r.next_trigger().unwrap();
-        assert!(next.contains("2026-02-28"));
+        match r.next_trigger() {
+            NextTrigger::DateTime(s) => assert!(s.contains("2026-02-28")),
+            _ => panic!("expected DateTime"),
+        }
     }
 
     #[test]
@@ -301,12 +369,25 @@ mod tests {
             "2026-12-15T08:00:00Z".to_string(),
             "monthly".to_string(),
         );
-        let next = r.next_trigger().unwrap();
-        assert!(next.contains("2027-01-15"));
+        match r.next_trigger() {
+            NextTrigger::DateTime(s) => assert!(s.contains("2027-01-15")),
+            _ => panic!("expected DateTime"),
+        }
     }
 
     #[test]
-    fn test_lunar_monthly_repeat() {
+    fn test_next_trigger_once_returns_none() {
+        let r = Reminder::new(
+            "note-1".to_string(),
+            "".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "once".to_string(),
+        );
+        assert_eq!(r.next_trigger(), NextTrigger::None);
+    }
+
+    #[test]
+    fn test_next_trigger_lunar_returns_external() {
         let r = Reminder::new(
             "note-1".to_string(),
             "".to_string(),
@@ -314,11 +395,8 @@ mod tests {
             "lunar_monthly".to_string(),
         );
         assert!(r.is_repeating());
-        // domain 层无法计算农历，返回 None
-        assert!(r.next_trigger().is_none());
-        // reset_for_next_trigger 也返回 false（application 层负责）
-        let mut r2 = r.clone();
-        assert!(!r2.reset_for_next_trigger());
+        // domain 层不计算农历，返回 External 标记需外部计算
+        assert_eq!(r.next_trigger(), NextTrigger::External);
     }
 
     #[test]
@@ -347,31 +425,104 @@ mod tests {
         assert_eq!(r.status, ReminderStatus::Cancelled);
     }
 
-    #[test]
-    fn test_reset_for_next_trigger_repeating() {
-        let mut r = Reminder::new(
-            "note-1".to_string(),
-            "".to_string(),
-            "2026-07-03T08:00:00Z".to_string(),
-            "daily".to_string(),
-        );
-        assert!(r.is_repeating());
-        let result = r.reset_for_next_trigger();
-        assert!(result);
-        assert_eq!(r.status, ReminderStatus::Pending);
-        assert!(r.snoozed_until.is_none());
-        assert!(r.remind_at.contains("2026-07-04"));
+    // ============ advance_state 测试 ============
+
+    /// Mock 农历适配器：返回固定值或 None
+    struct MockCalendarAdapter {
+        next: Option<String>,
+    }
+    impl CalendarAdapter for MockCalendarAdapter {
+        fn lunar_next_month(&self, _iso_time: &str) -> Option<String> {
+            self.next.clone()
+        }
     }
 
     #[test]
-    fn test_reset_for_next_trigger_once() {
+    fn test_advance_state_once_marked_triggered() {
         let mut r = Reminder::new(
             "note-1".to_string(),
             "".to_string(),
             "2026-07-03T08:00:00Z".to_string(),
             "once".to_string(),
         );
-        let result = r.reset_for_next_trigger();
-        assert!(!result);
+        let cal = MockCalendarAdapter { next: None };
+        let result = r.advance_state(&cal);
+        assert_eq!(result, AdvanceResult::MarkedTriggered);
+        assert_eq!(r.status, ReminderStatus::Triggered);
+    }
+
+    #[test]
+    fn test_advance_state_daily_reset_to_next() {
+        let mut r = Reminder::new(
+            "note-1".to_string(),
+            "".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "daily".to_string(),
+        );
+        let cal = MockCalendarAdapter { next: None };
+        let result = r.advance_state(&cal);
+        assert_eq!(result, AdvanceResult::ResetToNext);
+        assert_eq!(r.status, ReminderStatus::Pending);
+        assert!(r.snoozed_until.is_none());
+        assert!(r.remind_at.contains("2026-07-04"));
+    }
+
+    #[test]
+    fn test_advance_state_weekly_reset_to_next() {
+        let mut r = Reminder::new(
+            "note-1".to_string(),
+            "".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "weekly".to_string(),
+        );
+        let cal = MockCalendarAdapter { next: None };
+        let result = r.advance_state(&cal);
+        assert_eq!(result, AdvanceResult::ResetToNext);
+        assert!(r.remind_at.contains("2026-07-10"));
+    }
+
+    #[test]
+    fn test_advance_state_monthly_reset_to_next() {
+        let mut r = Reminder::new(
+            "note-1".to_string(),
+            "".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "monthly".to_string(),
+        );
+        let cal = MockCalendarAdapter { next: None };
+        let result = r.advance_state(&cal);
+        assert_eq!(result, AdvanceResult::ResetToNext);
+        assert!(r.remind_at.contains("2026-08-03"));
+    }
+
+    #[test]
+    fn test_advance_state_lunar_monthly_success() {
+        let mut r = Reminder::new(
+            "note-1".to_string(),
+            "".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "lunar_monthly".to_string(),
+        );
+        // 模拟农历计算成功
+        let cal = MockCalendarAdapter { next: Some("2026-08-08T08:00:00Z".to_string()) };
+        let result = r.advance_state(&cal);
+        assert_eq!(result, AdvanceResult::ResetToNext);
+        assert_eq!(r.status, ReminderStatus::Pending);
+        assert_eq!(r.remind_at, "2026-08-08T08:00:00Z");
+    }
+
+    #[test]
+    fn test_advance_state_lunar_monthly_fail_marked_triggered() {
+        let mut r = Reminder::new(
+            "note-1".to_string(),
+            "".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "lunar_monthly".to_string(),
+        );
+        // 模拟农历计算失败（返回 None）
+        let cal = MockCalendarAdapter { next: None };
+        let result = r.advance_state(&cal);
+        assert_eq!(result, AdvanceResult::MarkedTriggered);
+        assert_eq!(r.status, ReminderStatus::Triggered);
     }
 }

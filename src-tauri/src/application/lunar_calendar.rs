@@ -3,6 +3,8 @@ use tyme4rs::tyme::solar::SolarDay;
 use tyme4rs::tyme::lunar::LunarDay;
 use tyme4rs::tyme::Tyme;
 
+use crate::domain::reminder::CalendarAdapter;
+
 /// 计算农历月份+1后的公历 ISO 时间
 ///
 /// 将公历 ISO 时间转为农历，农历月+1，转回公历。
@@ -44,6 +46,19 @@ pub fn lunar_next_month(iso_time: &str) -> Option<String> {
 
     let naive = chrono::NaiveDateTime::new(next_date, dt.naive_utc().time());
     Some(chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc).to_rfc3339())
+}
+
+/// `CalendarAdapter` trait 的 tyme4rs 实现
+///
+/// 把 lunar_next_month free function 包装为 trait 实现，
+/// 供 `Reminder::advance_state` 通过 trait object 调用。
+/// 保留 INV-020 核心意图：domain 不依赖 tyme4rs，仅依赖 trait 接口。
+pub struct TymeCalendarAdapter;
+
+impl CalendarAdapter for TymeCalendarAdapter {
+    fn lunar_next_month(&self, iso_time: &str) -> Option<String> {
+        lunar_next_month(iso_time)
+    }
 }
 
 #[cfg(test)]

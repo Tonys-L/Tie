@@ -96,7 +96,7 @@
 
 **对应代码**:
 - `src-tauri/src/domain/reminder.rs`（领域模型 + 状态机）
-- `src-tauri/src/application/reminder_scheduler.rs`（事件驱动调度：单定时器 + Notify + 触发编排 通知+弹窗+状态更新）
+- `src-tauri/src/application/reminder_scheduler.rs`（事件驱动调度：单定时器 + Notify + fire_reminders_with_deps 触发编排；ReminderNotifier trait + TauriReminderNotifier 实现可注入 mock 测试；状态推进委托 Reminder::advance_state）
 - `src-tauri/src/application/commands/`（提醒命令，位于 reminder_commands.rs）
 
 ---
@@ -274,8 +274,8 @@
 | 前端框架 | 原生 TS | 可能引入 React/Vue | Vite 配置不变，替换前端代码 |
 | 数据库 | SQLite | 可能换 PostgreSQL | 仓储 trait 隔离，新增 infrastructure 实现 |
 | 同步协议 | Git HTTPS | 可能换 WebSocket/云服务 | 重写 git_sync 模块 |
-| 重复类型 | Daily/Weekly/Monthly(精确月)/LunarMonthly(农历月) | 可能新增更多重复类型 | 修改 `next_trigger()` + `lunar_calendar.rs` |
-| 通知方式 | 系统通知 + 弹窗 | 可能加邮件/推送 | 新增通知通道模块 |
+| 重复类型 | Daily/Weekly/Monthly(精确月)/LunarMonthly(农历月) | 可能新增更多重复类型 | 修改 `Reminder::next_trigger()` 返回 `NextTrigger::DateTime/External`；若需外部计算则实现 `CalendarAdapter` trait |
+| 通知方式 | 系统通知 + 弹窗 | 可能加邮件/推送 | 实现 `ReminderNotifier` trait 注入 `fire_reminders_with_deps` |
 | 快捷键 | 可配置（3 个动作：new_note/show_all/toggle_hub） | 可能新增动作 | `shortcut_manager.rs` + `shortcut_config.json` |
 | 标签管理 | 手动标签 + 数量/长度限制 | 可能自动标签/标签颜色 | `domain/note.rs` tags 字段 |
 | 搜索方式 | FTS5 trigram tokenizer + LIKE 短查询回退 | 可能引入分词器优化中文匹配 | `sqlite_note_repo.rs` search_notes + `database.rs` FTS5 虚拟表 |
@@ -323,3 +323,4 @@
 | 2026-07-19 | 合并 reminder_service 到 reminder_scheduler（删除 reminder_service.rs）；fire_reminders 成为 reminder_scheduler 的 pub fn；对应代码列表合并为单条；消除 pass-through 浅模块 | — | #REFACTOR-015 同步更新 constraints.md |
 | 2026-07-19 | 拆分 commands.rs（814 行）为 commands/ 目录 7 个子模块（note/reminder/sync/ai/template/image/mod）；新增 application/image_service.rs（图片文件名提取/孤儿清理/目录管理，从 commands 下沉为 service）；commands/mod.rs 用 `pub use *` glob 重导出（保留 `#[tauri::command]` 生成的 `__cmd__xxx` 辅助项，lib.rs 调用路径 `commands::xxx` 不变）；更新对应代码列表中所有 commands.rs 引用 | AI | #REFACTOR-017 同步更新 constraints.md |
 | 2026-07-19 | 新增 batch_unarchive_notes 命令（批量恢复便签，补全批量操作能力：archive/unarchive/delete/update_color 四类齐全）；hub.ts 批量恢复从 Promise.all 逐个调用改为单次 IPC 批量命令；api.ts 新增 batchUnarchiveNotes 封装；IPC 命令数 44 → 45 | AI | #REFACTOR-018 |
+| 2026-07-19 | 深化 fire_reminders：domain/reminder.rs 新增 `NextTrigger` enum（None/DateTime/External）+ `CalendarAdapter` trait + `Reminder::advance_state` 方法；删除 `reset_for_next_trigger`（被 advance_state 替代）；application/reminder_scheduler.rs 新增 `ReminderNotifier` trait + `TauriReminderNotifier` 实现 + `fire_reminders_with_deps` 可测试入口；application/lunar_calendar.rs 新增 `TymeCalendarAdapter` impl CalendarAdapter；LunarMonthly 不再绕过 domain seam，由 trait 注入计算；新增 11 个测试（6 个 advance_state + 5 个 fire_reminders_with_deps mock）；182 个测试全部通过 | AI | #REFACTOR-019 同步更新 constraints.md/flows.md |
