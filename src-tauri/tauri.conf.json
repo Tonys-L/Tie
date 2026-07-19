@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicehash/tauri/dev/crates/tauri-config-schema/schema.json",
   "productName": "Tie",
-  "version": "0.8.5",
+  "version": "0.8.6",
   "identifier": "com.tie.desktop",
   "build": {
     "frontendDist": "../dist",

@@ -133,16 +133,18 @@ function renderNote(note: Note) {
       <button class="banner-action" data-banner-done>${t('note.done')}</button>
       <button class="banner-close" data-banner-close>&times;</button>
     </div>
-    <div class="title-bar" data-drag>
-      <span class="title-text" data-title>${escapeHtml(note.title) || t('app.note')}</span>
-      <span class="title-time">${formatNoteTime(note.created_at)}</span>
-	      <button class="icon-btn pin-btn ${note.is_pinned ? 'pinned' : ''}" data-pin title="${t('note.pin')}"></button>
-	      <button class="icon-btn" data-close title="${t('note.close')}">&times;</button>
-    </div>
-    <div class="content-area">
-      <div class="content-view" data-content-view>${renderMarkdown(note.content)}</div>
-      <textarea class="content-edit" data-content style="display:none" placeholder="${t('note.placeholder')}" spellcheck="false">${escapeHtml(note.content)}</textarea>
-    </div>
+    <div class="title-bar${note.is_archived ? ' is-archived' : ''}" data-drag>
+	      <span class="title-text" data-title>${escapeHtml(note.title) || t('app.note')}</span>
+	      ${note.is_archived ? `<span class="archived-badge">${t('hub.archived')}</span>` : ''}
+	      <span class="title-time">${formatNoteTime(note.created_at)}</span>
+		      <button class="icon-btn pin-btn ${note.is_pinned ? 'pinned' : ''}" data-pin title="${t('note.pin')}"></button>
+		      <button class="icon-btn" data-close title="${t('note.close')}">&times;</button>
+	    </div>
+    <div class="content-area${note.is_archived ? ' is-archived' : ''}">
+	      <div class="content-view" data-content-view>${renderMarkdown(note.content)}</div>
+	      <textarea class="content-edit" data-content style="display:none" placeholder="${t('note.placeholder')}" spellcheck="false">${escapeHtml(note.content)}</textarea>
+	      ${note.is_archived ? '<div class="archived-overlay"></div>' : ''}
+	    </div>
     <div class="tag-bar" data-tag-bar>
       <div class="tag-list" data-tag-list>${renderTagPills(note.tags)}</div>
       <input class="tag-input" data-tag-input placeholder="${t('note.tagPlaceholder')}" maxlength="20">
@@ -157,7 +159,10 @@ function renderNote(note: Note) {
       <input type="range" class="opacity-slider" data-opacity min="0.3" max="1" step="0.05" value="${note.opacity}">
       <button class="icon-btn ai-btn" data-ai-sniff title="${t('hub.aiAssistant')}" disabled><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v1.3h6V16.7c0-.8.4-1.5 1-2A7 7 0 0 0 12 2z"/></svg></button>
       <button class="icon-btn reminder-btn" data-reminder title="${t('note.setReminder')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></button>
-	      <button class="icon-btn archive-btn" data-archive title="${t('note.archive')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg></button>
+	      <button class="icon-btn archive-btn" data-archive title="${note.is_archived ? t('hub.restore') : t('note.archive')}">${note.is_archived
+          ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>'
+          : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>'
+        }</button>
 	      <button class="icon-btn del-btn" data-delete title="${t('note.delete')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg></button>
     </div>
   `;
@@ -389,18 +394,19 @@ async function showContextMenu(e: MouseEvent, note: Note, app: HTMLElement) {
     if (!selection) { showToast(t('note.aiNoSelection'), 'error'); return; }
     rewriteText(selection, op);
   };
+  const aiDisabled = !aiConfigured || note.is_archived;
   const aiItems: MenuItem[] = [
     { type: 'separator' },
-    { label: t('note.aiTidy'), action: () => aiAction('tidy'), disabled: !aiConfigured },
-    { label: t('note.aiTodoSplit'), action: () => aiAction('todo_split'), disabled: !aiConfigured },
-    { label: t('note.aiStyleFormal'), action: () => aiAction('style_formal'), disabled: !aiConfigured },
-    { label: t('note.aiStyleConcise'), action: () => aiAction('style_concise'), disabled: !aiConfigured },
-    { label: t('note.aiStyleMild'), action: () => aiAction('style_mild'), disabled: !aiConfigured },
+    { label: t('note.aiTidy'), action: () => aiAction('tidy'), disabled: aiDisabled },
+    { label: t('note.aiTodoSplit'), action: () => aiAction('todo_split'), disabled: aiDisabled },
+    { label: t('note.aiStyleFormal'), action: () => aiAction('style_formal'), disabled: aiDisabled },
+    { label: t('note.aiStyleConcise'), action: () => aiAction('style_concise'), disabled: aiDisabled },
+    { label: t('note.aiStyleMild'), action: () => aiAction('style_mild'), disabled: aiDisabled },
   ];
 
   const items: MenuItem[] = [
-    { label: t('note.tplCreateFrom'), action: () => showTemplatePicker(note, app) },
-    { label: t('note.tplApply'), action: () => showTemplateApplier(note, app) },
+    { label: t('note.tplCreateFrom'), action: () => showTemplatePicker(note, app), disabled: note.is_archived },
+    { label: t('note.tplApply'), action: () => showTemplateApplier(note, app), disabled: note.is_archived },
     ...aiItems,
   ];
 
@@ -991,6 +997,8 @@ function setupNoteEvents(note: Note) {
     if (imgWrap) {
       return;
     }
+    // 归档状态不允许编辑
+    if (note.is_archived) return;
     contentView.style.display = 'none';
     textarea.style.display = 'block';
     textarea.focus();
@@ -1172,13 +1180,37 @@ function setupNoteEvents(note: Note) {
     showDeleteConfirm(note.id, app);
   });
 
-  // ---- 归档便签 ----
+  // ---- 归档/恢复便签 ----
   app.querySelector('[data-archive]')!.addEventListener('click', async () => {
     try {
-      await invoke('archive_note', { id: note.id });
-      await win.close();
+      if (note.is_archived) {
+        // 恢复：调用 unarchive_note，更新 UI 为活跃状态
+        await invoke('unarchive_note', { id: note.id });
+        note.is_archived = false;
+        // 移除蒙层
+        const overlay = app.querySelector('.archived-overlay');
+        if (overlay) overlay.remove();
+        // 移除归档样式
+        const contentArea = app.querySelector('.content-area');
+        if (contentArea) contentArea.classList.remove('is-archived');
+        const titleBar = app.querySelector('.title-bar');
+        if (titleBar) titleBar.classList.remove('is-archived');
+        // 移除已归档标签
+        const badge = app.querySelector('.archived-badge');
+        if (badge) badge.remove();
+        // 更新按钮图标和标题为归档
+        const btn = app.querySelector('[data-archive]') as HTMLButtonElement;
+        if (btn) {
+          btn.title = t('note.archive');
+          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>';
+        }
+      } else {
+        // 归档：调用 archive_note，然后关闭窗口
+        await invoke('archive_note', { id: note.id });
+        await win.close();
+      }
     } catch (e) {
-      console.error('归档失败:', e);
+      console.error('归档/恢复失败:', e);
     }
   });
 
@@ -1222,6 +1254,8 @@ function setupNoteEvents(note: Note) {
 // ============ 标题编辑 ============
 
 function enterTitleEdit(note: Note, titleText: HTMLElement, _app: HTMLElement) {
+  // 归档状态不允许编辑标题
+  if (note.is_archived) return;
   const input = document.createElement('input');
   input.type = 'text';
   input.value = note.title;
@@ -1441,22 +1475,31 @@ function setupAiSniffButton(note: Note, app: HTMLElement): void {
   const btn = app.querySelector('[data-ai-sniff]') as HTMLButtonElement;
   if (!btn) return;
 
+  // 更新灯泡按钮状态的辅助函数
+  function updateSniffBtnState(configured: boolean) {
+    btn.disabled = !configured;
+    btn.title = configured ? t('hub.aiAssistant') : t('hub.aiNotConfigured');
+  }
+
   // 异步检查 AI 配置
   invoke<AiConfig>('get_ai_config')
     .then(config => {
-      if (config && config.api_key && config.api_key.length > 0) {
-        btn.disabled = false;
-        btn.title = t('hub.aiAssistant');
-      } else {
-        btn.disabled = true;
-        btn.title = t('hub.aiNotConfigured');
-      }
+      updateSniffBtnState(!!(config && config.api_key && config.api_key.length > 0));
     })
     .catch(() => {
-      // 读取配置失败：保持置灰
-      btn.disabled = true;
-      btn.title = t('hub.aiNotConfigured');
+      updateSniffBtnState(false);
     });
+
+  // 监听 AI 配置变更事件（Hub 保存配置后实时更新灯泡状态）
+  getCurrentWindow().listen('ai-config-changed', () => {
+    invoke<AiConfig>('get_ai_config')
+      .then(config => {
+        updateSniffBtnState(!!(config && config.api_key && config.api_key.length > 0));
+      })
+      .catch(() => {
+        updateSniffBtnState(false);
+      });
+  });
 
   btn.addEventListener('click', () => {
     if (btn.disabled) return;
@@ -1471,9 +1514,9 @@ function setupAiSniffButton(note: Note, app: HTMLElement): void {
       // 重新检查配置状态以决定是否启用（配置可能在加载时已就绪）
       invoke<AiConfig>('get_ai_config')
         .then(config => {
-          btn.disabled = !(config && config.api_key && config.api_key.length > 0);
+          updateSniffBtnState(!!(config && config.api_key && config.api_key.length > 0));
         })
-        .catch(() => { btn.disabled = false; });
+        .catch(() => { updateSniffBtnState(true); });
 
       // 无建议时给一个轻提示
       if (suggestions.length === 0) {

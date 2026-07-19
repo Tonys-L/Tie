@@ -23,6 +23,7 @@
 | LES-013 | FTS5 默认 tokenizer 不支持中文 | 数据存储 | 中 | 已修复 | 2026-07-18 |
 | LES-014 | FTS5 JOIN 列名歧义 | 数据存储 | 中 | 已修复 | 2026-07-18 |
 | LES-015 | Git 同步 unrelated histories 导致远程数据被删除 | 数据同步 | 致命 | 已修复 | 2026-07-18 |
+| LES-016 | Tauri 2.x onCloseRequested 改变默认关闭行为 | 编码规范 | 高 | 已修复 | 2026-07-19 |
 
 ---
 
@@ -30,7 +31,7 @@
 
 按业务分类匹配：
 
-- **编码规范**: LES-001, LES-002, LES-006, LES-011
+- **编码规范**: LES-001, LES-002, LES-006, LES-011, LES-016
 - **数据同步**: LES-003, LES-007, LES-008, LES-009, LES-010, LES-012, LES-015
 - **数据存储**: LES-013, LES-014
 - **前端构建**: LES-004
@@ -268,6 +269,22 @@
 
 ---
 
+## LES-016: Tauri 2.x onCloseRequested 改变默认关闭行为
+
+**问题**: 便签右上角关闭按钮点击后窗口不关闭，`win.close()` 调用无效。
+
+**原因**: Tauri 2.x 中，注册 `win.onCloseRequested(() => { ... })` 会改变窗口的默认关闭行为。注册后，`win.close()` 不再直接关闭窗口，而是触发 `closeRequested` 事件，等待回调处理。如果回调中未手动调用 `event.close()` 或有其他逻辑阻止，窗口就不会关闭。
+
+在便签场景中，`onCloseRequested` 被用来设置 `isClosing = true` 标记（防止保存极小尺寸窗口状态），但这导致后续的 `win.close()` 调用无法直接关闭窗口。
+
+**解决方案**: 移除 `onCloseRequested` 注册，改为在关闭按钮点击时手动设置 `isClosing = true`，然后直接调用 `win.close()` 或 `win.destroy()`。对于 delete_note 命令，后端使用 `win.destroy()` 强制销毁窗口作为主路径（INV-026）。
+
+**影响文件**: `src/main.ts`
+
+**预防**: Tauri 2.x 中 `onCloseRequested` 注册会改变默认关闭行为，需要谨慎使用。如果仅需在关闭前执行逻辑，应考虑其他方式（如手动标记 + 事件拦截），而非全局注册 `onCloseRequested`。
+
+---
+
 ## 变更记录
 
 | 日期 | 变更内容 | 变更人 | 关联变更 |
@@ -280,3 +297,4 @@
 | 2026-07-15 | 新增 LES-012（tags serde(default) 兼容性） | — | #FEAT-002 |
 | 2026-07-18 | 新增 LES-013（FTS5 默认 tokenizer 不支持中文）/LES-014（FTS5 JOIN 列名歧义） | — | #FEAT-011 |
 | 2026-07-18 | 新增 LES-015（Git 同步 unrelated histories 导致远程数据被删除） | — | #BUGFIX-001 同步更新 constraints.md |
+| 2026-07-19 | 新增 LES-016（Tauri 2.x onCloseRequested 改变默认关闭行为） | AI | v0.8.5 同步更新 constraints.md/flows.md |

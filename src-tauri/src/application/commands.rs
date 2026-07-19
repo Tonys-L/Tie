@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use chrono::Datelike;
 
 use crate::domain::{Note, Reminder, Template};
@@ -506,7 +506,7 @@ pub async fn get_ai_config() -> Result<super::ai_config::AiConfig, String> {
 
 /// 保存 AI 配置到本地用户目录（不随 Git 同步）
 #[tauri::command]
-pub async fn save_ai_config(base_url: String, api_key: String, model: String, sniff_enabled: bool) -> Result<(), String> {
+pub async fn save_ai_config(app: AppHandle, base_url: String, api_key: String, model: String, sniff_enabled: bool) -> Result<(), String> {
     let path = super::ai_config::AiConfig::default_path();
     let config = super::ai_config::AiConfig {
         base_url,
@@ -514,7 +514,9 @@ pub async fn save_ai_config(base_url: String, api_key: String, model: String, sn
         model,
         sniff_enabled,
     };
-    config.save(&path)
+    config.save(&path)?;
+    let _ = app.emit("ai-config-changed", ());
+    Ok(())
 }
 
 /// 测试 AI 连接是否可用（发送 ping 请求）

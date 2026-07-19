@@ -84,6 +84,24 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
+.archived-badge {
+  font-size: 9px;
+  color: rgba(0, 0, 0, 0.45);
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+
+.archived-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.35);
+  z-index: 10;
+  cursor: default;
+}
+
 .title-input {
   flex: 1;
   font-size: 12px;

@@ -1,4 +1,4 @@
-# 能力边界
+﻿# 能力边界
 
 > **TL;DR**: 核心能力：便签管理、提醒调度、数据同步、日历视图。能力边界：单用户桌面工具，不提供云服务/多用户协作。⚠️ 便签管理不包含富文本编辑，日历视图展示提醒+便签活动+农历，支持点击日期创建提醒。
 
@@ -17,6 +17,7 @@
 - 透明度范围 0.3~1.0
 - 标签数量上限 10 个，单标签长度上限 20 字符（INV-019）
 - 搜索范围跨活跃+归档，匹配标题+内容+标签
+- delete_note 命令职责：删除便签及关联提醒；删除成功后通过 `app.get_webview_window(&label)` 获取窗口并 `destroy()` 强制销毁（用 destroy 而非 close：close 可能因 Tauri 2.x 事件时序问题失败，destroy 是强制销毁，确保窗口立即消失）
 - 搜索使用 FTS5 trigram tokenizer（CJK 子串匹配），查询 < 3 字符回退 LIKE
 - 搜索结果支持高亮片段（FTS5 snippet 生成 `<mark>` 标签）
 
@@ -317,4 +318,5 @@
 | 2026-07-17 | v0.8.0：新增"批量操作"支撑能力（batch_archive_notes/batch_delete_notes/batch_update_color 命令）；删除 NoteColor 枚举（color 改为纯 String，前端定义快捷颜色）；IPC 命令数 44 → 47 | — | #FEAT-010 同步更新 constraints.md |
 | 2026-07-18 | v0.8.1：搜索改用 FTS5 trigram tokenizer + LIKE 短查询回退 + snippet 高亮；新增"便签模板"能力（Template 领域模型 + TemplateRepository + 4 个命令 get_templates/save_template/delete_template/create_note_from_template + 默认种子）；快捷键新增 toggle_hub 动作（3 个动作）；IPC 命令数 47 → 51 | — | #FEAT-011 同步更新 constraints.md/glossary.md |
 | 2026-07-18 | 模板能力扩展：模板 Git 同步（sync_json_io export/import 增加 templates 目录 + updated_at 仲裁）；搜索高亮修复（snippet 三列选择 + 选第一个含 `<mark>` 的）；新增 UI 入口三处——设置中心模板管理弹窗、便签右键菜单"从模板新建"、空便签编辑区顶部模板快捷条；新增 INV-023（模板必须 Git 同步） | — | #FEAT-012 同步更新 constraints.md/glossary.md |
+| 2026-07-19 | 补充 delete_note 窗口关闭行为 | AI | v0.8.5 |
 | 2026-07-18 | UI 修复：i18n 命名空间错误（tpl 键从 hub 移到 note）；模板快捷条 CSS 改为横向单行滚动（不换行不挤压内容区）；右键菜单改为两项并存——「从模板新建便签」+「应用模板到当前便签」（追加到末尾，非破坏性）；新增 showTemplateApplier；应用图标替换为 TIE 字母图标（替换 src-tauri/icons 全部 35 个文件） | — | #FEAT-013 同步更新 constraints.md/glossary.md |

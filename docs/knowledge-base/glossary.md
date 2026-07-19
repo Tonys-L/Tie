@@ -1,4 +1,4 @@
-# 术语表
+﻿# 术语表
 
 > **TL;DR**: 核心术语：Note（便签聚合根）、Reminder（提醒实体）、AppState（应用全局状态）。⚠️ 能力契约 ≠ 接口契约：前者是核心层定义的业务能力接口，后者是对外暴露的 API。
 
@@ -149,6 +149,18 @@ SQLite 作为本地运行时存储（事务/并发安全），JSON 文件作为 
 
 ---
 
+### 图片宽度语法 (Image Width Syntax)
+
+`img:filename{width=N}` — 便签内容中指定图片显示宽度的 Markdown 扩展语法。`filename` 为图片文件名，`N` 为像素宽度值。渲染时图片以指定宽度显示，保持原始宽高比。若省略 `{width=N}` 则按容器宽度自适应。
+
+---
+
+### 图片拖拽调整 (Image Drag Resize)
+
+便签查看模式下，hover 图片时右下角出现拖拽手柄，用户可水平拖拽调整图片宽度。松开后宽度值以 `img:filename{width=N}` 格式写回 Markdown 内容并持久化。
+
+---
+
 ### trigram tokenizer
 
 SQLite FTS5 的一种分词器，将文本按 3 字符滑动窗口生成 trigram 索引。支持任意语言（包括 CJK 中文）的子串匹配，适合便签搜索场景。要求查询至少 3 个字符才能生成 trigram，因此短查询（< 3 字符）需回退到 LIKE 模糊匹配。
@@ -185,3 +197,4 @@ SQLite FTS5 的一种分词器，将文本按 3 字符滑动窗口生成 trigram
 | 2026-07-18 | 更新搜索术语（LIKE → FTS5 trigram + snippet 高亮）；新增便签模板（Template）和 trigram tokenizer 术语 | — | #FEAT-011 同步更新 constraints.md/boundaries.md |
 | 2026-07-18 | 更新便签模板术语：模板随 Git 同步（templates 目录 + updated_at 仲裁）；新增三处 UI 入口（设置中心/右键菜单/空便签快捷条） | — | #FEAT-012 同步更新 constraints.md/boundaries.md |
 | 2026-07-18 | 右键菜单改为两项并存：「从模板新建便签」+「应用模板到当前便签」（追加到末尾，非破坏性）；模板快捷条多模板时横向单行滚动 | — | #FEAT-013 同步更新 constraints.md/boundaries.md |
+| 2026-07-19 | 新增图片宽度语法、图片拖拽调整术语 | AI | v0.8.5 |

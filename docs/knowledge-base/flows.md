@@ -17,22 +17,27 @@ flowchart TD
     A[开始同步] --> B[加载配置 repo_url/token]
     B --> C[init_repo git init]
     C --> D[设置 remote origin auth_url]
-    D --> E[export_to_json 导出便签+提醒]
-    E --> F[git add -A + status]
-    F --> G{有本地变更?}
-    G -->|是| H[git commit 时间戳消息]
-    G -->|否| I[git fetch origin]
-    H --> I
-    I --> J{HEAD != origin?}
-    J -->|否| K[import_from_json 导入回DB]
-    J -->|是| L[git merge --no-edit]
-    L --> M{有冲突?}
-    M -->|是| N[resolve_conflicts 按updated_at取最新]
-    N --> O[git add + commit]
-    M -->|否| K
-    O --> K
-    K --> P[git push --force-with-lease]
-    P --> Q[完成]
+    D --> E[git fetch origin]
+    E --> F{HEAD != origin?}
+    F -->|否| G[export_to_json 导出便签+提醒+模板]
+    F -->|是| H[git merge --no-edit --allow-unrelated-histories]
+    H --> I{有冲突?}
+    I -->|是| J[resolve_conflicts 按updated_at取最新]
+    J --> K[git add + commit]
+    I -->|否| L[import_from_json 导入回DB]
+    K --> L
+    L --> G
+    G --> M[git add -A + status]
+    M --> N{有本地变更?}
+    N -->|是| O[git commit 时间戳消息]
+    N -->|否| P{需要push?}
+    O --> P
+    P -->|是| Q[安全检查 删除文件占比]
+    Q --> R{删除>50%?}
+    R -->|是| S[拒绝推送 返回错误]
+    R -->|否| T[git push --force-with-lease]
+    T --> U[完成]
+    P -->|否| U
 ```
 
 **异常处理**:
@@ -42,6 +47,8 @@ flowchart TD
 | Git 未安装 | `check_git` 返回 false，设置页显示警告 |
 | 网络/认证失败 | 返回错误字符串，前端显示同步失败 |
 | merge 冲突 | 解析冲突标记，按 updated_at last-write-wins |
+| merge 失败后仍有未解决冲突 | 拒绝 push，返回错误 |
+| push 前删除文件占比>50% | 拒绝推送，防止远程数据被覆盖 |
 | push 被拒绝 | --force-with-lease 强制推送 |
 
 ### 已知策略缺口
@@ -93,6 +100,8 @@ flowchart TD
     K --> L{title+content 均空?}
     L -->|是| M[从DB删除]
     L -->|否| N[保存窗口状态 隐藏窗口]
+    O[delete_note 命令] --> P[删除DB数据+级联删除Reminder]
+    P --> Q[destroy 强制销毁窗口]
 ```
 
 ---
@@ -158,6 +167,7 @@ stateDiagram-v2
 | Reminder Scheduler | 提醒到期 | Note Window | 后端直接创建便签窗口（URL 带 reminder 参数） | 窗口创建失败则仅发通知 |
 | Reminder Scheduler | 提醒到期 | Notification | 发送系统通知（标题=note_title） | 通知失败不影响窗口创建 |
 | delete_note 命令 | Note 删除 | Reminder | 级联删除关联 Reminder | DB ON DELETE CASCADE 兜底 |
+| delete_note 命令 | Note 删除 | Note Window | destroy 强制销毁窗口（INV-026） | 窗口获取失败仅记录日志 |
 | Git Sync | 同步完成 | Note + Reminder | import_from_json 更新本地数据 | 导入失败回滚 |
 | Note 窗口关闭 | CloseRequested | Note 数据 | 空便签删除，非空保存窗口状态 | 保存失败记录日志 |
 
@@ -170,3 +180,4 @@ stateDiagram-v2
 | 2026-07-09 | 初始版本，按模板结构填充 | — | — |
 | 2026-07-09 | 更新提醒导入策略缺口为已修复 | — | #REFACTOR-001 |
 | 2026-07-09 | 调度器周期重置改用 domain 方法 reset_for_next_trigger | — | #REFACTOR-002 |
+| 2026-07-19 | Git 同步流程图更新为“先拉后推”；便签窗口生命周期补充 delete_note 路径；跨模块事件联动表补充 delete_note→window destroy | AI | v0.8.5 同步更新 constraints.md |

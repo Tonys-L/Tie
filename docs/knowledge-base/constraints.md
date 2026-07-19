@@ -1,4 +1,4 @@
-# 约束 (Constraints)
+﻿# 约束 (Constraints)
 
 > **必读文档**：任何任务都必须阅读本文档。约束不可被绕过。
 
@@ -206,6 +206,8 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | INV-023 | 模板必须随 Git 同步：导出到 `sync/templates/{id}.json`，导入时按 `updated_at` 仲裁（last-write-wins），与便签/提醒一致；sync_json_io 的 export_to_json/import_from_json 必须接收 template_repo 参数 | `application/sync_json_io.rs` export_to_json/import_from_json + `application/git_sync.rs` sync/auto_pull_on_startup |
 | INV-024 | Git 同步流程必须遵循"先拉后推"：fetch→merge→import→export→commit→push，禁止先 export 再 fetch/merge，确保远程数据先进入本地数据库后再推送 | `application/git_sync.rs` sync 方法 |
 | INV-025 | Git merge 必须使用 `--allow-unrelated-histories`；merge 失败后必须检查是否仍有未解决冲突，若有则拒绝 push（返回错误）；push 前安全检查：删除文件占比超过 50% 时拒绝推送 | `application/git_sync.rs` sync 方法 |
+| INV-026 | delete_note 必须关闭窗口：delete_note 命令在删除数据后 SHALL 关闭对应便签窗口（使用 `destroy()`），确保用户看不到已删除的便签。前端保留 `win.destroy()` 作为兜底，但后端关闭是主要路径 | `delete_note` 命令 |
+| INV-027 | 便签窗口最小尺寸 200×150：domain 层 `update_window_state` clamp（`width.max(MIN_WIDTH)`, `height.max(MIN_HEIGHT)`）；window_manager 创建窗口时 `.min_inner_size(200, 150)`；前端保存窗口状态时拦截宽<200 或高<150 的异常值 | `domain/note.rs` update_window_state + `application/window_manager.rs` open_note_window + `src/main.ts` saveWindowState |
 
 ### 已知策略缺口
 
@@ -257,6 +259,7 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 - 数据库：SQLite (rusqlite 0.31, bundled, WAL 模式)
 - 异步运行时：tokio (full features)
 - 构建工具：tauri-cli 2.0 + vite + tsc
+- **图片宽度语法约束**：`extract_image_filenames` 函数 SHALL 将 `{` 作为文件名终止符，以兼容 `img:filename{width=N}` 语法。文件名提取正则为 `img:([^{}\s)]+)`，`{` 后的 `width=N}` 为宽度参数，不属于文件名
 
 ### 环境约束
 
@@ -336,3 +339,5 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | 2026-07-18 | 模板 Git 同步：sync_json_io export/import 增加 template_repo 参数 + templates 目录处理；git_sync/note_service/commands/tray_manager/lib.rs 全链路传 template_repo；新增 INV-023（模板必须 Git 同步）；搜索高亮修复（snippet 三列选择 + 选第一个含 `<mark>` 的）；新增 UI 入口：空便签模板快捷条 + 右键菜单"从模板新建" | — | #FEAT-012 同步更新 boundaries.md/glossary.md |
 | 2026-07-18 | UI 修复：i18n 命名空间错误修复（tpl 键在 note 命名空间下新增，hub 保留）；右键菜单改为两项并存——「从模板新建便签」+「应用模板到当前便签」（追加到末尾，非破坏性）；模板快捷条 CSS 改为横向单行滚动；应用图标替换为 TIE 字母图标 | — | #FEAT-013 同步更新 boundaries.md/glossary.md |
 | 2026-07-18 | Bugfix：Git 同步 unrelated histories 导致远程数据被删除；重构 sync 流程为"先拉后推"（fetch→merge→import→export→commit→push）；merge 添加 --allow-unrelated-histories；push 前安全检查（删除>50%拒绝推送）；新增 INV-024（先拉后推）/INV-025（merge 安全保护） | — | #BUGFIX-001 同步更新 lessons/README.md |
+| 2026-07-19 | 新增 INV-026 + 图片宽度语法约束 | AI | v0.8.5 |
+| 2026-07-19 | 新增 INV-027（窗口最小尺寸 200×150 三处校验） | AI | v0.8.5 同步更新 flows.md |
