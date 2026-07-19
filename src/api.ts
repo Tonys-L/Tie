@@ -25,6 +25,7 @@ export const updateNoteTags = (id: string, tags: string[]) => invoke('update_not
 // ---- 批量操作 ----
 
 export const batchArchiveNotes = (ids: string[]) => invoke<number>('batch_archive_notes', { ids });
+export const batchUnarchiveNotes = (ids: string[]) => invoke<number>('batch_unarchive_notes', { ids });
 export const batchDeleteNotes = (ids: string[]) => invoke<number>('batch_delete_notes', { ids });
 export const batchUpdateColor = (ids: string[], color: string) => invoke<number>('batch_update_color', { ids, color });
 

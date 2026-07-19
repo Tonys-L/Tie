@@ -170,6 +170,7 @@ pub fn run() {
             commands::ai_rewrite_text,
             commands::ai_sort_todos,
             commands::batch_archive_notes,
+            commands::batch_unarchive_notes,
             commands::batch_delete_notes,
             commands::batch_update_color,
             commands::get_templates,

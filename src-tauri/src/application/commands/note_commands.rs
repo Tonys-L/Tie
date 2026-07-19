@@ -211,6 +211,23 @@ pub async fn batch_archive_notes(app: AppHandle, state: State<'_, AppState>, ids
     Ok(count)
 }
 
+/// 批量恢复便签（从归档状态恢复）
+#[tauri::command]
+pub async fn batch_unarchive_notes(app: AppHandle, state: State<'_, AppState>, ids: Vec<String>) -> Result<usize, String> {
+    let mut count = 0;
+    for id in &ids {
+        if let Ok(Some(mut note)) = state.note_repo.find_by_id(id) {
+            note.unarchive();
+            if state.note_repo.save(&note).is_ok() {
+                let _ = app.emit("note-unarchived", id);
+                count += 1;
+            }
+        }
+    }
+    state.git_sync.schedule_auto_sync(app);
+    Ok(count)
+}
+
 /// 批量删除便签（同时关闭对应窗口）
 #[tauri::command]
 pub async fn batch_delete_notes(app: AppHandle, state: State<'_, AppState>, ids: Vec<String>) -> Result<usize, String> {

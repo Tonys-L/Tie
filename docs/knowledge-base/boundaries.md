@@ -137,7 +137,7 @@
 
 - 前端通过 `@tauri-apps/api/core` 的 `invoke` 调用后端命令
 - 后端通过 `window.emit` / `emit_to` 向前端发送事件（如 `flash-window`、`reminder-triggered`）
-- 44 个命令集中在 `application/commands` 模块（按业务域拆分为 7 个子模块：note/reminder/sync/ai/template/image/system）
+- 45 个命令集中在 `application/commands` 模块（按业务域拆分为 7 个子模块：note/reminder/sync/ai/template/image/system）
 - 可能并发的命令必须 `async` 避免死锁
 
 ### 前端多页面边界
@@ -322,3 +322,4 @@
 | 2026-07-18 | UI 修复：i18n 命名空间错误（tpl 键从 hub 移到 note）；模板快捷条 CSS 改为横向单行滚动（不换行不挤压内容区）；右键菜单改为两项并存——「从模板新建便签」+「应用模板到当前便签」（追加到末尾，非破坏性）；新增 showTemplateApplier；应用图标替换为 TIE 字母图标（替换 src-tauri/icons 全部 35 个文件） | — | #FEAT-013 同步更新 constraints.md/glossary.md |
 | 2026-07-19 | 合并 reminder_service 到 reminder_scheduler（删除 reminder_service.rs）；fire_reminders 成为 reminder_scheduler 的 pub fn；对应代码列表合并为单条；消除 pass-through 浅模块 | — | #REFACTOR-015 同步更新 constraints.md |
 | 2026-07-19 | 拆分 commands.rs（814 行）为 commands/ 目录 7 个子模块（note/reminder/sync/ai/template/image/mod）；新增 application/image_service.rs（图片文件名提取/孤儿清理/目录管理，从 commands 下沉为 service）；commands/mod.rs 用 `pub use *` glob 重导出（保留 `#[tauri::command]` 生成的 `__cmd__xxx` 辅助项，lib.rs 调用路径 `commands::xxx` 不变）；更新对应代码列表中所有 commands.rs 引用 | AI | #REFACTOR-017 同步更新 constraints.md |
+| 2026-07-19 | 新增 batch_unarchive_notes 命令（批量恢复便签，补全批量操作能力：archive/unarchive/delete/update_color 四类齐全）；hub.ts 批量恢复从 Promise.all 逐个调用改为单次 IPC 批量命令；api.ts 新增 batchUnarchiveNotes 封装；IPC 命令数 44 → 45 | AI | #REFACTOR-018 |

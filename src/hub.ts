@@ -1269,8 +1269,7 @@ batchBar.querySelector('[data-batch-restore]')?.addEventListener('click', async 
   const ids = [...selectedIds];
   if (ids.length === 0) return;
   try {
-    // 逐个恢复（暂无 batch_unarchive 命令）
-    await Promise.all(ids.map(id => api.unarchiveNote(id)));
+    await api.batchUnarchiveNotes(ids);
     clearSelectionAndReload();
   } catch (err) { console.error('批量恢复失败:', err); }
 });
