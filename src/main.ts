@@ -173,15 +173,25 @@ function renderNote(note: Note) {
   setupImageResize(note);
 
   // 检查是否有活跃提醒，有则给提醒按钮添加 has-reminder class（图标变橙色）
-  invoke<Reminder[]>('get_reminders', { noteId: note.id })
-    .then(reminders => {
-      const hasActive = reminders.some(r => r.status === 'pending');
-      if (hasActive) {
+  function refreshReminderIcon(): void {
+    invoke<Reminder[]>('get_reminders', { noteId: note.id })
+      .then(reminders => {
         const btn = app.querySelector('.reminder-btn');
-        if (btn) btn.classList.add('has-reminder');
-      }
-    })
-    .catch(() => {});
+        if (!btn) return;
+        const hasActive = reminders.some(r => r.status === 'pending');
+        btn.classList.toggle('has-reminder', hasActive);
+      })
+      .catch(() => {});
+  }
+  refreshReminderIcon();
+
+  // 监听后端 reminder-changed 事件，统一更新提醒图标状态
+  // 无论谁触发（手动创建/AI创建/删除/贪睡/关闭），UI 都能自动同步
+  getCurrentWindow().listen<string>('reminder-changed', (event) => {
+    if (event.payload === note.id) {
+      refreshReminderIcon();
+    }
+  });
 
   // 关闭横幅按钮
   const banner = app.querySelector('[data-reminder-banner]') as HTMLElement;
@@ -1508,10 +1518,8 @@ function setupAiSniffButton(note: Note, app: HTMLElement): void {
     btn.disabled = true;
     const originalHTML = btn.innerHTML;
     btn.innerHTML = `<span style="font-size:11px;">${t('hub.sniffLoading')}</span>`;
-    console.log('[ai-analyze] 灯泡点击，force=true, content=', note.content?.substring(0, 100));
 
     sniffAfterSave(note, true, (suggestions) => {
-      console.log('[ai-analyze] 回调触发, suggestions=', suggestions);
       // 恢复按钮
       btn.innerHTML = originalHTML;
       // 重新检查配置状态以决定是否启用（配置可能在加载时已就绪）
@@ -1551,7 +1559,6 @@ function showSniffEmptyHint(app: HTMLElement): void {
  * 失败时通过可选回调通知调用方。
  */
 async function sniffAfterSave(note: Note, force: boolean = false, onDone?: (suggestions: Suggestion[]) => void): Promise<void> {
-  console.log('[ai-analyze] sniffAfterSave, force=', force, 'content长度=', note.content?.length);
   if (!force) {
     // 内容未变则跳过
     const lastContent = sniffContentMap.get(note.id);
@@ -1569,11 +1576,9 @@ async function sniffAfterSave(note: Note, force: boolean = false, onDone?: (sugg
     sniffContentMap.set(note.id, note.content);
   }
 
-  // 嗅探完全异步，不阻塞保存流程；失败静默
-  console.log('[ai-analyze] 调用 sniff_suggestions, content=', note.content?.substring(0, 80));
+  // AI 分析完全异步，不阻塞保存流程；失败静默
   invoke<Suggestion[]>('sniff_suggestions', { content: note.content })
     .then(suggestions => {
-      console.log('[ai-analyze] sniff_suggestions 返回, 数量=', suggestions?.length, suggestions);
       if (suggestions && suggestions.length > 0) {
         showSuggestionPanel(note, suggestions);
       }

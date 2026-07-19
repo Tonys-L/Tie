@@ -143,6 +143,7 @@ pub async fn archive_note(app: AppHandle, state: State<'_, AppState>, id: String
     let mut note = state.note_repo.find_by_id(&id)?.ok_or("便签不存在")?;
     note.archive();
     let result = state.note_repo.save(&note);
+    let _ = app.emit("note-archived", &id);
     state.git_sync.schedule_auto_sync(app);
     result
 }
@@ -153,6 +154,7 @@ pub async fn unarchive_note(app: AppHandle, state: State<'_, AppState>, id: Stri
     let mut note = state.note_repo.find_by_id(&id)?.ok_or("便签不存在")?;
     note.unarchive();
     let result = state.note_repo.save(&note);
+    let _ = app.emit("note-unarchived", &id);
     state.git_sync.schedule_auto_sync(app);
     result
 }
@@ -191,9 +193,10 @@ pub async fn create_reminder(
     remind_at: String,
     repeat_type: String,
 ) -> Result<Reminder, String> {
-    let reminder = Reminder::new(note_id, note_title, remind_at, repeat_type);
+    let reminder = Reminder::new(note_id.clone(), note_title, remind_at, repeat_type);
     state.reminder_repo.save(&reminder)?;
     state.scheduler.schedule_recalc();
+    let _ = app.emit("reminder-changed", &note_id);
     state.git_sync.schedule_auto_sync(app);
     Ok(reminder)
 }
@@ -208,9 +211,11 @@ pub async fn get_reminders(state: State<'_, AppState>, note_id: String) -> Resul
 #[tauri::command]
 pub async fn snooze_reminder(app: AppHandle, state: State<'_, AppState>, id: String, minutes: i64) -> Result<(), String> {
     let mut reminder = state.reminder_repo.find_by_id(&id)?.ok_or("提醒不存在")?;
+    let note_id = reminder.note_id.clone();
     reminder.snooze(minutes);
     let result = state.reminder_repo.save(&reminder);
     state.scheduler.schedule_recalc();
+    let _ = app.emit("reminder-changed", &note_id);
     state.git_sync.schedule_auto_sync(app);
     result
 }
@@ -219,9 +224,11 @@ pub async fn snooze_reminder(app: AppHandle, state: State<'_, AppState>, id: Str
 #[tauri::command]
 pub async fn dismiss_reminder(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     let mut reminder = state.reminder_repo.find_by_id(&id)?.ok_or("提醒不存在")?;
+    let note_id = reminder.note_id.clone();
     reminder.mark_done();
     let result = state.reminder_repo.save(&reminder);
     state.scheduler.schedule_recalc();
+    let _ = app.emit("reminder-changed", &note_id);
     state.git_sync.schedule_auto_sync(app);
     result
 }
@@ -229,8 +236,16 @@ pub async fn dismiss_reminder(app: AppHandle, state: State<'_, AppState>, id: St
 /// 删除提醒
 #[tauri::command]
 pub async fn delete_reminder(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+    // 先获取 note_id，删除后仍可通知对应便签
+    let note_id = state.reminder_repo.find_by_id(&id)
+        .ok()
+        .flatten()
+        .map(|r| r.note_id.clone());
     let result = state.reminder_repo.delete(&id);
     state.scheduler.schedule_recalc();
+    if let Some(ref nid) = note_id {
+        let _ = app.emit("reminder-changed", nid);
+    }
     state.git_sync.schedule_auto_sync(app);
     result
 }

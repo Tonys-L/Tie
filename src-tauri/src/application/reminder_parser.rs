@@ -388,17 +388,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sniff_returns_empty_when_disabled() {
-        // sniff_enabled=false → 用户关闭嗅探，静默跳过
+    async fn test_sniff_ignores_sniff_enabled_flag() {
+        // sniff_enabled=false 不再阻止后端 sniff_suggestions 调用
+        // 该开关仅由前端在自动触发（非 force）时检查
+        // 后端 sniff_suggestions 只检查 is_configured
         let config = AiConfig {
             base_url: "https://api.openai.com/v1".to_string(),
             api_key: "sk-test-key".to_string(),
             model: "gpt-4o-mini".to_string(),
             sniff_enabled: false,
         };
+        // sniff_enabled=false 不会导致静默返回空，会继续调用 AI
+        // 但因为没有 mock 服务器，调用会失败，验证的是不会提前返回 Ok([])
         let result = sniff_suggestions("明天上午9点开会", &config).await;
-        assert!(result.is_ok(), "关闭嗅探应返回 Ok(vec![]) 而非错误");
-        assert!(result.unwrap().is_empty(), "关闭嗅探应返回空 vec");
+        // 应该是 AI 调用失败（网络错误），而不是静默返回空
+        assert!(result.is_err(), "sniff_enabled=false 不应阻止后端调用，AI 请求应因网络失败");
     }
 
     #[tokio::test]
