@@ -236,56 +236,39 @@
                 <header class="section__head" data-reveal>
                     <span class="section__eyebrow" data-i18n="screenshots.eyebrow">预览</span>
                     <h2 class="section__title" data-i18n="screenshots.title">看看 Tie 长什么样</h2>
-                    <p class="section__desc" data-i18n="screenshots.desc">即将更新真实应用截图。</p>
                 </header>
 
                 <div class="shots">
-                    <figure class="shot shot--lg" data-reveal>
-                        <div class="shot__bar" aria-hidden="true">
-                            <span></span><span></span><span></span>
-                            <span class="shot__bar-url">tie · 主窗口</span>
-                        </div>
-                        <div class="shot__canvas shot__canvas--hero">
-                            <span class="t-icon t-icon--md" aria-hidden="true">T</span>
-                            <p class="shot__placeholder">主窗口预览位 · 即将替换为真实截图</p>
-                        </div>
-                        <figcaption class="shot__caption" data-i18n="shot.main.caption">主编辑视图 · Markdown 编辑 + 标签 + 提醒</figcaption>
+                    <!-- 第一行：桌面全景大图 -->
+                    <figure class="shot shot--wide" data-reveal>
+                        <img class="shot__img" src="images/1.png" alt="桌面便签散布" loading="lazy" />
+                        <figcaption class="shot__caption" data-i18n="shot.main.caption">桌面便签 · 随手贴随手翻</figcaption>
                     </figure>
 
-                    <figure class="shot" data-reveal data-reveal-delay="1">
-                        <div class="shot__bar" aria-hidden="true">
-                            <span></span><span></span><span></span>
-                            <span class="shot__bar-url">tie · 日历</span>
-                        </div>
-                        <div class="shot__canvas shot__canvas--calendar">
-                            <div class="shot__cal">
-                                <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
-                                <span></span><span class="is-on"></span><span></span><span></span><span></span><span class="is-on"></span><span></span>
-                                <span></span><span></span><span></span><span class="is-on"></span><span></span><span></span><span></span>
-                                <span></span><span></span><span></span><span></span><span></span><span></span><span class="is-on"></span>
-                            </div>
-                            <p class="shot__placeholder">日历视图预览位</p>
-                        </div>
-                        <figcaption class="shot__caption" data-i18n="shot.cal.caption">日历视图 · 月历 + 提醒分布</figcaption>
-                    </figure>
+                    <!-- 第二行：左侧编辑图 + 右侧3张小图 -->
+                    <div class="shot-row">
+                        <figure class="shot" data-reveal data-reveal-delay="1">
+                            <img class="shot__img" src="images/2.png" alt="便签编辑与提醒" loading="lazy" />
+                            <figcaption class="shot__caption" data-i18n="shot.edit.caption">Markdown 编辑 · 提醒 · 颜色</figcaption>
+                        </figure>
 
-                    <figure class="shot" data-reveal data-reveal-delay="2">
-                        <div class="shot__bar" aria-hidden="true">
-                            <span></span><span></span><span></span>
-                            <span class="shot__bar-url">tie · AI</span>
+                        <div class="shot-row-right">
+                            <figure class="shot shot--span-cols" data-reveal data-reveal-delay="2">
+                                <img class="shot__img" src="images/3.png" alt="便签列表" loading="lazy" />
+                                <figcaption class="shot__caption" data-i18n="shot.list.caption">便签列表 · 快速浏览</figcaption>
+                            </figure>
+
+                            <figure class="shot" data-reveal data-reveal-delay="3">
+                                <img class="shot__img" src="images/4.png" alt="日历视图" loading="lazy" />
+                                <figcaption class="shot__caption" data-i18n="shot.cal.caption">日历视图 · 月历 + 提醒分布</figcaption>
+                            </figure>
+
+                            <figure class="shot" data-reveal data-reveal-delay="4">
+                                <img class="shot__img" src="images/5.png" alt="便签管理" loading="lazy" />
+                                <figcaption class="shot__caption" data-i18n="shot.hub.caption">便签管理 · 搜索 · 归档</figcaption>
+                            </figure>
                         </div>
-                        <div class="shot__canvas shot__canvas--ai">
-                            <div class="shot__ai">
-                                <span class="shot__ai-line"></span>
-                                <span class="shot__ai-line shot__ai-line--short"></span>
-                                <span class="shot__ai-line shot__ai-line--mid"></span>
-                                <span class="shot__ai-line"></span>
-                                <span class="shot__ai-line shot__ai-line--short"></span>
-                            </div>
-                            <p class="shot__placeholder">AI 能力预览位</p>
-                        </div>
-                        <figcaption class="shot__caption" data-i18n="shot.ai.caption">AI 分析 / 重写 / 周报草稿</figcaption>
-                    </figure>
+                    </div>
                 </div>
             </div>
         </section>

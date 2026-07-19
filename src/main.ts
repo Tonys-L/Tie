@@ -29,11 +29,16 @@ function renderMarkdown(content: string): string {
   if (!content.trim()) {
     return `<span class="placeholder">${t('note.placeholder')}</span>`;
   }
-  // 将 img:filename 替换为 asset 协议 URL，再交给 marked 渲染
   let processed = content;
   if (imageDir) {
-    processed = processed.replace(/img:([^\s)]+)/g, (_, filename) => {
-      return convertFileSrc(imageDir + '\\' + filename);
+    // 将 img:filename{width=300} 或 img:filename 替换为 HTML img 标签
+    // 必须在 marked 解析前处理，避免 {width=N} 被当作 URL 的一部分导致图片加载失败
+    processed = processed.replace(/!\[([^\]]*)\]\(img:([^\s{}]+)(?:\{width=(\d+)\})?\)/g, (_match, alt: string, filename: string, width: string | undefined) => {
+      const url = convertFileSrc(imageDir + '\\' + filename);
+      if (width) {
+        return `<span class="img-wrap" data-img-filename="${filename}" data-img-width="${width}" style="width:${width}px"><img src="${url}" alt="${alt}"><span class="img-resize-handle"></span></span>`;
+      }
+      return `<span class="img-wrap" data-img-filename="${filename}"><img src="${url}" alt="${alt}"><span class="img-resize-handle"></span></span>`;
     });
   }
   let html = marked.parse(processed) as string;
@@ -47,6 +52,12 @@ function renderMarkdown(content: string): string {
       return `<li class="task-item"><input type="checkbox" class="task-checkbox" data-task-index="${idx}" ${checked ? 'checked' : ''}>`;
     }
   );
+  // 处理非 img: 开头的外部图片 URL（也包裹可调整大小容器）
+  html = html.replace(/<img([^>]*)src="([^"]*)"([^>]*)>/g, (_match, before: string, src: string, after: string) => {
+    // 已被 img-wrap 包裹的跳过
+    if (before.includes('img-wrap') || after.includes('img-wrap') || src.startsWith('data:')) return _match;
+    return `<span class="img-wrap"><img${before}src="${src}"${after}><span class="img-resize-handle"></span></span>`;
+  });
   return html;
 }
 
@@ -154,6 +165,18 @@ function renderNote(note: Note) {
   applyNoteStyle(note);
   setupNoteEvents(note);
   setupTagEvents(note);
+  setupImageResize(note);
+
+  // 检查是否有活跃提醒，有则给提醒按钮添加 has-reminder class（图标变橙色）
+  invoke<Reminder[]>('get_reminders', { noteId: note.id })
+    .then(reminders => {
+      const hasActive = reminders.some(r => r.status === 'pending');
+      if (hasActive) {
+        const btn = app.querySelector('.reminder-btn');
+        if (btn) btn.classList.add('has-reminder');
+      }
+    })
+    .catch(() => {});
 
   // 关闭横幅按钮
   const banner = app.querySelector('[data-reminder-banner]') as HTMLElement;
@@ -343,7 +366,7 @@ function applyCustomColor(note: Note, app: HTMLElement, customDot: HTMLElement, 
   });
 }
 
-function showContextMenu(e: MouseEvent, note: Note, app: HTMLElement) {
+async function showContextMenu(e: MouseEvent, note: Note, app: HTMLElement) {
   // 移除已有菜单
   document.getElementById('ctx-menu')?.remove();
 
@@ -351,9 +374,16 @@ function showContextMenu(e: MouseEvent, note: Note, app: HTMLElement) {
   menu.id = 'ctx-menu';
   menu.style.cssText = `position:fixed;z-index:99999;background:var(--surface,#fff);border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:4px 0;box-shadow:0 4px 16px rgba(0,0,0,0.12);min-width:140px;font-size:12px;max-height:${Math.floor(window.innerHeight * 0.8)}px;overflow-y:auto;`;
 
-  type MenuItem = { label?: string; action?: () => void; type?: string; danger?: boolean };
+  type MenuItem = { label?: string; action?: () => void; type?: string; danger?: boolean; disabled?: boolean };
 
-  // AI 操作始终显示，点击时若无选区则提示
+  // 检查 AI 是否已配置
+  let aiConfigured = false;
+  try {
+    const config = await invoke<AiConfig>('get_ai_config');
+    aiConfigured = !!(config && config.api_key && config.api_key.length > 0);
+  } catch { /* 读取失败视为未配置 */ }
+
+  // AI 操作始终显示，未配置时禁用
   const selection = getSelectedText(note, app);
   const aiAction = (op: string) => {
     if (!selection) { showToast(t('note.aiNoSelection'), 'error'); return; }
@@ -361,11 +391,11 @@ function showContextMenu(e: MouseEvent, note: Note, app: HTMLElement) {
   };
   const aiItems: MenuItem[] = [
     { type: 'separator' },
-    { label: t('note.aiTidy'), action: () => aiAction('tidy') },
-    { label: t('note.aiTodoSplit'), action: () => aiAction('todo_split') },
-    { label: t('note.aiStyleFormal'), action: () => aiAction('style_formal') },
-    { label: t('note.aiStyleConcise'), action: () => aiAction('style_concise') },
-    { label: t('note.aiStyleMild'), action: () => aiAction('style_mild') },
+    { label: t('note.aiTidy'), action: () => aiAction('tidy'), disabled: !aiConfigured },
+    { label: t('note.aiTodoSplit'), action: () => aiAction('todo_split'), disabled: !aiConfigured },
+    { label: t('note.aiStyleFormal'), action: () => aiAction('style_formal'), disabled: !aiConfigured },
+    { label: t('note.aiStyleConcise'), action: () => aiAction('style_concise'), disabled: !aiConfigured },
+    { label: t('note.aiStyleMild'), action: () => aiAction('style_mild'), disabled: !aiConfigured },
   ];
 
   const items: MenuItem[] = [
@@ -383,10 +413,20 @@ function showContextMenu(e: MouseEvent, note: Note, app: HTMLElement) {
     }
     const el = document.createElement('div');
     el.innerHTML = item.label!;
-    el.style.cssText = `padding:6px 12px;cursor:pointer;color:${item.danger ? '#dc2626' : 'var(--text,#333)'};white-space:nowrap;`;
-    el.addEventListener('mouseenter', () => el.style.background = 'var(--surface-hover,#f1f5f9)');
-    el.addEventListener('mouseleave', () => el.style.background = 'transparent');
-    el.addEventListener('click', (ev) => { ev.stopPropagation(); item.action!(); menu.remove(); });
+    if (item.disabled) {
+      el.style.cssText = 'padding:6px 12px;cursor:not-allowed;color:var(--text-disabled,#aaa);white-space:nowrap;';
+      el.title = t('hub.aiNotConfigured');
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        showToast(t('hub.aiNotConfigured'), 'error');
+        menu.remove();
+      });
+    } else {
+      el.style.cssText = `padding:6px 12px;cursor:pointer;color:${item.danger ? '#dc2626' : 'var(--text,#333)'};white-space:nowrap;`;
+      el.addEventListener('mouseenter', () => el.style.background = 'var(--surface-hover,#f1f5f9)');
+      el.addEventListener('mouseleave', () => el.style.background = 'transparent');
+      el.addEventListener('click', (ev) => { ev.stopPropagation(); item.action!(); menu.remove(); });
+    }
     menu.appendChild(el);
   });
 
@@ -789,6 +829,75 @@ function refreshTagBar(note: Note) {
   if (tagList) tagList.innerHTML = renderTagPills(note.tags);
 }
 
+/** 图片拖拽调整大小：拖动右下角手柄改变宽度，松开后将宽度写回 Markdown */
+function setupImageResize(note: Note) {
+  const contentView = document.querySelector('[data-content-view]') as HTMLElement;
+  if (!contentView) return;
+
+  contentView.addEventListener('mousedown', (e) => {
+    const handle = (e.target as HTMLElement).closest('.img-resize-handle') as HTMLElement;
+    if (!handle) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const wrap = handle.closest('.img-wrap') as HTMLElement;
+    if (!wrap) return;
+
+    const startX = e.clientX;
+    const startWidth = wrap.offsetWidth;
+
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - startX;
+      const newWidth = Math.max(60, Math.min(startWidth + dx, contentView.offsetWidth - 8));
+      wrap.style.width = newWidth + 'px';
+    };
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      const finalWidth = Math.round(wrap.offsetWidth);
+      const filename = wrap.dataset.imgFilename;
+      if (filename) {
+        saveImageWidth(note, filename, finalWidth);
+      }
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+/** 将图片宽度保存到 Markdown 内容中：![](img:filename) → ![](img:filename{width=N}) */
+function saveImageWidth(note: Note, filename: string, width: number) {
+  const escaped = filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // 已有 {width=N}：替换
+  const withWidthRegex = new RegExp(`\\(img:${escaped}\\{width=\\d+\\}\\)`);
+  // 无 {width=N}：追加
+  const withoutWidthRegex = new RegExp(`\\(img:${escaped}\\)`);
+
+  const before = note.content;
+  if (withWidthRegex.test(note.content)) {
+    note.content = note.content.replace(withWidthRegex, `(img:${filename}{width=${width}})`);
+  } else if (withoutWidthRegex.test(note.content)) {
+    note.content = note.content.replace(withoutWidthRegex, `(img:${filename}{width=${width}})`);
+  }
+
+  // 调试：确认内容被修改
+  if (note.content === before) {
+    console.warn('[img-resize] 内容未修改，filename=', filename, 'width=', width, 'content snippet=', before.substring(0, 200));
+  } else {
+    console.log('[img-resize] 内容已修改，filename=', filename, 'width=', width);
+  }
+
+  // 同步 textarea 值，避免编辑模式切换时丢失宽度
+  const textarea = document.querySelector('[data-content]') as HTMLTextAreaElement;
+  if (textarea) textarea.value = note.content;
+
+  invoke('update_note_content', { id: note.id, content: note.content });
+}
+
 function setupTagEvents(note: Note) {
   const tagInput = document.querySelector('[data-tag-input]') as HTMLInputElement;
   const tagList = document.querySelector('[data-tag-list]') as HTMLElement;
@@ -875,6 +984,11 @@ function setupNoteEvents(note: Note) {
       if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
         invoke('open_url', { url: href }).catch(err => console.error('打开链接失败:', err));
       }
+      return;
+    }
+    // 拦截图片容器/手柄点击：不进入编辑模式（图片拖拽调整大小操作）
+    const imgWrap = (e.target as HTMLElement).closest('.img-wrap, .img-resize-handle');
+    if (imgWrap) {
       return;
     }
     contentView.style.display = 'none';
@@ -1013,6 +1127,7 @@ function setupNoteEvents(note: Note) {
 
   // ---- 关闭窗口 ----
   app.querySelector('[data-close]')!.addEventListener('click', () => {
+    isClosing = true;
     win.close();
   });
 
@@ -1114,7 +1229,11 @@ function enterTitleEdit(note: Note, titleText: HTMLElement, _app: HTMLElement) {
   input.placeholder = t('note.title');
   titleText.replaceWith(input);
   input.focus();
-  input.select();
+  // 光标放在末尾，而非全选文字（方便在末尾追加内容）
+  input.setSelectionRange(input.value.length, input.value.length);
+
+  // 阻止 input 上的 mousedown 冒泡到 titleBar 触发拖拽（导致失焦退出编辑）
+  input.addEventListener('mousedown', (e) => e.stopPropagation());
 
   const saveTitle = () => {
     note.title = input.value;
@@ -1229,11 +1348,26 @@ function showReminderPanel(note: Note, app: HTMLElement) {
         remindAt,
         repeatType: selectedRepeat,
       });
+      // 新建提醒成功，更新提醒按钮状态为橙色
+      const btn = app.querySelector('.reminder-btn');
+      if (btn) btn.classList.add('has-reminder');
       overlay.remove();
     } catch (e) {
       console.error('创建提醒失败:', e);
     }
   });
+}
+
+/** 更新提醒按钮状态：有活跃提醒则橙色，否则默认灰色 */
+function updateReminderBtnState(noteId: string) {
+  invoke<Reminder[]>('get_reminders', { noteId })
+    .then(reminders => {
+      const btn = document.querySelector('.reminder-btn');
+      if (!btn) return;
+      const hasActive = reminders.some(r => r.status === 'pending');
+      btn.classList.toggle('has-reminder', hasActive);
+    })
+    .catch(() => {});
 }
 
 async function loadReminders(noteId: string, container: HTMLElement) {
@@ -1275,6 +1409,8 @@ async function loadReminders(noteId: string, container: HTMLElement) {
         try {
           await invoke('delete_reminder', { id });
           loadReminders(noteId, container);
+          // 删除后检查是否还有活跃提醒，更新按钮状态
+          updateReminderBtnState(noteId);
         } catch (err) {
           console.error('删除提醒失败:', err);
         }
@@ -1619,9 +1755,15 @@ function showDeleteConfirm(noteId: string, app: HTMLElement) {
   app.appendChild(overlay);
 
   overlay.querySelector('.btn-cancel')!.addEventListener('click', () => overlay.remove());
-  overlay.querySelector('.btn-confirm')!.addEventListener('click', () => {
-    invoke('delete_note', { id: noteId });
-    win.close();
+  overlay.querySelector('.btn-confirm')!.addEventListener('click', async () => {
+    try {
+      await invoke('delete_note', { id: noteId });
+      // 后端已通过 destroy 关闭窗口，无需前端再关
+    } catch (e) {
+      console.error('删除便签失败:', e);
+      // 删除失败时也尝试关闭窗口（数据可能已被删除但窗口仍存在）
+      try { await win.close(); } catch (_) { win.destroy(); }
+    }
   });
 }
 
@@ -1629,7 +1771,6 @@ function showDeleteConfirm(noteId: string, app: HTMLElement) {
 
 // 关闭标志：窗口关闭过程中不再保存状态，避免保存极小尺寸
 let isClosing = false;
-win.onCloseRequested(() => { isClosing = true; });
 
 function setupWindowEvents(id: string) {
   let saveTimeout: ReturnType<typeof setTimeout> | undefined;

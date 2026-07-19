@@ -160,6 +160,16 @@ html, body {
   background: rgba(37, 99, 235, 0.08);
 }
 
+/* 提醒按钮 — 有活跃提醒时橙色 */
+.reminder-btn.has-reminder {
+  color: #f59e0b;
+}
+
+.reminder-btn.has-reminder:hover {
+  color: #d97706;
+  background: rgba(245, 158, 11, 0.08);
+}
+
 /* AI 嗅探按钮 — sparkle 图标，黑白色风格与其他图标一致 */
 .ai-btn {
   color: rgba(0, 0, 0, 0.45);
@@ -318,7 +328,46 @@ html, body {
 .content-view img {
   max-width: 100%;
   border-radius: 4px;
+  margin: 0;
+  display: block;
+}
+
+/* 图片可调整大小容器 */
+.content-view .img-wrap {
+  display: inline-block;
+  position: relative;
+  max-width: 100%;
   margin: 4px 0;
+  border-radius: 4px;
+  overflow: visible;
+  line-height: 0;
+}
+
+.content-view .img-wrap img {
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
+/* 拖拽手柄：右下角角标 */
+.content-view .img-resize-handle {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+  opacity: 0;
+  transition: opacity 0.15s;
+  border-right: 2px solid rgba(255,255,255,0.7);
+  border-bottom: 2px solid rgba(255,255,255,0.7);
+  border-radius: 0 0 2px 0;
+  /* 半透明背景增加可读性 */
+  background: rgba(0,0,0,0.15);
+}
+
+.content-view .img-wrap:hover .img-resize-handle {
+  opacity: 1;
 }
 
 /* ---- 底部工具栏 ---- */

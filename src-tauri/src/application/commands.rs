@@ -119,7 +119,7 @@ pub async fn update_note_window_state(
     result
 }
 
-/// 删除便签（同时删除关联提醒）
+/// 删除便签（同时删除关联提醒 + 关闭窗口）
 #[tauri::command]
 pub async fn delete_note(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     // 删除前清理便签中的图片文件
@@ -127,6 +127,11 @@ pub async fn delete_note(app: AppHandle, state: State<'_, AppState>, id: String)
         cleanup_removed_images(&note.content, "");
     }
     let result = note_service::delete_note(state.note_repo.as_ref(), state.reminder_repo.as_ref(), &id);
+    // 删除成功后关闭便签窗口（destroy 强制销毁，避免 close 不可靠）
+    let label = format!("note-{}", id);
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.destroy();
+    }
     state.scheduler.schedule_recalc();
     state.git_sync.schedule_auto_sync(app);
     result
@@ -413,11 +418,11 @@ pub fn open_url(url: String) -> Result<(), String> {
 /// 匹配格式：img:uuid.png
 fn extract_image_filenames(content: &str) -> std::collections::HashSet<String> {
     let mut names = std::collections::HashSet::new();
-    // 查找所有 img:xxx.ext 模式
+    // 查找所有 img:xxx.ext 模式（支持 img:filename{width=N} 语法）
     for part in content.split("img:").skip(1) {
-        // 取到第一个空白或 ) 或 ] 为止
+        // 取到第一个空白或 ) 或 ] 或 { 为止（{width=N} 是图片宽度参数，不属于文件名）
         let filename: String = part.chars()
-            .take_while(|c| !c.is_whitespace() && *c != ')' && *c != ']' && *c != '(')
+            .take_while(|c| !c.is_whitespace() && *c != ')' && *c != ']' && *c != '(' && *c != '{')
             .collect();
         if !filename.is_empty() {
             let lower = filename.to_lowercase();

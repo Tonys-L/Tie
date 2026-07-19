@@ -777,9 +777,63 @@ ul {
 /* ---------- 截图区 ---------- */
 .shots {
     display: grid;
-    grid-template-columns: 1.6fr 1fr;
-    grid-template-rows: auto auto;
+    grid-template-columns: 1fr;
     gap: 20px;
+}
+
+/* 第一行：大图独占 */
+.shot--wide {
+    grid-column: 1 / -1;
+}
+
+/* 第二行：左侧高图 + 右侧2×2网格 */
+.shot-row {
+    display: grid;
+    grid-template-columns: 2fr 3fr;
+    gap: 20px;
+    /* 控制总高度，让截图区不会太大 */
+    max-height: 560px;
+}
+
+.shot-row > .shot {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.shot-row > .shot .shot__img {
+    flex: 1;
+    min-height: 0;
+    object-fit: cover;
+}
+
+.shot-row-right {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 12px;
+    overflow: hidden;
+}
+
+/* 3.png 扁图跨2列 */
+.shot-row-right .shot--span-cols {
+    grid-column: span 2;
+}
+
+.shot-row-right .shot {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.shot-row-right .shot__img {
+    flex: 1;
+    min-height: 0;
+    object-fit: cover;
+}
+
+.shot-row-right .shot__caption {
+    flex-shrink: 0;
 }
 
 .shot {
@@ -798,41 +852,6 @@ ul {
     box-shadow: var(--shadow-lg);
 }
 
-.shot--lg {
-    grid-row: span 2;
-}
-
-.shot__bar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 10px 14px;
-    background: var(--bg-muted);
-    border-bottom: 1px solid var(--border-soft);
-}
-
-.shot__bar span {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--zinc-300);
-}
-
-.shot__bar span:nth-child(1) { background: #ff5f57; }
-.shot__bar span:nth-child(2) { background: #febc2e; }
-.shot__bar span:nth-child(3) { background: #28c840; }
-
-.shot__bar-url {
-    margin-left: 10px;
-    font-size: 12px;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    background: none;
-    width: auto;
-    height: auto;
-    border-radius: 0;
-}
-
 .shot__canvas {
     flex: 1;
     min-height: 200px;
@@ -843,6 +862,13 @@ ul {
     gap: 14px;
     padding: 32px 24px;
     position: relative;
+}
+
+.shot__img {
+    display: block;
+    width: 100%;
+    height: auto;
+    object-fit: contain;
 }
 
 .shot__canvas--hero {
@@ -1131,8 +1157,22 @@ ul {
     .shots {
         grid-template-columns: 1fr;
     }
-    .shot--lg {
-        grid-row: auto;
+    .shot--wide {
+        grid-column: auto;
+    }
+    .shot-row {
+        grid-template-columns: 1fr;
+    }
+    .shot-row-right {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto;
+    }
+    .shot-row-right .shot--span-cols {
+        grid-column: auto;
+    }
+    .shot-row-right .shot__img {
+        height: auto;
+        object-fit: contain;
     }
 }
 

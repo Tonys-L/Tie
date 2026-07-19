@@ -207,10 +207,11 @@
             "hl.ai.l3": "未启用 AI 时核心功能完全可用",
             "screenshots.eyebrow": "预览",
             "screenshots.title": "看看 Tie 长什么样",
-            "screenshots.desc": "即将更新真实应用截图。",
-            "shot.main.caption": "主编辑视图 · Markdown 编辑 + 标签 + 提醒",
+            "shot.main.caption": "桌面便签 · 随手贴随手翻",
+            "shot.edit.caption": "Markdown 编辑 · 提醒 · 颜色",
+            "shot.list.caption": "便签列表 · 快速浏览",
             "shot.cal.caption": "日历视图 · 月历 + 提醒分布",
-            "shot.ai.caption": "AI 分析 / 重写 / 周报草稿",
+            "shot.hub.caption": "便签管理 · 搜索 · 归档",
             "cta.title": "下载 Tie，开始随手记",
             "cta.desc": "前往 GitHub Releases 获取最新版本，支持 Windows / macOS / Linux。",
             "cta.download": "下载最新版",
@@ -272,10 +273,11 @@
             "hl.ai.l3": "Core features fully work without AI",
             "screenshots.eyebrow": "Preview",
             "screenshots.title": "See what Tie looks like",
-            "screenshots.desc": "Real app screenshots coming soon.",
-            "shot.main.caption": "Main editor · Markdown + Tags + Reminders",
+            "shot.main.caption": "Desktop notes · Jot it, find it",
+            "shot.edit.caption": "Markdown editing · Reminders · Colors",
+            "shot.list.caption": "Note list · Quick browse",
             "shot.cal.caption": "Calendar · Monthly view + Reminder distribution",
-            "shot.ai.caption": "AI Analysis / Rewrite / Weekly report",
+            "shot.hub.caption": "Note management · Search · Archive",
             "cta.title": "Download Tie, start jotting",
             "cta.desc": "Get the latest release from GitHub. Supports Windows / macOS / Linux.",
             "cta.download": "Download Latest",
@@ -333,6 +335,40 @@
         });
     }
 
+    /* ---------- 截图点击放大 ---------- */
+    function initLightbox() {
+        document.querySelectorAll(".shot__img").forEach(function (img) {
+            img.style.cursor = "zoom-in";
+            img.addEventListener("click", function () {
+                var overlay = document.createElement("div");
+                overlay.style.cssText =
+                    "position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.85);" +
+                    "display:flex;align-items:center;justify-content:center;cursor:zoom-out;";
+
+                var bigImg = document.createElement("img");
+                bigImg.src = img.src;
+                bigImg.alt = img.alt || "";
+                bigImg.style.cssText =
+                    "max-width:92vw;max-height:90vh;border-radius:8px;" +
+                    "box-shadow:0 8px 40px rgba(0,0,0,0.4);object-fit:contain";
+
+                overlay.appendChild(bigImg);
+                document.body.appendChild(overlay);
+
+                overlay.addEventListener("click", function () {
+                    overlay.remove();
+                });
+                function onKey(e) {
+                    if (e.key === "Escape") {
+                        overlay.remove();
+                        document.removeEventListener("keydown", onKey);
+                    }
+                }
+                document.addEventListener("keydown", onKey);
+            });
+        });
+    }
+
     /* ---------- 启动 ---------- */
     function ready(fn) {
         if (document.readyState !== "loading") {
@@ -349,6 +385,7 @@
         initYear();
         initVersion();
         initDownloadButtons();
+        initLightbox();
         initSmoothScroll();
     });
 })();
