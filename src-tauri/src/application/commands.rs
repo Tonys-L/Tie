@@ -718,6 +718,7 @@ pub async fn batch_archive_notes(app: AppHandle, state: State<'_, AppState>, ids
         if let Ok(Some(mut note)) = state.note_repo.find_by_id(id) {
             note.archive();
             if state.note_repo.save(&note).is_ok() {
+                let _ = app.emit("note-archived", id);
                 count += 1;
             }
         }
@@ -731,16 +732,16 @@ pub async fn batch_archive_notes(app: AppHandle, state: State<'_, AppState>, ids
 pub async fn batch_delete_notes(app: AppHandle, state: State<'_, AppState>, ids: Vec<String>) -> Result<usize, String> {
     let mut count = 0;
     for id in &ids {
-        // 关闭窗口
-        let label = format!("note-{}", id);
-        if let Some(win) = app.get_webview_window(&label) {
-            let _ = win.close();
-        }
         // 清理图片
         if let Ok(Some(note)) = state.note_repo.find_by_id(id) {
             cleanup_removed_images(&note.content, "");
         }
         if note_service::delete_note(state.note_repo.as_ref(), state.reminder_repo.as_ref(), id).is_ok() {
+            // destroy 强制销毁窗口（close 在 onCloseRequested 注册后不可靠）
+            let label = format!("note-{}", id);
+            if let Some(win) = app.get_webview_window(&label) {
+                let _ = win.destroy();
+            }
             count += 1;
         }
     }
@@ -757,6 +758,7 @@ pub async fn batch_update_color(app: AppHandle, state: State<'_, AppState>, ids:
         if let Ok(Some(mut note)) = state.note_repo.find_by_id(id) {
             note.set_color(color.clone());
             if state.note_repo.save(&note).is_ok() {
+                let _ = app.emit("note-color-changed", serde_json::json!({ "id": id, "color": color }));
                 count += 1;
             }
         }

@@ -193,6 +193,71 @@ function renderNote(note: Note) {
     }
   });
 
+  // 监听后端 note-archived 事件：Hub 归档便签时，已打开的窗口加蒙层变只读
+  getCurrentWindow().listen<string>('note-archived', (event) => {
+    if (event.payload !== note.id) return;
+    note.is_archived = true;
+    // 添加蒙层
+    if (!app.querySelector('.archived-overlay')) {
+      const overlay = document.createElement('div');
+      overlay.className = 'archived-overlay';
+      const contentArea = app.querySelector('.content-area');
+      if (contentArea) contentArea.appendChild(overlay);
+    }
+    // 添加归档样式
+    const contentArea = app.querySelector('.content-area');
+    if (contentArea) contentArea.classList.add('is-archived');
+    const titleBarEl = app.querySelector('.title-bar');
+    if (titleBarEl) titleBarEl.classList.add('is-archived');
+    // 添加已归档标签（如不存在）
+    if (!app.querySelector('.archived-badge')) {
+      const badge = document.createElement('span');
+      badge.className = 'archived-badge';
+      badge.textContent = t('hub.archived');
+      titleBarEl?.appendChild(badge);
+    }
+    // 更新归档按钮为恢复按钮
+    const btn = app.querySelector('[data-archive]') as HTMLButtonElement;
+    if (btn) {
+      btn.title = t('note.restore');
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
+    }
+  });
+
+  // 监听后端 note-unarchived 事件：Hub 恢复便签时，已打开的窗口移除蒙层
+  getCurrentWindow().listen<string>('note-unarchived', (event) => {
+    if (event.payload !== note.id) return;
+    note.is_archived = false;
+    // 移除蒙层
+    const overlay = app.querySelector('.archived-overlay');
+    if (overlay) overlay.remove();
+    // 移除归档样式
+    const contentArea = app.querySelector('.content-area');
+    if (contentArea) contentArea.classList.remove('is-archived');
+    const titleBarEl = app.querySelector('.title-bar');
+    if (titleBarEl) titleBarEl.classList.remove('is-archived');
+    // 移除已归档标签
+    const badge = app.querySelector('.archived-badge');
+    if (badge) badge.remove();
+    // 更新按钮为归档按钮
+    const btn = app.querySelector('[data-archive]') as HTMLButtonElement;
+    if (btn) {
+      btn.title = t('note.archive');
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>';
+    }
+  });
+
+  // 监听后端 note-color-changed 事件：Hub 批量改色时，已打开的窗口同步更新
+  getCurrentWindow().listen<{id: string, color: string}>('note-color-changed', (event) => {
+    if (event.payload.id !== note.id) return;
+    note.color = event.payload.color;
+    applyNoteStyle(note);
+    // 更新颜色选中状态
+    app.querySelectorAll('.color-dot').forEach(d => {
+      d.classList.toggle('active', (d as HTMLElement).dataset.color === note.color);
+    });
+  });
+
   // 关闭横幅按钮
   const banner = app.querySelector('[data-reminder-banner]') as HTMLElement;
   app.querySelector('[data-banner-close]')!.addEventListener('click', () => {
