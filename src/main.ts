@@ -1770,22 +1770,22 @@ function showSuggestionPanel(note: Note, suggestions: Suggestion[]): void {
 async function executeSuggestion(note: Note, suggestion: Suggestion): Promise<void> {
   switch (suggestion.type) {
     case 'reminder':
-      await executeReminder(note, suggestion.data as SniffResult);
+      await executeReminder(note, suggestion.data);
       break;
     case 'todo_split':
-      await executeTodoSplit(note, suggestion.data as string[]);
+      await executeTodoSplit(note, suggestion.data);
       break;
     case 'tidy':
-      await executeTidy(note, suggestion.data as string);
+      await executeTidy(note, suggestion.data);
       break;
     case 'style':
-      await executeStyle(note, suggestion.data as { style_type: string; styled_text: string });
+      await executeStyle(note, suggestion.data);
       break;
     case 'tag_suggest':
-      await executeTagSuggest(note, suggestion.data as string[]);
+      await executeTagSuggest(note, suggestion.data);
       break;
     default:
-      throw new Error(`${t('hub.executeFailed')}: ${suggestion.type}`);
+      throw new Error(`${t('hub.executeFailed')}: ${(suggestion as { type: string }).type}`);
   }
 }
 

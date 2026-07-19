@@ -77,12 +77,13 @@ export interface SniffResult {
 }
 
 // AI 嗅探返回的通用建议项（后端 sniff_suggestions 命令返回 Vec<Suggestion>）
-export interface Suggestion {
-  type: string;           // "reminder" / 未来 "todo_split" / "tidy" 等
-  title: string;          // 简短标题，如"添加提醒"
-  description: string;    // 详细描述，如"检测到"明天上午9点"，可添加提醒"
-  data: any;              // 类型相关数据（reminder 类型为 SniffResult）
-}
+// 使用 discriminated union 替代 data: any，编译期检查 executeSuggestion 分支完整性
+export type Suggestion =
+  | { type: 'reminder'; title: string; description: string; data: SniffResult }
+  | { type: 'todo_split'; title: string; description: string; data: string[] }
+  | { type: 'tidy'; title: string; description: string; data: string }
+  | { type: 'style'; title: string; description: string; data: { style_type: string; styled_text: string } }
+  | { type: 'tag_suggest'; title: string; description: string; data: string[] };
 
 // AI 生成的报告草稿（后端 generate_report 命令返回）
 export interface ReportDraft {
