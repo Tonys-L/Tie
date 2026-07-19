@@ -10,7 +10,6 @@ pub mod prompts;
 pub mod reminder_parser;
 pub mod report_generator;
 pub mod reminder_scheduler;
-pub mod reminder_service;
 pub mod shortcut_manager;
 pub mod sync_config;
 pub mod sync_json_io;

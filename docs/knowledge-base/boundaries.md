@@ -1,4 +1,4 @@
-﻿# 能力边界
+# 能力边界
 
 > **TL;DR**: 核心能力：便签管理、提醒调度、数据同步、日历视图。能力边界：单用户桌面工具，不提供云服务/多用户协作。⚠️ 便签管理不包含富文本编辑，日历视图展示提醒+便签活动+农历，支持点击日期创建提醒。
 
@@ -95,8 +95,7 @@
 
 **对应代码**:
 - `src-tauri/src/domain/reminder.rs`（领域模型 + 状态机）
-- `src-tauri/src/application/reminder_scheduler.rs`（事件驱动调度：单定时器 + Notify）
-- `src-tauri/src/application/reminder_service.rs`（提醒触发编排：通知+弹窗+状态更新）
+- `src-tauri/src/application/reminder_scheduler.rs`（事件驱动调度：单定时器 + Notify + 触发编排 通知+弹窗+状态更新）
 - `src-tauri/src/application/commands.rs`（提醒命令）
 
 ---
@@ -320,3 +319,4 @@
 | 2026-07-18 | 模板能力扩展：模板 Git 同步（sync_json_io export/import 增加 templates 目录 + updated_at 仲裁）；搜索高亮修复（snippet 三列选择 + 选第一个含 `<mark>` 的）；新增 UI 入口三处——设置中心模板管理弹窗、便签右键菜单"从模板新建"、空便签编辑区顶部模板快捷条；新增 INV-023（模板必须 Git 同步） | — | #FEAT-012 同步更新 constraints.md/glossary.md |
 | 2026-07-19 | 补充 delete_note 窗口关闭行为 | AI | v0.8.5 |
 | 2026-07-18 | UI 修复：i18n 命名空间错误（tpl 键从 hub 移到 note）；模板快捷条 CSS 改为横向单行滚动（不换行不挤压内容区）；右键菜单改为两项并存——「从模板新建便签」+「应用模板到当前便签」（追加到末尾，非破坏性）；新增 showTemplateApplier；应用图标替换为 TIE 字母图标（替换 src-tauri/icons 全部 35 个文件） | — | #FEAT-013 同步更新 constraints.md/glossary.md |
+| 2026-07-19 | 合并 reminder_service 到 reminder_scheduler（删除 reminder_service.rs）；fire_reminders 成为 reminder_scheduler 的 pub fn；对应代码列表合并为单条；消除 pass-through 浅模块 | — | #REFACTOR-015 同步更新 constraints.md |

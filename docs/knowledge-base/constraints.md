@@ -1,4 +1,4 @@
-﻿# 约束 (Constraints)
+# 约束 (Constraints)
 
 > **必读文档**：任何任务都必须阅读本文档。约束不可被绕过。
 
@@ -138,7 +138,7 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 - 模块间通过接口通信，禁止直接访问其他模块内部实现
 - 所有 `#[tauri::command]` 集中在 `application/commands.rs`
 - 窗口/托盘/快捷键/调度器各自独立模块，互不直接调用
-- `reminder_service` 的窗口操作（显示/聚焦/闪烁）必须委托 `window_manager`，禁止直接操作窗口属性
+- `reminder_scheduler` 的窗口操作（显示/聚焦/闪烁）必须委托 `window_manager`，禁止直接操作窗口属性
 - 闪烁提示逻辑（临时置顶 300ms + 恢复）统一由 `window_manager::flash_window` 提供，禁止在其他模块重复实现
 
 ---
@@ -200,7 +200,7 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | INV-017 | Git 同步初始化后必须验证本地分支名与配置一致，不一致时自动重命名 | `git_sync.rs` sync 方法 |
 | INV-018 | Note.tags 字段使用 `#[serde(default)]` 确保旧版 JSON 同步文件反序列化为空数组而非报错 | `domain/note.rs` Note 结构体 |
 | INV-019 | 标签数量上限 10 个（MAX_TAGS），单个标签长度上限 20 字符（MAX_TAG_LEN）；set_tags 自动 trim/去重/截断 | `domain/note.rs` set_tags/add_tag |
-| INV-020 | LunarMonthly 重复类型的 next_trigger 在 application 层计算（domain 层返回 None），因为农历转换依赖外部库 tyme4rs，不能放入 domain 层 | `domain/reminder.rs` next_trigger + `application/lunar_calendar.rs` lunar_next_month + `application/reminder_service.rs` fire_reminders |
+| INV-020 | LunarMonthly 重复类型的 next_trigger 在 application 层计算（domain 层返回 None），因为农历转换依赖外部库 tyme4rs，不能放入 domain 层 | `domain/reminder.rs` next_trigger + `application/lunar_calendar.rs` lunar_next_month + `application/reminder_scheduler.rs` fire_reminders |
 | INV-021 | 搜索使用 FTS5 trigram tokenizer（支持 CJK 子串匹配）；查询字符数 < 3 时自动回退到 LIKE 模糊匹配（trigram 要求至少 3 字符）；FTS5 虚拟表采用外部内容模式（content=notes）+ 触发器同步，避免数据复制 | `infrastructure/database.rs` FTS5 迁移 + `sqlite_note_repo.rs` search_notes |
 | INV-022 | 模板表首次启动检测为空时自动种子 3 个默认模板（空白/会议记录/待办清单）；模板 id 格式 `tpl-{uuid}`；模板 category 固定为 `custom`；模板只支持用户自定义，不预设系统模板 | `infrastructure/database.rs` 默认模板种子 + `domain/template.rs` Template::new |
 | INV-023 | 模板必须随 Git 同步：导出到 `sync/templates/{id}.json`，导入时按 `updated_at` 仲裁（last-write-wins），与便签/提醒一致；sync_json_io 的 export_to_json/import_from_json 必须接收 template_repo 参数 | `application/sync_json_io.rs` export_to_json/import_from_json + `application/git_sync.rs` sync/auto_pull_on_startup |
@@ -232,7 +232,7 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 - 禁止一步到位抽象（只有一种实现时直接实现）
 - 禁止在前端通过 `listen` 事件触发窗口创建（前端关闭后无法接收事件）
 - 禁止仓储层提供 partial update 方法（所有写入经 domain 方法 + save，NoteRepository 和 ReminderRepository 均适用）
-- 禁止 `reminder_service` 直接操作窗口属性，必须委托 `window_manager`
+- 禁止 `reminder_scheduler` 直接操作窗口属性，必须委托 `window_manager`
 - 禁止在 Windows 上执行子进程时不设 CREATE_NO_WINDOW 标志（会导致控制台窗口弹出）
 - 禁止子进程调用不设 `stdin(Stdio::null())`（可能导致交互式提示挂起进程）
 - 禁止在 domain 层结构体中保留无业务逻辑使用的字段（YAGNI 原则）
@@ -341,3 +341,4 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | 2026-07-18 | Bugfix：Git 同步 unrelated histories 导致远程数据被删除；重构 sync 流程为"先拉后推"（fetch→merge→import→export→commit→push）；merge 添加 --allow-unrelated-histories；push 前安全检查（删除>50%拒绝推送）；新增 INV-024（先拉后推）/INV-025（merge 安全保护） | — | #BUGFIX-001 同步更新 lessons/README.md |
 | 2026-07-19 | 新增 INV-026 + 图片宽度语法约束 | AI | v0.8.5 |
 | 2026-07-19 | 新增 INV-027（窗口最小尺寸 200×150 三处校验） | AI | v0.8.5 同步更新 flows.md |
+| 2026-07-19 | 合并 reminder_service 到 reminder_scheduler（删除 reminder_service.rs）；fire_reminders 成为 reminder_scheduler 的 pub fn；更新模块边界/禁止事项/INV-020 检查位置 | AI | #REFACTOR-015 同步更新 boundaries.md |
