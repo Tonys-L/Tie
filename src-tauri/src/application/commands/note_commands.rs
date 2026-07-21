@@ -100,13 +100,11 @@ pub async fn update_note_window_state(
     note_service::update_note_window_state(state.note_repo.as_ref(), state.event_bus.as_ref(), &id, pos_x, pos_y, width, height)
 }
 
-/// 删除便签（同时删除关联提醒 + 关闭窗口）
+/// 删除便签（同时删除关联提醒 + 清理图片 + 关闭窗口）
+///
+/// 图片清理由 note_service::delete_note 内部处理（locality），命令层仅做窗口关闭副作用。
 #[tauri::command]
 pub async fn delete_note(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
-    // 删除前清理便签中的图片文件
-    if let Ok(Some(note)) = state.note_repo.find_by_id(&id) {
-        super::super::image_service::cleanup_removed_images(&note.content, "");
-    }
     note_service::delete_note(state.note_repo.as_ref(), state.reminder_repo.as_ref(), state.event_bus.as_ref(), &id)?;
     // 删除成功后关闭便签窗口（destroy 强制销毁，避免 close 不可靠）
     window_manager::close_note_window(&app, &id);

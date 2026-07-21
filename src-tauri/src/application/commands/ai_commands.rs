@@ -91,34 +91,8 @@ pub async fn generate_report(
     if !config.is_configured() {
         return Err("AI 未配置".to_string());
     }
-    let period = match period_type.as_str() {
-        "weekly" => super::super::report_generator::ReportPeriod::Weekly {
-            start: start_date.clone(),
-            end: end_date.clone(),
-        },
-        "monthly" => {
-            let year: u32 = start_date
-                .chars()
-                .take(4)
-                .collect::<String>()
-                .parse()
-                .map_err(|_| "无效的年份".to_string())?;
-            let month: u32 = start_date
-                .chars()
-                .skip(5)
-                .take(2)
-                .collect::<String>()
-                .parse()
-                .map_err(|_| "无效的月份".to_string())?;
-            super::super::report_generator::ReportPeriod::Monthly { year, month }
-        }
-        _ => {
-            return Err(format!(
-                "无效的 period_type: {}，应为 weekly 或 monthly",
-                period_type
-            ));
-        }
-    };
+    // period_type 解析下沉到 report_generator::parse_period
+    let period = super::super::report_generator::parse_period(&period_type, &start_date, &end_date)?;
     let notes = state.note_repo.find_all()?;
     // 按 updated_at 日期部分过滤在 [start_date, end_date] 范围内（业务规则下沉到 report_generator）
     let filtered = super::super::report_generator::filter_notes_by_date(&notes, &start_date, &end_date);
@@ -142,10 +116,8 @@ pub async fn ai_rewrite_text(
 ) -> Result<String, String> {
     let op = super::super::prompts::rewrite::RewriteOperation::from_str(&operation)
         .ok_or_else(|| "无效的操作类型".to_string())?;
-    let char_count = text.chars().count();
-    if char_count < 5 || char_count > 500 {
-        return Err("请选中文本长度在 5~500 字符之间".to_string());
-    }
+    // 文本长度校验下沉到 ai_validation::validate_rewrite_text
+    super::super::ai_validation::validate_rewrite_text(&text)?;
     let messages = super::super::prompts::rewrite::build_rewrite_messages(&text, op);
     let result = ai_call_raw(messages).await?;
     Ok(result.trim().to_string())
@@ -160,9 +132,8 @@ pub async fn ai_sort_todos(
     _state: State<'_, AppState>,
     todos: Vec<String>,
 ) -> Result<Vec<String>, String> {
-    if todos.len() <= 3 {
-        return Err("待办条目数 ≤ 3，无需 AI 排序".to_string());
-    }
+    // 待办条目数校验下沉到 ai_validation::validate_sort_todos
+    super::super::ai_validation::validate_sort_todos(&todos)?;
     let messages = super::super::prompts::sort::build_sort_messages(&todos);
     let result = ai_call_raw(messages).await?;
 

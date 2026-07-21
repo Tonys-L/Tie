@@ -108,7 +108,7 @@ pub fn open_url(url: String) -> Result<(), String> {
         std::process::Command::new("cmd")
             .args(["/c", "start", "", &url])
             .stdin(std::process::Stdio::null())
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .creation_flags(super::super::git_ops::CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| format!("打开链接失败: {}", e))?;
     }

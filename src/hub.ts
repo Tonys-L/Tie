@@ -16,11 +16,11 @@
  */
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
 // ===== 共享模块 =====
 import { initLocale, t, applyLocale, getLocale, setLocale } from './i18n';
+import * as api from './api';
 
 // ===== Hub 页面模块（按设置页 tab 分组）=====
 import { loadNotes } from './notes-list';              // 便签列表页
@@ -40,7 +40,7 @@ initLocale();
 listen('tauri://notification', (event: any) => {
   const noteId = event?.payload?.data?.note_id || event?.payload?.note_id;
   if (noteId) {
-    invoke('activate_note_by_id', { noteId }).catch(err => console.error('激活便签失败:', err));
+    api.activateNoteById(noteId).catch(err => console.error('激活便签失败:', err));
   }
 });
 
@@ -99,13 +99,13 @@ applyLocale();
 // 同步窗口标题栏（Tauri 不会自动同步 <title> 标签到标题栏）
 getCurrentWindow().setTitle(t('app.settings'));
 // 同步语言偏好到后端（托盘菜单等）
-invoke('set_locale', { locale: getLocale() });
+api.setLocale(getLocale());
 
 // 语言切换
 document.getElementById('lang-btn')?.addEventListener('click', () => {
   const newLang = getLocale() === 'zh' ? 'en' : 'zh';
   setLocale(newLang);
-  invoke('set_locale', { locale: newLang });
+  api.setLocale(newLang);
   applyLocale();
   getCurrentWindow().setTitle(t('app.settings'));
   const langLabel = document.getElementById('lang-label') as HTMLElement;

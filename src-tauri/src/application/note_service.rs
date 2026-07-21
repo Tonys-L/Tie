@@ -93,13 +93,20 @@ pub fn update_note_style(
     Ok(())
 }
 
-/// 删除便签及关联提醒，emit `NoteWritten(Deleted)` 事件
+/// 删除便签及关联提醒，清理孤儿图片，emit `NoteWritten(Deleted)` 事件
+///
+/// 图片清理职责内聚到本函数（locality），所有调用方（单删除命令、batch_delete、
+/// 未来可能的 tray/AI 调用方）自动获得清理行为，无需手动调用 image_service。
 pub fn delete_note(
     note_repo: &dyn NoteRepository,
     reminder_repo: &dyn ReminderRepository,
     publisher: &dyn EventPublisher,
     id: &str,
 ) -> Result<(), String> {
+    // 删除前清理便签内容中的图片文件（先取 content 再 delete）
+    if let Ok(Some(note)) = note_repo.find_by_id(id) {
+        image_service::cleanup_removed_images(&note.content, "");
+    }
     reminder_repo.delete_by_note_id(id)?;
     note_repo.delete(id)?;
     publisher.emit(DomainEvent::NoteWritten {
@@ -291,8 +298,8 @@ pub fn batch_unarchive(
 
 /// 批量删除便签（含级联删除提醒 + 图片清理），对每个成功项 emit `NoteWritten(Deleted)` 事件
 ///
-/// 仅承载仓储与图片清理逻辑。窗口关闭（window_manager::close_note_window）
-/// 保留在命令层，因为涉及 Tauri 副作用。
+/// 图片清理由 `delete_note` 内部处理（locality），本函数仅做批量编排。
+/// 窗口关闭（window_manager::close_note_window）保留在命令层，因为涉及 Tauri 副作用。
 pub fn batch_delete(
     note_repo: &dyn NoteRepository,
     reminder_repo: &dyn ReminderRepository,
@@ -301,9 +308,6 @@ pub fn batch_delete(
 ) -> Result<Vec<String>, String> {
     let mut succeeded = Vec::new();
     for id in ids {
-        if let Ok(Some(note)) = note_repo.find_by_id(id) {
-            image_service::cleanup_removed_images(&note.content, "");
-        }
         if delete_note(note_repo, reminder_repo, publisher, id).is_ok() {
             succeeded.push(id.clone());
         }

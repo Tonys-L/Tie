@@ -1,6 +1,7 @@
 use chrono::Datelike;
 use tyme4rs::tyme::solar::SolarDay;
 use tyme4rs::tyme::lunar::LunarDay;
+use tyme4rs::tyme::Culture;
 use tyme4rs::tyme::Tyme;
 
 use crate::domain::reminder::CalendarAdapter;
@@ -61,6 +62,21 @@ impl CalendarAdapter for TymeCalendarAdapter {
     }
 }
 
+/// 获取指定公历日期的农历日文本（日历视图用）
+///
+/// 农历初一时返回"月份+日"（如"七月初一"），其他日只返回"日"（如"初二"）。
+/// 本函数是 tyme4rs 农历计算的统一入口，命令层和调度器都不再直接 use tyme4rs。
+pub fn lunar_date_text(year: isize, month: usize, day: usize) -> String {
+    let solar = SolarDay::from_ymd(year, month, day);
+    let lunar_day = solar.get_lunar_day();
+    let is_first = lunar_day.get_day() == 1;
+    if is_first {
+        format!("{}{}", lunar_day.get_lunar_month().get_name(), lunar_day.get_name())
+    } else {
+        lunar_day.get_name()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,5 +101,22 @@ mod tests {
     #[test]
     fn test_lunar_next_month_invalid_input() {
         assert!(lunar_next_month("not-a-date").is_none());
+    }
+
+    // ============ lunar_date_text 测试 ============
+
+    #[test]
+    fn test_lunar_date_text_first_day_of_lunar_month() {
+        // 2026-08-13 是农历七月初一
+        let text = lunar_date_text(2026, 8, 13);
+        assert!(text.contains("七月"), "expected 七月 in text, got {}", text);
+        assert!(text.contains("初一"), "expected 初一 in text, got {}", text);
+    }
+
+    #[test]
+    fn test_lunar_date_text_normal_day() {
+        // 2026-07-15 是农历六月初二，非初一，只返回日名
+        let text = lunar_date_text(2026, 7, 15);
+        assert_eq!(text, "初二", "expected 初二, got {}", text);
     }
 }

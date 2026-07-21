@@ -1,5 +1,6 @@
 pub mod ai_config;
 pub mod ai_service;
+pub mod ai_validation;
 pub mod commands;
 pub mod event_bus;
 pub mod git_ops;

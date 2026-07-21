@@ -414,7 +414,7 @@ mod tests {
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000);
+            cmd.creation_flags(super::git_ops::CREATE_NO_WINDOW);
         }
         let output = cmd.output().expect("git init --bare 失败，请确认 git 已安装");
         if !output.status.success() {

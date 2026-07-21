@@ -144,6 +144,12 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 - 窗口销毁统一用 `window_manager::close_note_window`（封装 `destroy()`），禁止在 commands/note_service 等模块重复内联 `app.get_webview_window().destroy()`
 - 窗口置顶统一用 `window_manager::set_note_pinned`（按 bool 设置）或 `window_manager::restore_note_on_top`（按 Note.is_pinned 恢复），禁止在 commands/note_service 等模块重复内联 `app.get_webview_window().set_always_on_top()`
 - 窗口聚焦+事件发送统一用 `window_manager::focus_note_window_and_emit`（返回 bool 表示窗口是否存在），禁止在 note_service 等模块重复内联 `app.get_webview_window() + set_focus() + emit()`
+- **命令层薄壳化**：`#[tauri::command]` 函数仅负责参数传递 + Tauri 副作用（emit/window_manager/schedule_recalc 等），业务规则（校验/参数解析/第三方库调用）必须下沉到 `*_service`/`*_validation`/封装模块。具体应用：
+  - AI 命令的字符/数量校验必须经 `ai_validation::validate_rewrite_text`/`validate_sort_todos`，禁止在 `ai_commands` 内联校验
+  - 报告周期参数解析必须经 `report_generator::parse_period`，禁止在 `ai_commands::generate_report` 内联 `period_type` match
+  - 农历计算必须经 `lunar_calendar::lunar_date_text`/`TymeCalendarAdapter`，禁止在 `commands/*` 或 `reminder_scheduler` 直接 `use tyme4rs`（消除 shallow module，第三方库统一入口）
+- **locality 下沉（副作用集中）**：相关副作用必须与触发它的写操作在同一个 service 模块内，禁止在命令层跨模块调用副作用。具体应用：`delete_note` 的图片清理必须在 `note_service::delete_note` 内部（先 find_by_id 取 content 再 cleanup），`batch_delete` 内部循环调用 `delete_note` 自动触发图片清理，消除单/批量路径不对称；禁止在 `note_commands::delete_note` 命令层调用 `image_service::cleanup_removed_images`
+- **跨模块常量集中**：跨模块共享的技术常量必须定义为 `pub const` 并集中在所有者模块，禁止 magic number 散布。具体应用：`CREATE_NO_WINDOW: u32 = 0x08000000` 定义在 `git_ops.rs`，`git_sync.rs`/`sync_commands.rs` 必须引用 `git_ops::CREATE_NO_WINDOW`，禁止内联 `0x08000000`
 
 ### 写操作事件化（ADR-007）
 
@@ -378,3 +384,4 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | 2026-07-20 | Candidate 13 tray_manager 三处重复 + 约束违规：13a 抽取 `build_tray_menu`；13b git_sync 新增 `sync_with_notification` 统一 sync+通知；13c window_manager 新增 `open_or_focus_hub`+`create_hub_window`，tray 委托消除内联 WebviewWindowBuilder 违规；附带修复 INV-013 违规（handle_new_note 漏 schedule_auto_sync） | AI | #REFACTOR-029 同步更新 boundaries.md |
 | 2026-07-21 | 前端模块化拆分（AI 可读性）：新增"前端模块边界（AI 可读性约束）"小节 9 条（入口仅编排/文件名=业务名/JSDoc 三段头/单向依赖无环/callback 模式破环/state 就近/side-effect 模块/函数<100 行/共享样式提取）；INV-027 引用位置 `src/main.ts` saveWindowState 更正为 `src/window-state.ts` saveWindowState（函数已随 window-state 模块拆分迁移） | AI | #REFACTOR-034 同步更新 boundaries.md |
 | 2026-07-21 | 新增"写操作事件化（ADR-007）"约束（service 层 emit 事件/依赖 EventPublisher trait/监听器集中注册/template 经 template_service）；更新 INV-013 检查位置（从 commands 调用方迁移到 service emit + lib.rs 监听器） | AI | #REFACTOR-036 同步更新 ADR-007/glossary.md/boundaries.md/lessons/README.md |
+| 2026-07-21 | 架构深化第二轮：新增 3 条模块边界约束——"命令层薄壳化"（业务规则/参数解析/第三方库调用下沉到 service/validator/封装模块，含 AI 校验/period 解析/农历计算 3 项具体应用）、"locality 下沉"（相关副作用与触发它的写操作在同一 service 模块，含 delete_note 图片清理 1 项具体应用）、"跨模块常量集中"（CREATE_NO_WINDOW 等技术常量 pub const 集中所有者模块，禁止 magic number 散布）；未新增 INV（纯架构深化，无新业务不变量）；261 个测试全部通过 | AI | #REFACTOR-037 同步更新 boundaries.md |

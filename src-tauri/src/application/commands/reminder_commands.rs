@@ -94,9 +94,6 @@ pub struct LunarDateInfo {
 
 #[tauri::command]
 pub async fn get_lunar_dates(_state: State<'_, AppState>, year: i32, month: u32) -> Result<Vec<LunarDateInfo>, String> {
-    use tyme4rs::tyme::solar::SolarDay;
-    use tyme4rs::tyme::Culture;
-
     let days_in_month = {
         let next = if month == 12 {
             chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
@@ -108,14 +105,7 @@ pub async fn get_lunar_dates(_state: State<'_, AppState>, year: i32, month: u32)
 
     let mut result = Vec::new();
     for day in 1..=days_in_month {
-        let solar = SolarDay::from_ymd(year as isize, month as usize, day as usize);
-        let lunar_day = solar.get_lunar_day();
-        let is_first = lunar_day.get_day() == 1;
-        let lunar_text = if is_first {
-            format!("{}{}", lunar_day.get_lunar_month().get_name(), lunar_day.get_name())
-        } else {
-            lunar_day.get_name()
-        };
+        let lunar_text = super::super::lunar_calendar::lunar_date_text(year as isize, month as usize, day as usize);
         result.push(LunarDateInfo { day, lunar_text });
     }
     Ok(result)

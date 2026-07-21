@@ -31,7 +31,7 @@
 - `src-tauri/src/domain/repositories.rs`（NoteRepository trait，含 search_notes）
 - `src-tauri/src/application/commands/`（命令入口模块，含 search_notes/update_note_tags，按业务域拆分为 7 个子模块）
 - `src-tauri/src/application/image_service.rs`（图片文件名提取、孤儿图片清理、图片目录管理，被 commands/image_commands 和 commands/note_commands 复用）
-- `src-tauri/src/application/note_service.rs`（便签编排：create_note 创建+开窗口、close_note_if_empty 空便签自动删除 INV-003、open_note_with_flag 委托 window_manager::focus_note_window_and_emit、update_note_style 委托 window_manager::set_note_pinned、update_note_content 含孤儿图片清理、update_note_title/update_note_window_state/update_note_tags 单字段更新、archive_note/unarchive_note 状态切换、batch_archive/batch_unarchive/batch_delete/batch_update_color 批量操作返回成功 id 列表供命令层 emit；所有写操作完成后 emit `NoteWritten` 事件（ADR-007），由 lib.rs 监听器统一触发 schedule_auto_sync）
+- `src-tauri/src/application/note_service.rs`（便签编排：create_note 创建+开窗口、close_note_if_empty 空便签自动删除 INV-003、open_note_with_flag 委托 window_manager::focus_note_window_and_emit、update_note_style 委托 window_manager::set_note_pinned、update_note_content 含孤儿图片清理、update_note_title/update_note_window_state/update_note_tags 单字段更新、archive_note/unarchive_note 状态切换、delete_note 删除前清理便签内容中的图片文件（单/批量路径统一，locality 下沉）、batch_archive/batch_unarchive/batch_delete（内部循环调用 delete_note 自动触发图片清理）/batch_update_color 批量操作返回成功 id 列表供命令层 emit；所有写操作完成后 emit `NoteWritten` 事件（ADR-007），由 lib.rs 监听器统一触发 schedule_auto_sync）
 - `src-tauri/src/application/template_service.rs`（模板编排：save_template 通过 find_by_id 判断 Created/Updated、delete_template、create_note_from_template 查模板→建 Note→开窗→emit NoteWritten(Created)；所有写操作 emit `TemplateWritten`/`NoteWritten` 事件）
 - `src-tauri/src/application/event_bus.rs`（事件总线：DomainEvent 枚举 + WriteAction 枚举 + EventPublisher trait + EventBus 同步实现 + MockEventPublisher 测试工具；解耦 service 层写操作与 schedule_auto_sync 副作用，详见 ADR-007）
 - `src-tauri/src/application/window_manager.rs`（窗口管理统一入口：open_note_window/open_note_window_with_url 创建、activate_note_for_reminder 提醒触发、restore_all_windows 启动恢复、close_note_window 销毁、set_note_pinned/restore_note_on_top 置顶、focus_note_window_and_emit 聚焦+事件、toggle_hub_window Hub 切换；compute_overlaps 纯函数计算重叠偏移量 + resolve_overlaps 执行 set_position 副作用）
@@ -46,7 +46,7 @@
 - `src/window-state.ts`（窗口事件 setupWindowEvents + setClosing）
 - `src/tag-bar.ts`（标签栏 UI + add/remove tag）
 - `src/title-edit.ts`（标题进入/退出编辑）
-- `src/delete-confirm.ts`（删除确认弹窗）
+- `src/delete-confirm.ts`（删除确认弹窗：`showDeleteConfirm(noteId, target, onDeleted?)` 双模式——便签窗口模式（无 onDeleted，append 到 app，删除后依赖后端 destroy 关闭窗口；失败时降级 close）+ Hub 列表模式（onDeleted=loadNotes，append 到 body，删除成功后刷新列表）；统一便签窗口与 Hub 列表两处重复实现）
 - `src/markdown-renderer.ts`（Markdown 渲染 + escapeHtml）
 - `src/image-resize.ts`（图片缩放手柄）
 - `src/reminder-panel.ts`（便签内提醒面板 showReminderPanel）
@@ -55,7 +55,8 @@
 - `src/ai-todo-sort.ts`（AI 待办排序 extractTodoItems/applySortedTodos/setupTodoSortButton + clearSortedMark）
 - `src/template-ui.ts`（便签内模板快捷条 setupTemplateQuickBar + showTemplatePicker/showTemplateApplier）
 - `src/datetime-picker.ts`（时间选择器组件，含确认按钮）
-- `src/notes-list.ts`（Hub 便签列表：load/render/search/sort/标签侧边栏/多选/批量操作；导出 getActiveNotes/getArchivedNotes 供 calendar-view 复用）
+- `src/notes-list.ts`（Hub 便签列表：load/render/search/sort/标签侧边栏/列表事件委托（归档/恢复/提醒/删除/单击打开/Ctrl+多选）；416→289 行，多选状态与批量操作栏下沉到 notes-multiselect.ts，内联 showDeleteConfirm 改调 delete-confirm.ts；导出 getActiveNotes/getArchivedNotes 供 calendar-view 复用）
+- `src/notes-multiselect.ts`（Hub 便签多选与批量操作：selectedIds state + 批量操作栏 5 按钮事件（归档/恢复/删除/改色/取消）+ updateMultiSelectUI + Esc 退出多选；通过 `initMultiSelect({ reloadList, getCurrentTab })` 注入依赖打破与 notes-list 的循环依赖；导出 toggleSelection/clearSelection/hasSelection/refreshSelectionUI 供 notes-list 调用）
 - `src/calendar-view.ts`（Hub 日历视图：月/年视图 + 日详情，依赖 notes-list 的 getter）
 - `src/reminder-dialog.ts`（Hub 内嵌提醒设置弹窗，callback 模式 onNotesChanged 避免循环依赖）
 - `src/ai-settings.ts`（Hub AI 配置 + 周报/月报生成）
@@ -125,7 +126,8 @@
 - `src-tauri/src/domain/reminder.rs`（领域模型 + 状态机 + `notification_title`/`notification_body` 通知展示方法：空标题 fallback "便签提醒"、content 80 字截断 + 省略号 + 空内容 fallback "点击查看便签"）
 - `src-tauri/src/application/reminder_scheduler.rs`（事件驱动调度：单定时器 + Notify + fire_reminders_with_deps 触发编排；ReminderNotifier trait + TauriReminderNotifier 实现可注入 mock 测试；状态推进委托 Reminder::advance_state；归档便签判断委托 Note::is_reminder_eligible；通知标题/正文委托 Reminder::notification_title/notification_body）
 - `src-tauri/src/application/reminder_service.rs`（提醒 CRUD 编排：create_reminder/snooze_reminder/dismiss_reminder/delete_reminder，接收 `&dyn ReminderRepository` + `&dyn EventPublisher` 无 Tauri 依赖可单测；所有写操作完成后 emit `ReminderWritten` 事件（ADR-007））
-- `src-tauri/src/application/commands/`（提醒命令薄壳，位于 reminder_commands.rs：调用 reminder_service 完成业务 → 执行 emit/schedule_recalc 副作用；schedule_auto_sync 由 service emit 事件触发，命令层不再手动调用）
+- `src-tauri/src/application/lunar_calendar.rs`（农历计算统一入口：`TymeCalendarAdapter` impl CalendarAdapter（LunarMonthly 重复计算）+ `lunar_date_text` 公开函数（农历日文本，初一返回"月份+日"，其他日只返回"日"）；命令层和调度器都不再直接 use tyme4rs，消除 shallow module）
+- `src-tauri/src/application/commands/`（提醒命令薄壳，位于 reminder_commands.rs：调用 reminder_service 完成业务 → 执行 emit/schedule_recalc 副作用；`get_lunar_dates` 命令调用 `lunar_calendar::lunar_date_text` 而非内联 tyme4rs；schedule_auto_sync 由 service emit 事件触发，命令层不再手动调用）
 
 ---
 
@@ -149,7 +151,7 @@
 - `src-tauri/src/application/git_sync.rs`（GitSync struct + sync() 编排 + 调度；`sync_with_notification` 自由函数统一 sync+通知格式，被 sync_commands::sync_notes 和 tray_manager::handle_sync 共用）
 - `src-tauri/src/application/sync_config.rs`（SyncConfig + 配置读写 + 认证 URL）
 - `src-tauri/src/application/sync_json_io.rs`（DB ↔ JSON 文件转换：`export_to_json`/`import_from_json` 公开入口 + `export_entity_to_json`/`import_entity_from_json` 泛型实现消除三重重复 + `extract_updated_at` 纯字符串解析供 git_ops 冲突解决复用）
-- `src-tauri/src/application/git_ops.rs`（Git 子进程执行 + 冲突解决）
+- `src-tauri/src/application/git_ops.rs`（Git 子进程执行 + 冲突解决；`pub const CREATE_NO_WINDOW: u32 = 0x08000000` 公开常量，供 git_sync/sync_commands 等模块统一引用，消除 magic number 散布）
 - `src-tauri/src/application/event_bus.rs`（事件总线：`DomainEvent`/`WriteAction`/`EventPublisher` trait + `EventBus` 同步实现 + `MockEventPublisher` 测试工具；service 层 emit 事件，lib.rs setup 注册监听器调用 `schedule_auto_sync`；详见 ADR-007）
 - `src-tauri/src/lib.rs`（AppState 含 `event_bus: Arc<EventBus>` 字段；setup 中创建 EventBus + 注册监听器；on_window_event 中 close_note_if_empty 传 event_bus 引用）
 
@@ -177,8 +179,8 @@
 - `hub.html` → 设置中心入口（`src/hub.ts`，纯编排 131 行）
 - 共享模块：`src/types.ts`（类型定义）、`src/api.ts`（IPC 封装）、`src/utils.ts`（工具函数，含 `showToast` 统一实现）、`src/i18n.ts`（国际化）
 - **入口文件编排约束**：main.ts 与 hub.ts 仅负责编排（init/load/页面切换/全局事件），具体业务实现拆分至独立模块；函数 < 100 行；每个模块文件含 JSDoc 头（职责/被调用方/依赖）
-- **单向依赖约束**：模块间禁止循环依赖。当前依赖方向：main.ts → note-renderer → note-style；context-menu → note-style；hub.ts → notes-list → reminder-dialog；calendar-view → notes-list
-- **callback 模式约束**：跨模块回调避免循环依赖。`renderNote(note, setupEventsCallback)`、`showReminderDialog(noteId, noteTitle, onNotesChanged)`、`showTemplateDialog(title, app, onSelect)`
+- **单向依赖约束**：模块间禁止循环依赖。当前依赖方向：main.ts → note-renderer → note-style；context-menu → note-style；hub.ts → notes-list → reminder-dialog；calendar-view → notes-list；notes-list → notes-multiselect + delete-confirm
+- **callback 模式约束**：跨模块回调避免循环依赖。`renderNote(note, setupEventsCallback)`、`showReminderDialog(noteId, noteTitle, onNotesChanged)`、`showTemplateDialog(title, app, onSelect)`、`initMultiSelect({ reloadList, getCurrentTab })`（notes-multiselect 通过 callback 接收 notes-list 的刷新/tab 状态，避免反向 import）
 - **side-effect 模块约束**：`import './template-manager'` 和 `import './update-check'` 顶层执行按钮绑定，无 named export
 - **state 就近原则**：模块级私有 state + getter/setter 导出。`note-context.ts`（getNote/setNote）、`notes-list.ts`（getActiveNotes/getArchivedNotes）、`sync-settings.ts`（syncConfigLoaded 防重复绑定）
 - **IPC seam 约束**：所有前端模块均通过 `import * as api from './api'` 调用后端命令，禁止直接 `invoke('xxx', ...)`（`convertFileSrc` 等 Tauri SDK 非 invoke API 不在此限）
@@ -231,9 +233,9 @@
 - 报告板块结构可调整（当前四板块）
 
 **对应代码**:
-- `src-tauri/src/application/report_generator.rs`（`generate_report` 函数 + `filter_notes_by_date` 公开纯函数（按 updated_at 日期部分过滤）+ `ReportPeriod`/`ReportDraft` 结构）
+- `src-tauri/src/application/report_generator.rs`（`generate_report` 函数 + `filter_notes_by_date` 公开纯函数（按 updated_at 日期部分过滤）+ `parse_period` 公开纯函数（period_type 字符串解析为 ReportPeriod 枚举，消除命令层 28 行内联解析）+ `ReportPeriod`/`ReportDraft` 结构）
 - `src-tauri/src/application/prompts/report.rs`（报告 Prompt 模板）
-- `src-tauri/src/application/commands/`（`generate_report` 命令入口，位于 ai_commands.rs，调用 `filter_notes_by_date` 完成日期过滤后传入 `generate_report`）
+- `src-tauri/src/application/commands/`（`generate_report` 命令入口，位于 ai_commands.rs，调用 `parse_period` 解析周期 + `filter_notes_by_date` 完成日期过滤后传入 `generate_report`）
 
 ### AI 文本重写
 
@@ -252,6 +254,7 @@
 
 **对应代码**:
 - `src-tauri/src/application/prompts/rewrite.rs`（`RewriteOperation` 枚举 + `build_rewrite_messages`）
+- `src-tauri/src/application/ai_validation.rs`（`validate_rewrite_text` 校验 5~500 字符边界，命令层调用前校验消除内联逻辑）
 - `src-tauri/src/application/commands/`（`ai_rewrite_text` 命令入口，位于 ai_commands.rs，通过私有 `ai_call_raw` 统一 AI 调用链）
 - `src/ai-rewrite.ts`（`rewriteText` 前端逻辑，编辑/查看双模式选区处理）
 - `src/context-menu.ts`（右键菜单入口，调用 ai-rewrite）
@@ -273,6 +276,7 @@
 
 **对应代码**:
 - `src-tauri/src/application/prompts/sort.rs`（`build_sort_messages` 排序 Prompt）
+- `src-tauri/src/application/ai_validation.rs`（`validate_sort_todos` 校验待办 ≤3 拒绝，命令层调用前校验消除内联逻辑）
 - `src-tauri/src/application/commands/`（`ai_sort_todos` 命令 + `extract_json_array` 辅助函数，位于 ai_commands.rs，通过私有 `ai_call_raw` 统一 AI 调用链）
 - `src/ai-todo-sort.ts`（`extractTodoItems`/`applySortedTodos`/`setupTodoSortButton`/`clearSortedMark` 前端逻辑）
 
@@ -381,3 +385,4 @@
 | 2026-07-21 | 前端模块化拆分（AI 可读性优化）：main.ts 1903→390 行（拆分 15 个模块——note-renderer/note-style/context-menu/note-context/window-state/tag-bar/title-edit/delete-confirm/markdown-renderer/image-resize/reminder-panel/ai-sniff/rewrite-text/todo-sort/template-ui/datetime-picker），hub.ts 1441→131 行（拆分 12 个模块——notes-list/calendar-view/reminder-dialog/ai-settings/template-manager/sync-settings/general-settings/shortcut-settings/update-check）；新增 note-style.ts 破 note-renderer ↔ context-menu 循环依赖；callback 模式（renderNote/setupEventsCallback、showReminderDialog/onNotesChanged、showTemplateDialog/onSelect）破跨模块循环依赖；6 项 AI 可读性原则（文件名=业务名、JSDoc 三段头、单向依赖无环、state 就近+getter/setter、入口仅编排、函数 < 100 行）；前端多页面边界新增 4 项约束（入口编排/单向依赖/callback 模式/side-effect 模块/state 就近）；TypeScript 编译通过（50 modules transformed） | AI | #REFACTOR-034 |
 | 2026-07-21 | AI 文件命名规范化：rewrite-text.ts → ai-rewrite.ts，todo-sort.ts → ai-todo-sort.ts（统一 ai- 前缀，与 ai-sniff.ts/ai-settings.ts 一致，AI 一看前缀即知 AI 模块）；4 处 import 更新（main.ts/note-renderer.ts/template-ui.ts/context-menu.ts）；main.ts 与 hub.ts imports 加分组注释（Tauri SDK / 共享 / 便签基础 / 便签 UI / AI 能力 / Hub 页面 / side-effect）；TypeScript 编译通过（50 modules transformed） | AI | #REFACTOR-035 |
 | 2026-07-21 | 后端内部事件总线（ADR-007）：新增 `application/event_bus.rs`（DomainEvent/WriteAction/EventPublisher trait + EventBus 同步实现 + MockEventPublisher）；新增 `application/template_service.rs`（save_template/delete_template/create_note_from_template，emit TemplateWritten/NoteWritten 事件，消除 template_commands 直接 repo 访问）；`note_service.rs`/`reminder_service.rs` 全部写方法增加 `publisher: &dyn EventPublisher` 参数 + emit NoteWritten/ReminderWritten 事件；`commands/*` 删除 20 处 schedule_auto_sync 手动调用；`shortcut_manager.rs` 提取 `register_handlers` 共用函数（消除 setup_shortcuts 与 save_and_reregister ~50 行重复）；`tray_manager.rs` handle_new_note 传 event_bus 删除手动 schedule_auto_sync；`lib.rs` AppState 增加 `event_bus: Arc<EventBus>` 字段 + setup 注册监听器（写操作事件 → schedule_auto_sync）；修复 3 处 INV-013 违规（shortcut_manager 漏调 + template_commands save/delete 漏调）；244 个测试全部通过 | AI | #REFACTOR-036 同步更新 constraints.md/glossary.md/adr/README.md |
+| 2026-07-21 | 架构深化第二轮（5 候选 + 1 附加）：候选1 IPC seam 违规修复（hub.ts 3 处直接 invoke 替换为 api.setLocale/activateNoteById 封装，api.ts 补 activateNoteById）；候选2 lunar_calendar.rs shallow module 深化（新增 `lunar_date_text` 统一入口，reminder_commands::get_lunar_dates 从 27 行内联 tyme4rs 降为 1 行调用）；候选3 delete_note 图片清理 locality 下沉（cleanup 移到 note_service::delete_note 内部，batch_delete 内部循环调用 delete_note 自动触发，消除单/批量不对称）；候选4 前端模块拆分（新建 `src/notes-multiselect.ts` 承载 selectedIds state + 批量操作栏 5 按钮 + updateMultiSelectUI + Esc 退出，通过 initMultiSelect callback 注入依赖破循环依赖；delete-confirm.ts 扩展双模式支持 Hub 列表；notes-list.ts 从 416→289 行删除内联多选代码和重复 showDeleteConfirm）；候选5 ai_commands 业务规则下沉（report_generator.rs 新增 `parse_period` 消除 28 行内联 period_type 解析；新建 `application/ai_validation.rs` 承载 `validate_rewrite_text`/`validate_sort_todos` 校验，3 个 AI 命令薄壳化）；附加A CREATE_NO_WINDOW 常量集中（git_ops.rs `const` → `pub const`，git_sync.rs/sync_commands.rs 2 处 magic number `0x08000000` 替换为常量引用）；新增 17 个单测覆盖 lunar_date_text/parse_period/ai_validation；261 个测试全部通过 | AI | #REFACTOR-037 同步更新 constraints.md |

@@ -10,6 +10,7 @@ export const getNote = (id: string) => invoke<Note>('get_note', { id });
 export const getAllNotes = () => invoke<Note[]>('get_all_notes');
 export const getArchivedNotes = () => invoke<Note[]>('get_archived_notes');
 export const openNote = (id: string) => invoke('open_note', { id });
+export const activateNoteById = (noteId: string) => invoke('activate_note_by_id', { noteId });
 export const updateNoteContent = (id: string, content: string) => invoke('update_note_content', { id, content });
 export const updateNoteTitle = (id: string, title: string) => invoke('update_note_title', { id, title });
 export const updateNoteStyle = (id: string, color: string, opacity: number, isPinned: boolean) =>

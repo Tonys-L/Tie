@@ -43,6 +43,44 @@ pub fn filter_notes_by_date(notes: &[Note], start_date: &str, end_date: &str) ->
         .collect()
 }
 
+/// 解析报告周期参数（命令层业务规则下沉）
+///
+/// 将 `period_type` 字符串 + `start_date`/`end_date` 解析为 `ReportPeriod` 枚举。
+/// - `"weekly"` → `ReportPeriod::Weekly { start, end }`
+/// - `"monthly"` → 从 `start_date` 解析 year/month → `ReportPeriod::Monthly { year, month }`
+///
+/// 错误场景：
+/// - 未知 period_type → `Err("无效的 period_type: xxx，应为 weekly 或 monthly")`
+/// - monthly 模式 start_date 格式异常 → `Err("无效的年份"/"无效的月份")`
+pub fn parse_period(period_type: &str, start_date: &str, end_date: &str) -> Result<ReportPeriod, String> {
+    match period_type {
+        "weekly" => Ok(ReportPeriod::Weekly {
+            start: start_date.to_string(),
+            end: end_date.to_string(),
+        }),
+        "monthly" => {
+            let year: u32 = start_date
+                .chars()
+                .take(4)
+                .collect::<String>()
+                .parse()
+                .map_err(|_| "无效的年份".to_string())?;
+            let month: u32 = start_date
+                .chars()
+                .skip(5)
+                .take(2)
+                .collect::<String>()
+                .parse()
+                .map_err(|_| "无效的月份".to_string())?;
+            Ok(ReportPeriod::Monthly { year, month })
+        }
+        _ => Err(format!(
+            "无效的 period_type: {}，应为 weekly 或 monthly",
+            period_type
+        )),
+    }
+}
+
 /// 生成周报/月报草稿
 ///
 /// 流程：build_notes_summary → build_report_messages → AiService::call → ReportDraft
@@ -298,5 +336,43 @@ mod tests {
         ];
         let result = filter_notes_by_date(&notes, "2026-07-01", "2026-07-31");
         assert!(result.is_empty());
+    }
+
+    // ---- parse_period 单测 ----
+
+    #[test]
+    fn test_parse_period_weekly() {
+        let period = parse_period("weekly", "2026-07-13", "2026-07-19").unwrap();
+        assert_eq!(period, ReportPeriod::Weekly {
+            start: "2026-07-13".to_string(),
+            end: "2026-07-19".to_string(),
+        });
+    }
+
+    #[test]
+    fn test_parse_period_monthly() {
+        let period = parse_period("monthly", "2026-07-01", "2026-07-31").unwrap();
+        assert_eq!(period, ReportPeriod::Monthly { year: 2026, month: 7 });
+    }
+
+    #[test]
+    fn test_parse_period_invalid_type() {
+        let result = parse_period("daily", "2026-07-13", "2026-07-19");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("无效的 period_type"));
+    }
+
+    #[test]
+    fn test_parse_period_monthly_invalid_year() {
+        let result = parse_period("monthly", "abcd-07-01", "2026-07-31");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("无效的年份"));
+    }
+
+    #[test]
+    fn test_parse_period_monthly_invalid_month() {
+        let result = parse_period("monthly", "2026-xx-01", "2026-07-31");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("无效的月份"));
     }
 }
