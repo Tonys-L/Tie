@@ -1,59 +1,41 @@
 use std::path::Path;
 
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
 use crate::domain::{Note, NoteRepository, Reminder, ReminderRepository, Template, TemplateRepository};
 
 /// 导出所有便签、提醒和模板为 JSON 文件
+///
+/// 内部委托 `export_entity_to_json` 泛型函数处理"查询→清空→序列化→写文件"的通用流程，
+/// Note 特殊处理：合并 find_all（活跃）+ find_archived（归档）后导出。
 pub fn export_to_json(
     sync_dir: &Path,
     note_repo: &dyn NoteRepository,
     reminder_repo: &dyn ReminderRepository,
     template_repo: &dyn TemplateRepository,
 ) -> Result<(), String> {
-    let notes_dir = sync_dir.join("notes");
-    let reminders_dir = sync_dir.join("reminders");
-    let templates_dir = sync_dir.join("templates");
-    std::fs::create_dir_all(&notes_dir).map_err(|e| format!("创建目录失败: {}", e))?;
-    std::fs::create_dir_all(&reminders_dir).map_err(|e| format!("创建目录失败: {}", e))?;
-    std::fs::create_dir_all(&templates_dir).map_err(|e| format!("创建目录失败: {}", e))?;
-
-    // 导出便签（活跃 + 归档）
+    // 导出便签（活跃 + 归档合并后导出）
     let notes = note_repo.find_all().map_err(|e| format!("查询便签失败: {}", e))?;
     let archived = note_repo.find_archived().map_err(|e| format!("查询归档失败: {}", e))?;
-    let all_notes: Vec<&Note> = notes.iter().chain(archived.iter()).collect();
-
-    // 清除旧文件（处理已删除的便签）
-    clear_dir_json(&notes_dir)?;
-    for note in all_notes {
-        let json = serde_json::to_string_pretty(note)
-            .map_err(|e| format!("序列化便签失败: {}", e))?;
-        let path = notes_dir.join(format!("{}.json", note.id));
-        std::fs::write(&path, json).map_err(|e| format!("写入文件失败: {}", e))?;
-    }
+    let all_notes: Vec<Note> = notes.into_iter().chain(archived.into_iter()).collect();
+    export_entity_to_json(&sync_dir.join("notes"), &all_notes, "便签", |n| n.id.as_str())?;
 
     // 导出提醒
     let reminders = reminder_repo.find_all().map_err(|e| format!("查询提醒失败: {}", e))?;
-    clear_dir_json(&reminders_dir)?;
-    for reminder in &reminders {
-        let json = serde_json::to_string_pretty(reminder)
-            .map_err(|e| format!("序列化提醒失败: {}", e))?;
-        let path = reminders_dir.join(format!("{}.json", reminder.id));
-        std::fs::write(&path, json).map_err(|e| format!("写入文件失败: {}", e))?;
-    }
+    export_entity_to_json(&sync_dir.join("reminders"), &reminders, "提醒", |r| r.id.as_str())?;
 
     // 导出模板
     let templates = template_repo.find_all().map_err(|e| format!("查询模板失败: {}", e))?;
-    clear_dir_json(&templates_dir)?;
-    for template in &templates {
-        let json = serde_json::to_string_pretty(template)
-            .map_err(|e| format!("序列化模板失败: {}", e))?;
-        let path = templates_dir.join(format!("{}.json", template.id));
-        std::fs::write(&path, json).map_err(|e| format!("写入文件失败: {}", e))?;
-    }
+    export_entity_to_json(&sync_dir.join("templates"), &templates, "模板", |t| t.id.as_str())?;
 
     Ok(())
 }
 
 /// 从 JSON 文件导入到数据库（upsert，按 updated_at 取最新）
+///
+/// 内部委托 `import_entity_from_json` 泛型函数处理"遍历目录→解析→仲裁→save"的通用流程。
+/// 仲裁规则：`item.updated_at > existing.updated_at` 时覆盖（last-write-wins，INV-011）。
 pub fn import_from_json(
     sync_dir: &Path,
     note_repo: &dyn NoteRepository,
@@ -62,79 +44,102 @@ pub fn import_from_json(
 ) -> Result<usize, String> {
     let mut imported = 0;
 
-    // 导入便签
-    let notes_dir = sync_dir.join("notes");
-    if notes_dir.exists() {
-        for entry in std::fs::read_dir(&notes_dir).map_err(|e| format!("读取目录失败: {}", e))? {
-            let entry = entry.map_err(|e| format!("读取条目失败: {}", e))?;
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("json") {
-                continue;
-            }
-            let content = std::fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))?;
-            let note: Note = serde_json::from_str(&content).map_err(|e| format!("解析便签失败: {}", e))?;
+    imported += import_entity_from_json::<Note, dyn NoteRepository>(
+        &sync_dir.join("notes"),
+        note_repo,
+        "便签",
+        |n| n.id.as_str(),
+        |n| n.updated_at.as_str(),
+        |repo, id| repo.find_by_id(id),
+        |repo, item| repo.save(item),
+    )?;
 
-            // upsert：仅远程比本地新时才覆盖（last-write-wins）
-            let should_save = match note_repo.find_by_id(&note.id)? {
-                Some(existing) => note.updated_at > existing.updated_at,
-                None => true,
-            };
+    imported += import_entity_from_json::<Reminder, dyn ReminderRepository>(
+        &sync_dir.join("reminders"),
+        reminder_repo,
+        "提醒",
+        |r| r.id.as_str(),
+        |r| r.updated_at.as_str(),
+        |repo, id| repo.find_by_id(id),
+        |repo, item| repo.save(item),
+    )?;
 
-            if should_save {
-                note_repo.save(&note)?;
-                imported += 1;
-            }
+    imported += import_entity_from_json::<Template, dyn TemplateRepository>(
+        &sync_dir.join("templates"),
+        template_repo,
+        "模板",
+        |t| t.id.as_str(),
+        |t| t.updated_at.as_str(),
+        |repo, id| repo.find_by_id(id),
+        |repo, item| repo.save(item),
+    )?;
+
+    Ok(imported)
+}
+
+/// 泛型导出：把实体列表序列化为 JSON 文件写入目录
+///
+/// 流程：创建目录 → 清空旧 JSON → 逐个序列化 + 写文件。
+/// `get_id` 闭包用于生成文件名（`{id}.json`）。
+fn export_entity_to_json<T: Serialize>(
+    dir: &Path,
+    items: &[T],
+    entity_name: &str,
+    get_id: impl Fn(&T) -> &str,
+) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("创建目录失败: {}", e))?;
+    clear_dir_json(dir)?;
+    for item in items {
+        let json = serde_json::to_string_pretty(item)
+            .map_err(|e| format!("序列化{}失败: {}", entity_name, e))?;
+        let path = dir.join(format!("{}.json", get_id(item)));
+        std::fs::write(&path, json).map_err(|e| format!("写入文件失败: {}", e))?;
+    }
+    Ok(())
+}
+
+/// 泛型导入：从目录读取 JSON 文件，反序列化后按 last-write-wins 仲裁 upsert
+///
+/// 流程：目录不存在返回 0 → 遍历 .json 文件 → 反序列化 → find_by_id 仲裁 → save。
+/// 仲裁：`item.updated_at > existing.updated_at` 时覆盖；本地不存在时直接 save。
+///
+/// 泛型 + 闭包参数化差异点（id/updated_at/find_by_id/save），让三种实体的导入逻辑统一为一处。
+fn import_entity_from_json<T, R: ?Sized>(
+    dir: &Path,
+    repo: &R,
+    entity_name: &str,
+    get_id: impl Fn(&T) -> &str,
+    get_updated_at: impl Fn(&T) -> &str,
+    find_by_id: impl Fn(&R, &str) -> Result<Option<T>, String>,
+    save: impl Fn(&R, &T) -> Result<(), String>,
+) -> Result<usize, String>
+where
+    T: DeserializeOwned,
+{
+    if !dir.exists() {
+        return Ok(0);
+    }
+    let mut imported = 0;
+    for entry in std::fs::read_dir(dir).map_err(|e| format!("读取目录失败: {}", e))? {
+        let entry = entry.map_err(|e| format!("读取条目失败: {}", e))?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let content = std::fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))?;
+        let item: T = serde_json::from_str(&content)
+            .map_err(|e| format!("解析{}失败: {}", entity_name, e))?;
+
+        let should_save = match find_by_id(repo, get_id(&item))? {
+            Some(existing) => get_updated_at(&item) > get_updated_at(&existing),
+            None => true,
+        };
+
+        if should_save {
+            save(repo, &item)?;
+            imported += 1;
         }
     }
-
-    // 导入提醒（逻辑与便签一致）
-    let reminders_dir = sync_dir.join("reminders");
-    if reminders_dir.exists() {
-        for entry in std::fs::read_dir(&reminders_dir).map_err(|e| format!("读取目录失败: {}", e))? {
-            let entry = entry.map_err(|e| format!("读取条目失败: {}", e))?;
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("json") {
-                continue;
-            }
-            let content = std::fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))?;
-            let reminder: Reminder = serde_json::from_str(&content).map_err(|e| format!("解析提醒失败: {}", e))?;
-
-            let should_save = match reminder_repo.find_by_id(&reminder.id)? {
-                Some(existing) => reminder.updated_at > existing.updated_at,
-                None => true,
-            };
-
-            if should_save {
-                reminder_repo.save(&reminder)?;
-                imported += 1;
-            }
-        }
-    }
-
-    // 导入模板（逻辑与便签一致，按 updated_at 仲裁）
-    let templates_dir = sync_dir.join("templates");
-    if templates_dir.exists() {
-        for entry in std::fs::read_dir(&templates_dir).map_err(|e| format!("读取目录失败: {}", e))? {
-            let entry = entry.map_err(|e| format!("读取条目失败: {}", e))?;
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("json") {
-                continue;
-            }
-            let content = std::fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))?;
-            let template: Template = serde_json::from_str(&content).map_err(|e| format!("解析模板失败: {}", e))?;
-
-            let should_save = match template_repo.find_by_id(&template.id)? {
-                Some(existing) => template.updated_at > existing.updated_at,
-                None => true,
-            };
-
-            if should_save {
-                template_repo.save(&template)?;
-                imported += 1;
-            }
-        }
-    }
-
     Ok(imported)
 }
 

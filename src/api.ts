@@ -87,3 +87,18 @@ export const sniffSuggestions = (content: string) =>
   invoke<Suggestion[]>('sniff_suggestions', { content });
 export const generateReport = (periodType: 'weekly' | 'monthly', startDate: string, endDate: string) =>
   invoke<ReportDraft>('generate_report', { periodType, startDate, endDate });
+
+// ---- 系统/图片/窗口 ----
+
+export const setLocale = (locale: string) => invoke('set_locale', { locale });
+export const getImageDir = () => invoke<string>('get_image_dir');
+export const restoreWindowOnTop = (id: string) => invoke('restore_window_on_top', { id });
+export const openUrl = (url: string) => invoke('open_url', { url });
+export const saveImage = (data: number[], ext: string) => invoke<string>('save_image', { data, ext });
+
+// ---- AI 文本操作 ----
+
+export const aiRewriteText = (text: string, operation: string) =>
+  invoke<string>('ai_rewrite_text', { text, operation });
+export const aiSortTodos = (todos: string[]) =>
+  invoke<string[]>('ai_sort_todos', { todos });

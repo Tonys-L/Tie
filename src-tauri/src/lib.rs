@@ -5,6 +5,7 @@ mod infrastructure;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use application::event_bus::{DomainEvent, EventBus};
 use application::{commands, reminder_scheduler, shortcut_manager, tray_manager};
 use infrastructure::{Database, SqliteNoteRepository, SqliteReminderRepository, SqliteTemplateRepository};
 use tauri::Manager;
@@ -16,10 +17,12 @@ pub static USER_QUIT: AtomicBool = AtomicBool::new(false);
 ///
 /// 在 setup 中创建，通过 Tauri State 管理器注入到各命令。
 /// 仓储通过 trait object 持有，遵循依赖倒置原则，支持未来替换实现。
+/// event_bus 用于解耦 service 层写操作与 schedule_auto_sync 副作用（ADR-007）。
 pub struct AppState {
     pub note_repo: Box<dyn domain::NoteRepository>,
     pub reminder_repo: Box<dyn domain::ReminderRepository>,
     pub template_repo: Box<dyn domain::TemplateRepository>,
+    pub event_bus: Arc<EventBus>,
     pub git_sync: application::git_sync::GitSync,
     pub shortcut_manager: application::shortcut_manager::ShortcutManager,
     pub scheduler: application::reminder_scheduler::ReminderScheduler,
@@ -44,7 +47,11 @@ pub fn run() {
                     if let Some(note_id) = label.strip_prefix("note-") {
                         let app = window.app_handle();
                         let state = app.state::<crate::AppState>();
-                        crate::application::note_service::close_note_if_empty(state.note_repo.as_ref(), note_id);
+                        crate::application::note_service::close_note_if_empty(
+                            state.note_repo.as_ref(),
+                            state.event_bus.as_ref(),
+                            note_id,
+                        );
                     }
                 }
                 tauri::WindowEvent::Destroyed => {}
@@ -84,15 +91,29 @@ pub fn run() {
             let shortcut_mgr = application::shortcut_manager::ShortcutManager::new(&db_dir);
             let scheduler = application::reminder_scheduler::ReminderScheduler::new();
 
+            // ---- 创建事件总线并注册监听器（ADR-007）----
+            // 写操作事件（NoteWritten/ReminderWritten/TemplateWritten）→ schedule_auto_sync
+            // 监听器在 app.manage 之前注册，但闭包通过 app.handle() 在事件触发时才拿 state
+            let event_bus = Arc::new(EventBus::new());
+            {
+                let app_handle = app.handle().clone();
+                let bus_for_subscribe = event_bus.clone();
+                bus_for_subscribe.subscribe(Box::new(move |_event: &DomainEvent| {
+                    let state = app_handle.state::<AppState>();
+                    state.git_sync.schedule_auto_sync(app_handle.clone());
+                }));
+            }
+
             app.manage(AppState {
                 note_repo,
                 reminder_repo,
                 template_repo,
+                event_bus,
                 git_sync,
                 shortcut_manager: shortcut_mgr,
                 scheduler,
             });
-            eprintln!("[setup] AppState 已注册");
+            eprintln!("[setup] AppState 已注册（含 event_bus 监听器）");
 
             // ---- 系统托盘 ----
             tray_manager::setup_tray(app.handle())

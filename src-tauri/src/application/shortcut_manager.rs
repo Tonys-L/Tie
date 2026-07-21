@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcut, GlobalShortcutExt, ShortcutState};
 
 /// 快捷键配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +40,52 @@ impl ShortcutConfig {
     }
 }
 
+/// 注册 3 个快捷键的处理器（new_note / show_all / toggle_hub）
+///
+/// 被 `setup_shortcuts`（首次注册）和 `save_and_reregister`（重新注册）共用，
+/// 避免两处重复注册逻辑。
+///
+/// new_note 回调内部调用 `note_service::create_note` 并传入 `event_bus`，
+/// 由 service emit `NoteWritten(Created)` 事件触发后续 schedule_auto_sync（ADR-007）。
+fn register_handlers(gs: &GlobalShortcut<tauri::Wry>, config: &ShortcutConfig) -> Result<(), String> {
+    let new_note_key = config.new_note.clone();
+    let show_all_key = config.show_all.clone();
+    let toggle_hub_key = config.toggle_hub.clone();
+
+    gs.on_shortcut(new_note_key.as_str(), move |app: &AppHandle, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            let state = app.state::<crate::AppState>();
+            if let Err(e) = super::note_service::create_note(
+                app,
+                state.note_repo.as_ref(),
+                state.event_bus.as_ref(),
+                None,
+            ) {
+                eprintln!("新建便签失败: {}", e);
+            }
+        }
+    })
+    .map_err(|e| format!("注册快捷键 '{}' 失败: {}", new_note_key, e))?;
+
+    gs.on_shortcut(show_all_key.as_str(), move |app: &AppHandle, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            if let Err(e) = super::window_manager::restore_all_windows(app) {
+                eprintln!("恢复便签窗口失败: {}", e);
+            }
+        }
+    })
+    .map_err(|e| format!("注册快捷键 '{}' 失败: {}", show_all_key, e))?;
+
+    gs.on_shortcut(toggle_hub_key.as_str(), move |app: &AppHandle, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            super::window_manager::toggle_hub_window(app);
+        }
+    })
+    .map_err(|e| format!("注册快捷键 '{}' 失败: {}", toggle_hub_key, e))?;
+
+    Ok(())
+}
+
 /// 快捷键管理器
 pub struct ShortcutManager {
     config_path: PathBuf,
@@ -69,36 +115,8 @@ impl ShortcutManager {
         let _ = gs.unregister(old_config.show_all.as_str());
         let _ = gs.unregister(old_config.toggle_hub.as_str());
 
-        // 注册新快捷键
-        let new_note_key = config.new_note.clone();
-        let show_all_key = config.show_all.clone();
-        let toggle_hub_key = config.toggle_hub.clone();
-
-        gs.on_shortcut(new_note_key.as_str(), move |app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                let state = app.state::<crate::AppState>();
-                if let Err(e) = super::note_service::create_note(app, state.note_repo.as_ref(), None) {
-                    eprintln!("新建便签失败: {}", e);
-                }
-            }
-        })
-        .map_err(|e| format!("注册快捷键 '{}' 失败: {}", new_note_key, e))?;
-
-        gs.on_shortcut(show_all_key.as_str(), move |app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                if let Err(e) = super::window_manager::restore_all_windows(app) {
-                    eprintln!("恢复便签窗口失败: {}", e);
-                }
-            }
-        })
-        .map_err(|e| format!("注册快捷键 '{}' 失败: {}", show_all_key, e))?;
-
-        gs.on_shortcut(toggle_hub_key.as_str(), move |app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                super::window_manager::toggle_hub_window(app);
-            }
-        })
-        .map_err(|e| format!("注册快捷键 '{}' 失败: {}", toggle_hub_key, e))?;
+        // 注册新快捷键（共用 register_handlers）
+        register_handlers(&gs, &config)?;
 
         // 注册成功，保存配置
         config.save(&self.config_path)?;
@@ -113,35 +131,5 @@ pub fn setup_shortcuts(app: &AppHandle) -> Result<(), String> {
     let config = state.shortcut_manager.get_config();
     let gs = app.global_shortcut();
 
-    let new_note_key = config.new_note.clone();
-    let show_all_key = config.show_all.clone();
-    let toggle_hub_key = config.toggle_hub.clone();
-
-    gs.on_shortcut(new_note_key.as_str(), move |app, _shortcut, event| {
-        if event.state == ShortcutState::Pressed {
-            let state = app.state::<crate::AppState>();
-            if let Err(e) = super::note_service::create_note(app, state.note_repo.as_ref(), None) {
-                eprintln!("新建便签失败: {}", e);
-            }
-        }
-    })
-    .map_err(|e| format!("注册快捷键 '{}' 失败: {}", new_note_key, e))?;
-
-    gs.on_shortcut(show_all_key.as_str(), move |app, _shortcut, event| {
-        if event.state == ShortcutState::Pressed {
-            if let Err(e) = super::window_manager::restore_all_windows(app) {
-                eprintln!("恢复便签窗口失败: {}", e);
-            }
-        }
-    })
-    .map_err(|e| format!("注册快捷键 '{}' 失败: {}", show_all_key, e))?;
-
-    gs.on_shortcut(toggle_hub_key.as_str(), move |app, _shortcut, event| {
-        if event.state == ShortcutState::Pressed {
-            super::window_manager::toggle_hub_window(app);
-        }
-    })
-    .map_err(|e| format!("注册快捷键 '{}' 失败: {}", toggle_hub_key, e))?;
-
-    Ok(())
+    register_handlers(&gs, &config)
 }

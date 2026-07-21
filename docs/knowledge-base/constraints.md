@@ -138,8 +138,33 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 - 模块间通过接口通信，禁止直接访问其他模块内部实现
 - 所有 `#[tauri::command]` 集中在 `application/commands` 模块（`commands/mod.rs` 门面 + 按业务域拆分的子模块），禁止散落到 domain/infrastructure 层
 - 窗口/托盘/快捷键/调度器各自独立模块，互不直接调用
-- `reminder_scheduler` 的窗口操作（显示/聚焦/闪烁）必须委托 `window_manager`，禁止直接操作窗口属性
+- 业务编排逻辑（仓储调用 + domain 方法）必须下沉到 `*_service` 模块（`note_service`/`reminder_service`/`image_service`），`#[tauri::command]` 仅作为薄壳：调用 service 完成业务 → 执行 Tauri 副作用（emit/schedule_recalc/schedule_auto_sync 等）
+- application 层所有模块（`commands/*`、`note_service`、`reminder_scheduler` 等）的窗口操作（destroy/set_always_on_top/set_focus/show/闪烁等）必须委托 `window_manager`，禁止直接调用 `app.get_webview_window()` 操作窗口属性
 - 闪烁提示逻辑（临时置顶 300ms + 恢复）统一由 `window_manager::flash_window` 提供，禁止在其他模块重复实现
+- 窗口销毁统一用 `window_manager::close_note_window`（封装 `destroy()`），禁止在 commands/note_service 等模块重复内联 `app.get_webview_window().destroy()`
+- 窗口置顶统一用 `window_manager::set_note_pinned`（按 bool 设置）或 `window_manager::restore_note_on_top`（按 Note.is_pinned 恢复），禁止在 commands/note_service 等模块重复内联 `app.get_webview_window().set_always_on_top()`
+- 窗口聚焦+事件发送统一用 `window_manager::focus_note_window_and_emit`（返回 bool 表示窗口是否存在），禁止在 note_service 等模块重复内联 `app.get_webview_window() + set_focus() + emit()`
+
+### 写操作事件化（ADR-007）
+
+- **service 层 emit 事件**：所有写操作（create/update/delete）完成后必须 emit `DomainEvent`（`NoteWritten`/`ReminderWritten`/`TemplateWritten`），携带 `WriteAction`（`Created`/`Updated`/`Deleted`）+ 实体 id
+- **service 层依赖 `&dyn EventPublisher`**（trait object，可 mock，可替换实现），禁止依赖具体类型 `EventBus`
+- **监听器集中注册**：`schedule_auto_sync` 等副作用监听器在 `lib.rs` setup 中通过 `event_bus.subscribe(...)` 注册，禁止在 commands/tray/shortcut 等调用方手动触发 `schedule_auto_sync`
+- **新增写操作只需在 service 内 emit 事件**，副作用自动触发，无需调用方感知
+- **EventPublisher trait 是切换 seam**：当前同步实现（`EventBus`），未来可替换为 `ChannelPublisher`（基于 `tokio::sync::broadcast`），service 签名零改动
+- **template 写操作必须经 `template_service`**，禁止 `template_commands` 直接访问 `template_repo`（与 note/reminder 模式对齐）
+
+### 前端模块边界（AI 可读性约束）
+
+- **入口文件仅编排**：`src/main.ts`（便签窗口入口）和 `src/hub.ts`（Hub 入口）仅负责编排（init/load/页面切换/全局事件监听），具体业务实现必须拆分到独立模块；入口文件不包含业务逻辑
+- **文件命名=业务名**：前端模块文件必须使用业务/UI 部件名（如 `tag-bar.ts`、`note-renderer.ts`、`reminder-dialog.ts`），禁止使用通用技术名（如 `utils.ts`、`helpers.ts`）
+- **JSDoc 三段头**：每个前端模块文件必须包含 JSDoc 头，三段：职责边界、被调用方、依赖
+- **单向依赖无环**：前端模块间禁止循环依赖。当前依赖方向：`main.ts → note-renderer → note-style`；`context-menu → note-style`；`hub.ts → notes-list → reminder-dialog`；`calendar-view → notes-list`
+- **callback 模式破环**：跨模块双向协作必须用 callback 参数避免循环依赖。`renderNote(note, setupEventsCallback)`、`showReminderDialog(noteId, noteTitle, onNotesChanged)`、`showTemplateDialog(title, app, onSelect)`
+- **state 就近原则**：模块级私有 state + getter/setter 导出。`note-context.ts`（getNote/setNote）、`notes-list.ts`（getActiveNotes/getArchivedNotes）、`sync-settings.ts`（syncConfigLoaded 防重复绑定）
+- **side-effect 模块**：纯绑定型模块（如 `template-manager.ts`、`update-check.ts`）用 `import './xxx'` 引入，顶层执行按钮绑定，无 named export
+- **函数 < 100 行**：前端函数体必须 < 100 行，降低 AI 上下文负担；超长函数必须按 UI 部件/事件类型拆分（如 `setupNoteEvents` 拆分为 5 个 bind 子函数）
+- **共享样式逻辑提取**：被 2 个以上模块复用的样式/格式化逻辑必须提取到独立模块（如 `note-style.ts` 的 `applyNoteStyle`/`formatNoteTime` 被 note-renderer 和 context-menu 共享）
 
 ---
 
@@ -182,8 +207,7 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | 编号 | 不变量描述 | 检查位置 |
 |------|-----------|----------|
 | INV-001 | 透明度范围 0.3~1.0，超出自动 clamp | `Note::set_opacity`（所有写入路径经 domain 方法，仓储无 partial update） |
-| INV-002 | 颜色未知值降级为 Amber | `NoteColor::from_str` |
-| INV-003 | 空便签窗口关闭时从 DB 删除（title+content 均空） | `note_service::close_note_if_empty` |
+| INV-003 | 空便签窗口关闭时从 DB 删除（title+content 均空） | `Note::is_empty()`（domain 层聚合根方法）→ `note_service::close_note_if_empty` + `window_manager::restore_all_windows` 调用 |
 | INV-004 | ID 唯一性：UUID v4 + DB PRIMARY KEY + INSERT OR REPLACE | `Note::new` / `Reminder::new` |
 | INV-005 | 外键级联：删除 Note 时级联删除 Reminder（DB ON DELETE CASCADE + 代码双保险） | `delete_note` 命令 |
 | INV-006 | DB 查询强制用列名（`row.get("id")`）而非索引 | `sqlite_note_repo.rs`、`sqlite_reminder_repo.rs` |
@@ -193,7 +217,7 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | INV-010 | 双存储：SQLite 为运行时存储，JSON 文件为同步载体，notes.db 不入 Git | `git_sync.rs` |
 | INV-011 | 冲突解决：last-write-wins，按 updated_at 取最新 | `git_sync.rs` resolve_json_conflict |
 | INV-012 | push 策略：--force-with-lease | `git_sync.rs` |
-| INV-013 | 自动同步防抖：30 秒延迟 | `git_sync.rs` schedule_auto_sync + `commands.rs` 写操作命令调用 |
+| INV-013 | 自动同步防抖：30 秒延迟 | `git_sync.rs` schedule_auto_sync（监听器侧） + `note_service`/`reminder_service`/`template_service` 写方法 emit `DomainEvent`（事件侧，ADR-007）；监听器在 `lib.rs` setup 中注册 |
 | INV-014 | Windows 子进程必须设置 CREATE_NO_WINDOW 标志，禁止弹出控制台窗口 | `git_ops.rs` run_git / check_git_installed / list_remote_branches |
 | INV-015 | Git 同步前必须验证远程分支存在（`git rev-parse origin/<branch>`），分支不存在时返回 `BRANCH_NOT_FOUND:<已有分支>` 由前端提示用户选择是否创建 | `git_sync.rs` sync 方法 |
 | INV-016 | 所有 git 子进程必须设置 `stdin(Stdio::null())`，防止交互式提示导致进程挂起 | `git_ops.rs` run_git / check_git_installed / list_remote_branches |
@@ -208,7 +232,7 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | INV-024 | Git 同步流程必须遵循"先拉后推"：fetch→merge→import→export→commit→push，禁止先 export 再 fetch/merge，确保远程数据先进入本地数据库后再推送 | `application/git_sync.rs` sync 方法 |
 | INV-025 | Git merge 必须使用 `--allow-unrelated-histories`；merge 失败后必须检查是否仍有未解决冲突，若有则拒绝 push（返回错误）；push 前安全检查：删除文件占比超过 50% 时拒绝推送 | `application/git_sync.rs` sync 方法 |
 | INV-026 | delete_note 必须关闭窗口：delete_note 命令在删除数据后 SHALL 关闭对应便签窗口（使用 `destroy()`），确保用户看不到已删除的便签。前端保留 `win.destroy()` 作为兜底，但后端关闭是主要路径 | `delete_note` 命令 |
-| INV-027 | 便签窗口最小尺寸 200×150：domain 层 `update_window_state` clamp（`width.max(MIN_WIDTH)`, `height.max(MIN_HEIGHT)`）；window_manager 创建窗口时 `.min_inner_size(200, 150)`；前端保存窗口状态时拦截宽<200 或高<150 的异常值 | `domain/note.rs` update_window_state + `application/window_manager.rs` open_note_window + `src/main.ts` saveWindowState |
+| INV-027 | 便签窗口最小尺寸 200×150：domain 层 `update_window_state` clamp（`width.max(MIN_WIDTH)`, `height.max(MIN_HEIGHT)`）；window_manager 创建窗口时 `.min_inner_size(200, 150)`；前端保存窗口状态时拦截宽<200 或高<150 的异常值 | `domain/note.rs` update_window_state + `application/window_manager.rs` open_note_window + `src/window-state.ts` saveWindowState |
 
 ### 已知策略缺口
 
@@ -233,7 +257,7 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 - 禁止一步到位抽象（只有一种实现时直接实现）
 - 禁止在前端通过 `listen` 事件触发窗口创建（前端关闭后无法接收事件）
 - 禁止仓储层提供 partial update 方法（所有写入经 domain 方法 + save，NoteRepository 和 ReminderRepository 均适用）
-- 禁止 `reminder_scheduler` 直接操作窗口属性，必须委托 `window_manager`
+- 禁止 `reminder_scheduler`/`note_service`/`commands/*` 等 application 层模块直接操作窗口属性（`app.get_webview_window().destroy()`/`set_always_on_top()`/`set_focus()`/`emit()` 等），必须委托 `window_manager`（`close_note_window`/`set_note_pinned`/`restore_note_on_top`/`focus_note_window_and_emit` 等）
 - 禁止在 Windows 上执行子进程时不设 CREATE_NO_WINDOW 标志（会导致控制台窗口弹出）
 - 禁止子进程调用不设 `stdin(Stdio::null())`（可能导致交互式提示挂起进程）
 - 禁止在 domain 层结构体中保留无业务逻辑使用的字段（YAGNI 原则）
@@ -345,3 +369,12 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | 2026-07-19 | 合并 reminder_service 到 reminder_scheduler（删除 reminder_service.rs）；fire_reminders 成为 reminder_scheduler 的 pub fn；更新模块边界/禁止事项/INV-020 检查位置 | AI | #REFACTOR-015 同步更新 boundaries.md |
 | 2026-07-19 | 拆分 commands.rs 为 commands 模块（commands/ 目录 + 7 个子模块）；模块边界第 139 行"application/commands.rs"→"application/commands 模块"；禁止事项第 225 行同步；新增 application/image_service.rs 承载图片处理业务逻辑 | AI | #REFACTOR-017 同步更新 boundaries.md |
 | 2026-07-19 | 深化 fire_reminders：domain/reminder.rs 新增 `NextTrigger` enum（None/DateTime/External）+ `CalendarAdapter` trait + `Reminder::advance_state` 方法；删除 `reset_for_next_trigger`（被 advance_state 替代）；application/reminder_scheduler.rs 新增 `ReminderNotifier` trait + `TauriReminderNotifier` 实现 + `fire_reminders_with_deps` 可测试入口；application/lunar_calendar.rs 新增 `TymeCalendarAdapter` impl CalendarAdapter；改写 INV-020（保留"domain 不依赖 tyme4rs"意图，seam 改为 trait 注入）；新增 INV-028（fire_reminders 接收 trait object） | AI | #REFACTOR-019 同步更新 boundaries.md/flows.md |
+| 2026-07-19 | Candidate 02 窗口操作统一：window_manager.rs 新增 `close_note_window`/`set_note_pinned`/`restore_note_on_top`/`focus_note_window_and_emit` 4 个 pub fn（封装 destroy/set_always_on_top/set_focus+emit）；note_commands.rs 的 `delete_note`/`batch_delete_notes`/`restore_window_on_top` 和 note_service.rs 的 `update_note_style`/`open_note_with_flag` 5 处直接窗口操作替换为 window_manager 调用；note_commands.rs 移除 `Manager` 导入，note_service.rs 移除 `Manager`/`Emitter` 导入；扩展模块边界规则（"reminder_scheduler"→"application 层所有模块"）和设计禁止事项覆盖范围 | AI | #REFACTOR-020 同步更新 boundaries.md |
+| 2026-07-19 | Candidate 03 sync_json_io 泛化：新增私有泛型函数 `export_entity_to_json`（序列化+写文件）和 `import_entity_from_json`（反序列化+last-write-wins 仲裁）；用泛型 + 闭包参数化差异点（id/updated_at/find_by_id/save），消除 Note/Reminder/Template 三种实体的导出/导入三重重复；`export_to_json` 从 33 行降至 21 行，`import_from_json` 从 82 行降至 35 行；`R: ?Sized` 约束支持 `&dyn Trait` 传入；调用处用 turbofish `::<Note, dyn NoteRepository>` 明确泛型参数；未新增 INV（无新业务不变量，纯重构） | AI | #REFACTOR-021 同步更新 boundaries.md |
+| 2026-07-19 | Candidate 04 Note 聚合根完善：domain/note.rs 新增 `is_empty()`（title+content 均空，INV-003）和 `is_reminder_eligible()`（!is_archived，归档不触发提醒）2 个业务查询方法；window_manager::restore_all_windows 和 note_service::close_note_if_empty 2 处 `note.title.is_empty() && note.content.is_empty()` 散布判断替换为 `note.is_empty()`；reminder_scheduler::fire_reminders_with_deps 1 处 `note.is_archived` 判断替换为 `!note.is_reminder_eligible()`；新增 6 个 domain 单元测试覆盖 4 种 is_empty 边界 + 2 种 is_reminder_eligible 状态；更新 INV-003 检查位置描述（明确 Note::is_empty 为入口） | AI | #REFACTOR-022 同步更新 boundaries.md |
+| 2026-07-19 | Candidate 06 命令层可测试性提升：新建 `application/reminder_service.rs`（CRUD 编排：create/snooze/dismiss/delete，接收 `&dyn ReminderRepository` 无 Tauri 依赖可单测）；reminder_commands.rs 4 处命令改为薄壳（调用 service → 统一副作用 scheduler.schedule_recalc + app.emit + git_sync.schedule_auto_sync）；snooze/dismiss 副作用模式统一（原直接 return save 结果，现改为先 service 完成业务再执行副作用）；application/mod.rs 新增 `pub mod reminder_service`；模块边界规则新增"业务编排逻辑必须下沉到 *_service 模块，#[tauri::command] 仅作为薄壳"；新增 9 个 service 单元测试；198 个测试全部通过 | AI | #REFACTOR-024 同步更新 boundaries.md |
+| 2026-07-20 | Candidate 10 知识库不一致修正：删除 INV-002（NoteColor 枚举已于 v0.8.0 #FEAT-010 删除，引用位置 `NoteColor::from_str` 失效；后端不校验颜色值，由前端 UI 限制；DB schema `color TEXT NOT NULL DEFAULT 'amber'` 仅设默认值非业务约束）；INV-002 编号废弃不复用 | AI | #REFACTOR-027 |
+| 2026-07-20 | Candidate 11+12 note_commands 9 个命令下沉 note_service：与 Candidate 06（reminder_service）同范式，note_service.rs 新增 6 个单字段更新函数 + 4 个批量函数（batch_* 返回 `Vec<String>` 成功 id 列表供命令层 emit）；note_commands.rs 9 个命令改为薄壳；image_service::cleanup_removed_images 从 update_note_content/batch_delete 命令下沉到 service；新增 24 个 service 单测；消除"reminder 走 service、note 不走"的范式不对称 | AI | #REFACTOR-028 同步更新 boundaries.md |
+| 2026-07-20 | Candidate 13 tray_manager 三处重复 + 约束违规：13a 抽取 `build_tray_menu`；13b git_sync 新增 `sync_with_notification` 统一 sync+通知；13c window_manager 新增 `open_or_focus_hub`+`create_hub_window`，tray 委托消除内联 WebviewWindowBuilder 违规；附带修复 INV-013 违规（handle_new_note 漏 schedule_auto_sync） | AI | #REFACTOR-029 同步更新 boundaries.md |
+| 2026-07-21 | 前端模块化拆分（AI 可读性）：新增"前端模块边界（AI 可读性约束）"小节 9 条（入口仅编排/文件名=业务名/JSDoc 三段头/单向依赖无环/callback 模式破环/state 就近/side-effect 模块/函数<100 行/共享样式提取）；INV-027 引用位置 `src/main.ts` saveWindowState 更正为 `src/window-state.ts` saveWindowState（函数已随 window-state 模块拆分迁移） | AI | #REFACTOR-034 同步更新 boundaries.md |
+| 2026-07-21 | 新增"写操作事件化（ADR-007）"约束（service 层 emit 事件/依赖 EventPublisher trait/监听器集中注册/template 经 template_service）；更新 INV-013 检查位置（从 commands 调用方迁移到 service emit + lib.rs 监听器） | AI | #REFACTOR-036 同步更新 ADR-007/glossary.md/boundaries.md/lessons/README.md |

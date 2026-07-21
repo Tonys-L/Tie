@@ -3,10 +3,12 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use super::git_ops;
+use super::locale_manager;
 use super::sync_config::SyncConfig;
 use super::sync_json_io;
 use crate::domain::{NoteRepository, ReminderRepository, TemplateRepository};
-use tauri::Manager;
+use tauri::{AppHandle, Manager};
+use tauri_plugin_notification::NotificationExt;
 
 /// Git 同步管理器：持有路径与防抖状态，编排同步流程
 pub struct GitSync {
@@ -16,6 +18,43 @@ pub struct GitSync {
     sync_dir: PathBuf,
     /// 自动同步防抖：记录最后一次触发时间
     last_sync_trigger: Mutex<std::time::Instant>,
+}
+
+/// 执行同步并显示系统通知（OK/fail）
+///
+/// 统一入口，消除 `sync_commands::sync_notes`（async）与 `tray_manager::handle_sync`
+/// （spawn_blocking）两处的"sync + 通知格式"重复。
+/// 返回 sync 的原始 Result，调用方可据此进一步处理。
+pub fn sync_with_notification(
+    app: &AppHandle,
+    git_sync: &GitSync,
+    note_repo: &dyn NoteRepository,
+    reminder_repo: &dyn ReminderRepository,
+    template_repo: &dyn TemplateRepository,
+    create_branch: bool,
+) -> Result<String, String> {
+    eprintln!("[同步] 开始执行同步... create_branch={}", create_branch);
+    let result = git_sync.sync(note_repo, reminder_repo, template_repo, create_branch);
+    eprintln!("[同步] 同步完成: {:?}", result);
+    match &result {
+        Ok(msg) => {
+            let _ = app
+                .notification()
+                .builder()
+                .title(locale_manager::notify_sync_ok())
+                .body(msg)
+                .show();
+        }
+        Err(e) => {
+            let _ = app
+                .notification()
+                .builder()
+                .title(locale_manager::notify_sync_fail())
+                .body(e)
+                .show();
+        }
+    }
+    result
 }
 
 /// 同步流程的阶段间上下文：在各阶段函数之间传递状态

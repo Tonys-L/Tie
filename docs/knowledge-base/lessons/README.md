@@ -24,6 +24,8 @@
 | LES-014 | FTS5 JOIN 列名歧义 | 数据存储 | 中 | 已修复 | 2026-07-18 |
 | LES-015 | Git 同步 unrelated histories 导致远程数据被删除 | 数据同步 | 致命 | 已修复 | 2026-07-18 |
 | LES-016 | Tauri 2.x onCloseRequested 改变默认关闭行为 | 编码规范 | 高 | 已修复 | 2026-07-19 |
+| LES-017 | 前端模块拆分循环依赖陷阱（共享样式 + 父子回调） | 前端架构 | 中 | 已修复 | 2026-07-21 |
+| LES-018 | 后端写操作副作用散布导致 INV-013 漏调（事件总线解耦） | 后端架构 | 高 | 已修复 | 2026-07-21 |
 
 ---
 
@@ -35,6 +37,8 @@
 - **数据同步**: LES-003, LES-007, LES-008, LES-009, LES-010, LES-012, LES-015
 - **数据存储**: LES-013, LES-014
 - **前端构建**: LES-004
+- **前端架构**: LES-017
+- **后端架构**: LES-018
 - **业务逻辑**: LES-005
 
 ---
@@ -285,6 +289,73 @@
 
 ---
 
+## LES-017: 前端模块拆分循环依赖陷阱（共享样式 + 父子回调）
+
+**问题**: 将 `main.ts`（1903 行）和 `hub.ts`（1441 行）按 UI 部件拆分为独立模块时，出现两类循环依赖：
+
+1. **共享样式循环**：`note-renderer.ts`（渲染便签）和 `context-menu.ts`（右键菜单）都需要 `applyNoteStyle` 和 `formatNoteTime`。若把这两个函数放在 `note-renderer.ts`，`context-menu.ts` 导入 `note-renderer.ts`；同时 `note-renderer.ts` 又需要 `context-menu.ts` 的 `showCustomColorPanel` → 循环依赖。
+
+2. **父子回调循环**：`hub.ts` 调用 `showReminderDialog`（提取到 `reminder-dialog.ts`），`showReminderDialog` 创建/删除提醒后需要刷新便签列表调用 `loadNotes`；但 `loadNotes` 也在 `hub.ts`（后提取到 `notes-list.ts`）→ `reminder-dialog.ts` 导入 `notes-list.ts`，`notes-list.ts` 又导入 `reminder-dialog.ts` → 循环依赖。
+
+**原因**: 大文件拆分时，模块间天然存在双向协作：A 调用 B 的渲染能力，B 反过来调用 A 的刷新能力；多个模块共享同一套样式/格式化逻辑。
+
+**解决方案**:
+
+1. **共享样式提取第三模块**：新建 `note-style.ts`，导出 `applyNoteStyle` 和 `formatNoteTime`。`note-renderer.ts` 和 `context-menu.ts` 都只依赖 `note-style.ts`，互不依赖。依赖方向：`note-renderer → note-style`，`context-menu → note-style`。
+
+2. **callback 参数破父子环**：`showReminderDialog(noteId, noteTitle, onNotesChanged)` 接收回调函数而非直接 import 调用方。`notes-list.ts` 调用 `showReminderDialog(..., loadNotes)` 把 `loadNotes` 作为回调传入。依赖方向：`notes-list → reminder-dialog`（单向），`reminder-dialog` 不感知 `notes-list`。
+
+3. **同类应用**：`renderNote(note, setupEventsCallback)` 用 callback 破 `note-renderer ↔ main.ts` 环；`showTemplateDialog(title, app, onSelect)` 用 callback 破 `template-ui ↔` 调用方环。
+
+**影响文件**: `src/note-style.ts`（新建）、`src/note-renderer.ts`、`src/context-menu.ts`、`src/reminder-dialog.ts`、`src/notes-list.ts`、`src/template-ui.ts`
+
+**预防**:
+- 大文件拆分前先画依赖图，识别潜在循环
+- 共享逻辑（被 2+ 模块复用）必须提取到独立第三模块，禁止放在某个消费方模块
+- 父子双向协作必须用 callback 参数：父调用子时把自己的回调传入，子执行完后回调通知父，子不反向 import 父
+- 模块间依赖必须是单向的，禁止 `A imports B && B imports A`
+
+---
+
+## LES-018: 后端写操作副作用散布导致 INV-013 漏调（事件总线解耦）
+
+**问题**: `schedule_auto_sync`（自动同步防抖）调用散布在 `commands/note_commands.rs`（15 处）、`commands/reminder_commands.rs`（4 处）、`commands/template_commands.rs`（1 处）、`tray_manager.rs`（1 处）共 21 处。每个写操作命令必须手动调用 `state.git_sync.schedule_auto_sync(app)`，否则违反 INV-013（写操作必须触发自动同步防抖）。
+
+架构评估发现 3 处 INV-013 违规（漏调）：
+1. `shortcut_manager::setup_shortcuts` 和 `save_and_reregister` 中的 new_note 回调（快捷键新建便签）未触发 `schedule_auto_sync`
+2. `template_commands::save_template` 直接访问 repo 未触发 `schedule_auto_sync`
+3. `template_commands::delete_template` 直接访问 repo 未触发 `schedule_auto_sync`
+
+**原因**: 命令层（`#[tauri::command]`）同时承担业务编排和副作用触发两个职责。`service` 层只做纯业务编排（CRUD + 仓储交互），不感知 Tauri 副作用（`schedule_auto_sync`/`emit`/`schedule_recalc`）。每个新写操作入口（命令/快捷键/托盘菜单）都必须记得手动触发 `schedule_auto_sync`，散布在 N 处调用方的副作用极易漏调。
+
+此外 `template_commands` 直接访问 `state.template_repo` 而非通过 service，绕过了 service 层的统一副作用入口，是漏调的典型场景。
+
+**解决方案**: 引入后端内部事件总线（ADR-007），将"写操作完成"语义事件化，副作用下沉到 lib.rs 统一监听：
+
+1. **事件抽象**：`event_bus.rs` 定义 `DomainEvent` 枚举（`NoteWritten`/`ReminderWritten`/`TemplateWritten`）+ `WriteAction` 枚举（`Created`/`Updated`/`Deleted`）+ `EventPublisher` trait + `EventBus` 同步实现 + `MockEventPublisher` 测试工具
+
+2. **service emit 事件**：`note_service`/`reminder_service`/`template_service` 全部写方法增加 `publisher: &dyn EventPublisher` 参数，写操作完成后 emit 对应 `DomainEvent`（携带 `WriteAction` 区分新增/更新/删除）
+
+3. **lib.rs 统一监听**：`AppState` 增加 `event_bus: Arc<EventBus>` 字段；`setup` 中注册监听器，接收任意 `DomainEvent` → 调用 `state.git_sync.schedule_auto_sync(app)`
+
+4. **命令层薄壳化**：`commands/*` 删除全部 20 处 `schedule_auto_sync` 手动调用；`template_commands` 改为调用 `template_service`（消除直接 repo 访问）；`shortcut_manager`/`tray_manager` 写操作入口传 `event_bus` 给 service
+
+5. **trait 抽象保留切换路径**：用 `EventPublisher` trait 而非具体 `EventBus`，未来切 channel 异步只需新增 `ChannelPublisher` 实现，service 签名不变
+
+**影响文件**:
+- 新增：`src-tauri/src/application/event_bus.rs`、`src-tauri/src/application/template_service.rs`
+- 重写：`src-tauri/src/application/note_service.rs`、`src-tauri/src/application/reminder_service.rs`
+- 修改：`src-tauri/src/application/commands/note_commands.rs`、`reminder_commands.rs`、`template_commands.rs`、`src-tauri/src/application/shortcut_manager.rs`、`src-tauri/src/application/tray_manager.rs`、`src-tauri/src/lib.rs`
+
+**预防**:
+- service 层写操作的副作用（如同步/通知/调度刷新）应通过事件解耦，禁止在命令层手动触发
+- 新增写操作入口（命令/快捷键/托盘菜单/任何调用 service 的地方）只需调用 service 传 `event_bus`，自动触发副作用，无需记忆散布的副作用调用
+- service 必须接收 `&dyn EventPublisher` trait object 而非具体 `EventBus`，保留切换实现的低成本路径（依赖倒置）
+- 命令层禁止直接访问 repo，必须通过 service（否则绕过事件 emit 导致 INV-013 漏调）
+- `MockEventPublisher` 作为测试工具放在 `event_bus.rs` 模块内（`#[cfg(test)]` 标注但模块外可见），供所有 service 测试引用断言 emit 行为
+
+---
+
 ## 变更记录
 
 | 日期 | 变更内容 | 变更人 | 关联变更 |
@@ -298,3 +369,5 @@
 | 2026-07-18 | 新增 LES-013（FTS5 默认 tokenizer 不支持中文）/LES-014（FTS5 JOIN 列名歧义） | — | #FEAT-011 |
 | 2026-07-18 | 新增 LES-015（Git 同步 unrelated histories 导致远程数据被删除） | — | #BUGFIX-001 同步更新 constraints.md |
 | 2026-07-19 | 新增 LES-016（Tauri 2.x onCloseRequested 改变默认关闭行为） | AI | v0.8.5 同步更新 constraints.md/flows.md |
+| 2026-07-21 | 新增 LES-017（前端模块拆分循环依赖陷阱：共享样式提取第三模块 + 父子 callback 破环）；新增"前端架构"业务分类 | AI | #REFACTOR-034 同步更新 constraints.md/boundaries.md |
+| 2026-07-21 | 新增 LES-018（后端写操作副作用散布导致 INV-013 漏调：事件总线解耦）；新增"后端架构"业务分类 | AI | #REFACTOR-036 同步更新 constraints.md/glossary.md/adr/README.md/boundaries.md |

@@ -1,10 +1,14 @@
 //! 提醒命令：CRUD、贪睡、关闭，以及日历视图辅助数据（农历 + 便签活动）。
+//!
+//! schedule_auto_sync 已下沉到 service 层 emit 事件，由 lib.rs 监听器统一处理（ADR-007）。
 
 use tauri::{AppHandle, Emitter, State};
 use chrono::Datelike;
 
 use crate::domain::Reminder;
 use crate::AppState;
+
+use super::super::reminder_service;
 
 /// 创建提醒
 #[tauri::command]
@@ -16,11 +20,17 @@ pub async fn create_reminder(
     remind_at: String,
     repeat_type: String,
 ) -> Result<Reminder, String> {
-    let reminder = Reminder::new(note_id.clone(), note_title, remind_at, repeat_type);
-    state.reminder_repo.save(&reminder)?;
+    let note_id_for_emit = note_id.clone();
+    let reminder = reminder_service::create_reminder(
+        state.reminder_repo.as_ref(),
+        state.event_bus.as_ref(),
+        note_id,
+        note_title,
+        remind_at,
+        repeat_type,
+    )?;
     state.scheduler.schedule_recalc();
-    let _ = app.emit("reminder-changed", &note_id);
-    state.git_sync.schedule_auto_sync(app);
+    let _ = app.emit("reminder-changed", &note_id_for_emit);
     Ok(reminder)
 }
 
@@ -33,44 +43,30 @@ pub async fn get_reminders(state: State<'_, AppState>, note_id: String) -> Resul
 /// 贪睡提醒（延长 N 分钟）
 #[tauri::command]
 pub async fn snooze_reminder(app: AppHandle, state: State<'_, AppState>, id: String, minutes: i64) -> Result<(), String> {
-    let mut reminder = state.reminder_repo.find_by_id(&id)?.ok_or("提醒不存在")?;
-    let note_id = reminder.note_id.clone();
-    reminder.snooze(minutes);
-    let result = state.reminder_repo.save(&reminder);
+    let note_id = reminder_service::snooze_reminder(state.reminder_repo.as_ref(), state.event_bus.as_ref(), &id, minutes)?;
     state.scheduler.schedule_recalc();
     let _ = app.emit("reminder-changed", &note_id);
-    state.git_sync.schedule_auto_sync(app);
-    result
+    Ok(())
 }
 
 /// 关闭提醒（标记为已完成）
 #[tauri::command]
 pub async fn dismiss_reminder(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let mut reminder = state.reminder_repo.find_by_id(&id)?.ok_or("提醒不存在")?;
-    let note_id = reminder.note_id.clone();
-    reminder.mark_done();
-    let result = state.reminder_repo.save(&reminder);
+    let note_id = reminder_service::dismiss_reminder(state.reminder_repo.as_ref(), state.event_bus.as_ref(), &id)?;
     state.scheduler.schedule_recalc();
     let _ = app.emit("reminder-changed", &note_id);
-    state.git_sync.schedule_auto_sync(app);
-    result
+    Ok(())
 }
 
 /// 删除提醒
 #[tauri::command]
 pub async fn delete_reminder(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
-    // 先获取 note_id，删除后仍可通知对应便签
-    let note_id = state.reminder_repo.find_by_id(&id)
-        .ok()
-        .flatten()
-        .map(|r| r.note_id.clone());
-    let result = state.reminder_repo.delete(&id);
+    let note_id = reminder_service::delete_reminder(state.reminder_repo.as_ref(), state.event_bus.as_ref(), &id)?;
     state.scheduler.schedule_recalc();
-    if let Some(ref nid) = note_id {
-        let _ = app.emit("reminder-changed", nid);
+    if let Some(nid) = note_id {
+        let _ = app.emit("reminder-changed", &nid);
     }
-    state.git_sync.schedule_auto_sync(app);
-    result
+    Ok(())
 }
 
 /// 按月份查询提醒（日历视图用，含所有状态）

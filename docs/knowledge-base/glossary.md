@@ -1,4 +1,4 @@
-﻿# 术语表
+# 术语表
 
 > **TL;DR**: 核心术语：Note（便签聚合根）、Reminder（提醒实体）、AppState（应用全局状态）。⚠️ 能力契约 ≠ 接口契约：前者是核心层定义的业务能力接口，后者是对外暴露的 API。
 
@@ -19,7 +19,7 @@
 
 ### AppState
 
-应用全局状态，在 setup 中创建并通过 Tauri State 管理器注入到各命令。包含 `note_repo`、`reminder_repo`、`git_sync`、`shortcut_manager`、`scheduler` 五个成员。是组合根的具体实现。
+应用全局状态，在 setup 中创建并通过 Tauri State 管理器注入到各命令。包含 `note_repo`、`reminder_repo`、`template_repo`、`git_sync`、`shortcut_manager`、`scheduler`、`event_bus` 七个成员。是组合根的具体实现。
 
 ---
 
@@ -66,6 +66,22 @@
 ### 防抖 (Debounce)
 
 `schedule_auto_sync` 使用 30 秒防抖策略，多次触发只执行最后一次。通过 `Mutex<Instant>` 记录最后触发时间。
+
+### 领域事件 (DomainEvent)
+
+后端内部事件总线传递的写操作完成信号（ADR-007）。按实体 + 操作类型粒度：`NoteWritten`/`ReminderWritten`/`TemplateWritten` 携带 `WriteAction`（`Created`/`Updated`/`Deleted`）+ 实体 id。由 `note_service`/`reminder_service`/`template_service` 在写操作完成后 emit，监听器（`lib.rs` setup 注册）接收并触发 `schedule_auto_sync` 等副作用。纯后端事件，不经过 Tauri emit/listen，不广播给前端。
+
+---
+
+## E
+
+### 事件总线 (EventBus)
+
+`EventPublisher` trait 的当前同步实现（`application/event_bus.rs`）。内部用 `Arc<Mutex<Vec<Box<dyn Fn(&DomainEvent) + Send + Sync>>>>` 存储 handler 列表，`emit` 时同步遍历调用所有 handler，`subscribe` 注册新 handler。监听器在 `lib.rs` setup 中通过 `event_bus.subscribe(Box::new(|event| { ... }))` 注册。
+
+### 事件发布者 (EventPublisher)
+
+service 层依赖的事件发布抽象 trait（依赖倒置原则）。service 接收 `&dyn EventPublisher` 参数（trait object，可 mock 测试，可替换实现）。当前唯一实现是同步的 `EventBus`；未来可新增 `ChannelPublisher`（基于 `tokio::sync::broadcast`）实现异步事件，service 签名零改动。是 ADR-007 的核心 seam。
 
 ---
 
@@ -198,3 +214,4 @@ SQLite FTS5 的一种分词器，将文本按 3 字符滑动窗口生成 trigram
 | 2026-07-18 | 更新便签模板术语：模板随 Git 同步（templates 目录 + updated_at 仲裁）；新增三处 UI 入口（设置中心/右键菜单/空便签快捷条） | — | #FEAT-012 同步更新 constraints.md/boundaries.md |
 | 2026-07-18 | 右键菜单改为两项并存：「从模板新建便签」+「应用模板到当前便签」（追加到末尾，非破坏性）；模板快捷条多模板时横向单行滚动 | — | #FEAT-013 同步更新 constraints.md/boundaries.md |
 | 2026-07-19 | 新增图片宽度语法、图片拖拽调整术语 | AI | v0.8.5 |
+| 2026-07-21 | 新增领域事件（DomainEvent）、事件总线（EventBus）、事件发布者（EventPublisher）术语；更新 AppState 词条（新增 template_repo/event_bus 成员，5→7 个） | AI | #REFACTOR-036 同步更新 ADR-007/constraints.md/boundaries.md |

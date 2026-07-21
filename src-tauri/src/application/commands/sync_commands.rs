@@ -21,21 +21,14 @@ pub async fn save_sync_config(state: State<'_, AppState>, config: super::super::
 /// 执行同步（导出JSON → git commit/fetch/merge → 导入JSON → push）
 #[tauri::command]
 pub async fn sync_notes(app: AppHandle, state: State<'_, AppState>, create_branch: Option<bool>) -> Result<String, String> {
-    eprintln!("[同步] 开始执行同步... create_branch={:?}", create_branch);
-    let result = super::super::note_service::sync_notes(
+    super::super::git_sync::sync_with_notification(
+        &app,
+        &state.git_sync,
         state.note_repo.as_ref(),
         state.reminder_repo.as_ref(),
         state.template_repo.as_ref(),
-        &state.git_sync,
         create_branch.unwrap_or(false),
-    );
-    eprintln!("[同步] 同步完成: {:?}", result);
-    use tauri_plugin_notification::NotificationExt;
-    match &result {
-        Ok(msg) => { let _ = app.notification().builder().title(super::super::locale_manager::notify_sync_ok()).body(msg).show(); }
-        Err(e) => { let _ = app.notification().builder().title(super::super::locale_manager::notify_sync_fail()).body(e).show(); }
-    }
-    result
+    )
 }
 
 /// 检查 git 是否已安装

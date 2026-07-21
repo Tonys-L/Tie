@@ -3,21 +3,36 @@
 use tauri::{AppHandle, Emitter, State};
 
 use crate::AppState;
+use super::super::ai_config::AiConfig;
+use super::super::ai_service::{AiService, ChatMessage};
+
+/// 统一 AI 调用链：加载配置 → 校验已配置 → 构造 AiService → 调用 call → 转字符串错误。
+///
+/// `test_ai_connection` / `ai_rewrite_text` / `ai_sort_todos` 三个命令共用此封装，
+/// 避免每处内联 `load_default + is_configured + AiService::new + map_err` 链。
+/// 各命令的解析逻辑（trim / JSON 数组提取）保留在调用方，因为解析语义属于命令的接口契约。
+async fn ai_call_raw(messages: Vec<ChatMessage>) -> Result<String, String> {
+    let config = AiConfig::load_default()?;
+    if !config.is_configured() {
+        return Err("AI 未配置".to_string());
+    }
+    let service = AiService::new(config);
+    service.call(messages).await.map_err(|e| e.to_string())
+}
 
 // ============ AI 配置命令 ============
 
 /// 获取 AI 配置（未配置时返回空值，前端用密码框显示 API Key）
 #[tauri::command]
-pub async fn get_ai_config() -> Result<super::super::ai_config::AiConfig, String> {
-    let path = super::super::ai_config::AiConfig::default_path();
-    super::super::ai_config::AiConfig::load(&path)
+pub async fn get_ai_config() -> Result<AiConfig, String> {
+    AiConfig::load_default()
 }
 
 /// 保存 AI 配置到本地用户目录（不随 Git 同步）
 #[tauri::command]
 pub async fn save_ai_config(app: AppHandle, base_url: String, api_key: String, model: String, sniff_enabled: bool) -> Result<(), String> {
-    let path = super::super::ai_config::AiConfig::default_path();
-    let config = super::super::ai_config::AiConfig {
+    let path = AiConfig::default_path();
+    let config = AiConfig {
         base_url,
         api_key,
         model,
@@ -31,10 +46,7 @@ pub async fn save_ai_config(app: AppHandle, base_url: String, api_key: String, m
 /// 测试 AI 连接是否可用（发送 ping 请求）
 #[tauri::command]
 pub async fn test_ai_connection() -> Result<String, String> {
-    let path = super::super::ai_config::AiConfig::default_path();
-    let config = super::super::ai_config::AiConfig::load(&path)?;
-    let service = super::super::ai_service::AiService::new(config);
-    service.test_connection().await.map_err(|e| e.to_string())
+    ai_call_raw(vec![ChatMessage::user("ping")]).await
 }
 
 // ============ AI 业务命令 ============
@@ -42,8 +54,7 @@ pub async fn test_ai_connection() -> Result<String, String> {
 /// 自然语言解析提醒（返回 ReminderDraft 供前端预填表单）
 #[tauri::command]
 pub async fn parse_reminder_natural(text: String) -> Result<super::super::reminder_parser::ReminderDraft, String> {
-    let path = super::super::ai_config::AiConfig::default_path();
-    let config = super::super::ai_config::AiConfig::load(&path)?;
+    let config = AiConfig::load_default()?;
     super::super::reminder_parser::parse_reminder_natural(&text, &config)
         .await
         .map_err(|e| e.to_string())
@@ -56,8 +67,7 @@ pub async fn parse_reminder_natural(text: String) -> Result<super::super::remind
 /// 架构支持未来扩展 todo_split / tidy 等类型。
 #[tauri::command]
 pub async fn sniff_suggestions(content: String) -> Result<Vec<super::super::reminder_parser::Suggestion>, String> {
-    let path = super::super::ai_config::AiConfig::default_path();
-    let config = super::super::ai_config::AiConfig::load(&path)?;
+    let config = AiConfig::load_default()?;
     super::super::reminder_parser::sniff_suggestions(&content, &config)
         .await
         .map_err(|e| e.to_string())
@@ -77,8 +87,7 @@ pub async fn generate_report(
     start_date: String,
     end_date: String,
 ) -> Result<super::super::report_generator::ReportDraft, String> {
-    let path = super::super::ai_config::AiConfig::default_path();
-    let config = super::super::ai_config::AiConfig::load(&path)?;
+    let config = AiConfig::load_default()?;
     if !config.is_configured() {
         return Err("AI 未配置".to_string());
     }
@@ -111,14 +120,8 @@ pub async fn generate_report(
         }
     };
     let notes = state.note_repo.find_all()?;
-    // 按 updated_at 日期部分过滤在 [start_date, end_date] 范围内的便签
-    let filtered: Vec<crate::domain::Note> = notes
-        .into_iter()
-        .filter(|note| {
-            let date_part: String = note.updated_at.chars().take(10).collect();
-            date_part >= start_date && date_part <= end_date
-        })
-        .collect();
+    // 按 updated_at 日期部分过滤在 [start_date, end_date] 范围内（业务规则下沉到 report_generator）
+    let filtered = super::super::report_generator::filter_notes_by_date(&notes, &start_date, &end_date);
     super::super::report_generator::generate_report(&filtered, period, &config)
         .await
         .map_err(|e| e.to_string())
@@ -137,11 +140,6 @@ pub async fn ai_rewrite_text(
     text: String,
     operation: String,
 ) -> Result<String, String> {
-    let path = super::super::ai_config::AiConfig::default_path();
-    let config = super::super::ai_config::AiConfig::load(&path)?;
-    if !config.is_configured() {
-        return Err("AI 未配置".to_string());
-    }
     let op = super::super::prompts::rewrite::RewriteOperation::from_str(&operation)
         .ok_or_else(|| "无效的操作类型".to_string())?;
     let char_count = text.chars().count();
@@ -149,8 +147,7 @@ pub async fn ai_rewrite_text(
         return Err("请选中文本长度在 5~500 字符之间".to_string());
     }
     let messages = super::super::prompts::rewrite::build_rewrite_messages(&text, op);
-    let service = super::super::ai_service::AiService::new(config);
-    let result = service.call(messages).await.map_err(|e| e.to_string())?;
+    let result = ai_call_raw(messages).await?;
     Ok(result.trim().to_string())
 }
 
@@ -166,14 +163,8 @@ pub async fn ai_sort_todos(
     if todos.len() <= 3 {
         return Err("待办条目数 ≤ 3，无需 AI 排序".to_string());
     }
-    let path = super::super::ai_config::AiConfig::default_path();
-    let config = super::super::ai_config::AiConfig::load(&path)?;
-    if !config.is_configured() {
-        return Err("AI 未配置".to_string());
-    }
     let messages = super::super::prompts::sort::build_sort_messages(&todos);
-    let service = super::super::ai_service::AiService::new(config);
-    let result = service.call(messages).await.map_err(|e| e.to_string())?;
+    let result = ai_call_raw(messages).await?;
 
     // 解析 JSON 数组
     let trimmed = result.trim();

@@ -180,25 +180,14 @@ pub fn fire_reminders_with_deps(
         };
 
         // 归档便签不触发提醒
-        if note.is_archived {
+        if !note.is_reminder_eligible() {
             eprintln!("[调度器] 便签已归档，跳过提醒: note_id={}", reminder.note_id);
             continue;
         }
 
-        // 发送系统通知
-        let title = if reminder.note_title.is_empty() {
-            "便签提醒".to_string()
-        } else {
-            reminder.note_title.clone()
-        };
-        let summary: String = note.content.chars().take(80).collect();
-        let body = if note.content.chars().count() > 80 {
-            format!("{}...", summary)
-        } else if summary.is_empty() {
-            "点击查看便签".to_string()
-        } else {
-            summary
-        };
+        // 发送系统通知（标题/正文构造委托 Reminder 领域方法）
+        let title = reminder.notification_title();
+        let body = reminder.notification_body(&note.content);
 
         match notifier.notify(&title, &body, &reminder.note_id) {
             Ok(_) => eprintln!("[调度器] 通知发送成功"),

@@ -258,6 +258,36 @@ impl Reminder {
     fn touch(&mut self) {
         self.updated_at = Utc::now().to_rfc3339();
     }
+
+    /// 通知标题：note_title 为空时 fallback 为 "便签提醒"。
+    ///
+    /// 此为"提醒通知如何展示"的领域规则，从调度器下沉至此以便单测。
+    pub fn notification_title(&self) -> String {
+        if self.note_title.is_empty() {
+            "便签提醒".to_string()
+        } else {
+            self.note_title.clone()
+        }
+    }
+
+    /// 通知正文：基于便签 content 前 80 字符构造。
+    ///
+    /// - content 超过 80 字符：截断 + "..." 省略号
+    /// - content 为空：fallback "点击查看便签"
+    /// - 其他：原样返回前 80 字符
+    ///
+    /// `content` 由调用方（调度器）传入 `&note.content`，避免 Reminder 持有 Note 引用。
+    pub fn notification_body(&self, content: &str) -> String {
+        const MAX_LEN: usize = 80;
+        let summary: String = content.chars().take(MAX_LEN).collect();
+        if content.chars().count() > MAX_LEN {
+            format!("{}...", summary)
+        } else if summary.is_empty() {
+            "点击查看便签".to_string()
+        } else {
+            summary
+        }
+    }
 }
 
 #[cfg(test)]
@@ -524,5 +554,96 @@ mod tests {
         let result = r.advance_state(&cal);
         assert_eq!(result, AdvanceResult::MarkedTriggered);
         assert_eq!(r.status, ReminderStatus::Triggered);
+    }
+
+    // ============ notification_title / notification_body 测试 ============
+
+    #[test]
+    fn test_notification_title_with_content() {
+        let r = Reminder::new(
+            "note-1".to_string(),
+            "周一会议".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "once".to_string(),
+        );
+        assert_eq!(r.notification_title(), "周一会议");
+    }
+
+    #[test]
+    fn test_notification_title_empty_fallback() {
+        let r = Reminder::new(
+            "note-1".to_string(),
+            "".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "once".to_string(),
+        );
+        assert_eq!(r.notification_title(), "便签提醒");
+    }
+
+    #[test]
+    fn test_notification_body_short_content() {
+        let r = Reminder::new(
+            "note-1".to_string(),
+            "标题".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "once".to_string(),
+        );
+        assert_eq!(r.notification_body("短内容"), "短内容");
+    }
+
+    #[test]
+    fn test_notification_body_empty_fallback() {
+        let r = Reminder::new(
+            "note-1".to_string(),
+            "标题".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "once".to_string(),
+        );
+        assert_eq!(r.notification_body(""), "点击查看便签");
+    }
+
+    #[test]
+    fn test_notification_body_long_content_truncated() {
+        let r = Reminder::new(
+            "note-1".to_string(),
+            "标题".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "once".to_string(),
+        );
+        // 100 字符内容 → 截断为 80 + "..."
+        let long_content: String = "a".repeat(100);
+        let body = r.notification_body(&long_content);
+        assert_eq!(body.chars().count(), 83); // 80 个 a + 3 个点
+        assert!(body.ends_with("..."));
+        let a_count = body.chars().filter(|c| *c == 'a').count();
+        assert_eq!(a_count, 80);
+    }
+
+    #[test]
+    fn test_notification_body_exact_80_chars_not_truncated() {
+        let r = Reminder::new(
+            "note-1".to_string(),
+            "标题".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "once".to_string(),
+        );
+        // 恰好 80 字符 → 不截断、无省略号
+        let content: String = "a".repeat(80);
+        let body = r.notification_body(&content);
+        assert_eq!(body.chars().count(), 80);
+        assert!(!body.ends_with("..."));
+    }
+
+    #[test]
+    fn test_notification_body_utf8_chars_counted_correctly() {
+        let r = Reminder::new(
+            "note-1".to_string(),
+            "标题".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "once".to_string(),
+        );
+        // 中文 5 字符 → 不截断
+        let body = r.notification_body("你好世界测试");
+        assert_eq!(body, "你好世界测试");
     }
 }
