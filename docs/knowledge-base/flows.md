@@ -118,6 +118,7 @@ stateDiagram-v2
     Pending --> Pending : snooze(n) 设snoozed_until
     Pending --> Triggered : mark_triggered (仅一次性)
     Pending --> Pending : 调度器触发+is_repeating (重置remind_at)
+    Triggered --> Pending : snooze(n) 用户主动延后
     Triggered --> Done : mark_done
     Pending --> Done : mark_done
     Pending --> Cancelled : cancel
@@ -131,7 +132,7 @@ stateDiagram-v2
 | 状态 | 含义 | 允许的操作 |
 |------|------|------------|
 | Pending | 等待触发 | snooze, mark_done, cancel, 调度器触发 |
-| Triggered | 已触发（一次性提醒） | mark_done, cancel |
+| Triggered | 已触发（一次性提醒） | snooze, mark_done, cancel |
 | Done | 已完成 | 无（终态） |
 | Cancelled | 已取消 | 无（终态） |
 
@@ -145,6 +146,7 @@ stateDiagram-v2
 | Pending | Triggered | 调度器触发 + !is_repeating | 发送通知，创建便签窗口 |
 | Pending | Done | mark_done (dismiss_reminder) | 更新 status |
 | Pending | Cancelled | cancel (delete_reminder) | 从 DB 删除 |
+| Triggered | Pending | snooze(n)（用户主动延后） | 设置 snoozed_until，回到 Pending |
 | Triggered | Done | mark_done | 更新 status |
 | Triggered | Cancelled | cancel | 从 DB 删除 |
 
@@ -154,9 +156,13 @@ stateDiagram-v2
 |----|-----|------|
 | Done | Pending | 已完成不可恢复 |
 | Cancelled | Pending | 已取消不可恢复 |
-| Triggered | Pending | 一次性提醒触发后不可重置（周期提醒不进入 Triggered） |
 | Done | Triggered | 终态不可转换 |
 | Cancelled | Triggered | 终态不可转换 |
+| Triggered | Triggered | 不可重复触发（mark_triggered 仅 Pending 可调用） |
+
+> **说明**：Triggered → Pending via `snooze` 是合法的（用户主动延后已触发提醒，常见闹钟 UX）。
+> flows.md 原禁止"Triggered→Pending"针对的是 scheduler 自动重置（`advance_state` 只对 Pending 调用，不会触及 Triggered），
+> 不包含用户主动 snooze。代码层由 `Reminder::snooze` 状态校验保证（INV-031）。
 
 ---
 
@@ -181,3 +187,4 @@ stateDiagram-v2
 | 2026-07-09 | 更新提醒导入策略缺口为已修复 | — | #REFACTOR-001 |
 | 2026-07-09 | 调度器周期重置改用 domain 方法 reset_for_next_trigger | — | #REFACTOR-002 |
 | 2026-07-19 | Git 同步流程图更新为“先拉后推”；便签窗口生命周期补充 delete_note 路径；跨模块事件联动表补充 delete_note→window destroy | AI | v0.8.5 同步更新 constraints.md |
+| 2026-07-22 | Reminder 状态机补齐转换合法性校验（INV-031）：禁止转换表移除 Triggered→Pending（用户 snooze 合法），新增 Triggered→Triggered 禁止；转换规则表新增 Triggered→Pending(snooze)；状态图新增 Triggered→Pending 边 | AI | #REFACTOR-039 同步更新 constraints.md |

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use rusqlite::{params, OptionalExtension, Row};
 
-use crate::domain::{Reminder, ReminderRepository, ReminderStatus, RepeatType};
+use crate::domain::{Reminder, ReminderQuery, ReminderRepository, ReminderStatus, RepeatType};
 
 use super::Database;
 
@@ -32,6 +32,12 @@ fn row_to_reminder(row: &Row) -> rusqlite::Result<Reminder> {
 }
 
 const SELECT_COLS: &str = "id, note_id, note_title, remind_at, repeat_type, status, snoozed_until, created_at, updated_at";
+
+/// 有效触发时间的 SQL 表达式（INV-008）
+///
+/// 必须与 `domain::Reminder::effective_time()` 语义一致：贪睡中取 snoozed_until，否则取 remind_at。
+/// 集中为此常量，避免 COALESCE 表达式散布导致规则漂移（LES-022）。
+const EFFECTIVE_TIME_EXPR: &str = "COALESCE(snoozed_until, remind_at)";
 
 impl ReminderRepository for SqliteReminderRepository {
     fn save(&self, reminder: &Reminder) -> Result<(), String> {
@@ -79,25 +85,6 @@ impl ReminderRepository for SqliteReminderRepository {
         Ok(reminders)
     }
 
-    fn find_due(&self, now: &str) -> Result<Vec<Reminder>, String> {
-        let conn = self.db.lock()?;
-        let mut stmt = conn
-            .prepare(
-                &format!("SELECT {} FROM reminders
-                 WHERE status = 'pending'
-                   AND (snoozed_until IS NULL AND remind_at <= ?1
-                        OR snoozed_until IS NOT NULL AND snoozed_until <= ?1)
-                 ORDER BY remind_at ASC", SELECT_COLS),
-            )
-            .map_err(|e| e.to_string())?;
-        let reminders = stmt
-            .query_map(params![now], row_to_reminder)
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-        Ok(reminders)
-    }
-
     fn find_by_note_id(&self, note_id: &str) -> Result<Vec<Reminder>, String> {
         let conn = self.db.lock()?;
         let mut stmt = conn
@@ -124,31 +111,49 @@ impl ReminderRepository for SqliteReminderRepository {
             .map_err(|e| e.to_string())?;
         Ok(())
     }
+}
+
+/// Reminder 读投影实现（CQRS 风味拆分，ADR-010）
+impl ReminderQuery for SqliteReminderRepository {
+    fn find_due(&self, now: &str) -> Result<Vec<Reminder>, String> {
+        // 只用 SQL 筛 status='pending'，到期判断委托 `Reminder::is_due`（INV-008 单一真相源）。
+        // 避免 SQL 重新实现 is_due 的 snoozed/remind_at 比较逻辑导致规则漂移。
+        let conn = self.db.lock()?;
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT {} FROM reminders WHERE status = 'pending' ORDER BY remind_at ASC",
+                SELECT_COLS
+            ))
+            .map_err(|e| e.to_string())?;
+        let reminders: Vec<Reminder> = stmt
+            .query_map([], row_to_reminder)
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        Ok(reminders.into_iter().filter(|r| r.is_due(now)).collect())
+    }
 
     fn find_next_due_time(&self) -> Result<Option<String>, String> {
         let conn = self.db.lock()?;
+        let sql = format!(
+            "SELECT MIN({}) AS next_time FROM reminders WHERE status = 'pending'",
+            EFFECTIVE_TIME_EXPR
+        );
         let result = conn
-            .query_row(
-                "SELECT MIN(COALESCE(snoozed_until, remind_at)) AS next_time
-                 FROM reminders
-                 WHERE status = 'pending'",
-                [],
-                |row| row.get::<_, Option<String>>("next_time"),
-            )
+            .query_row(&sql, [], |row| row.get::<_, Option<String>>("next_time"))
             .map_err(|e| e.to_string())?;
         Ok(result)
     }
 
     fn find_by_date_range(&self, start: &str, end: &str) -> Result<Vec<Reminder>, String> {
         let conn = self.db.lock()?;
-        let mut stmt = conn
-            .prepare(
-                &format!("SELECT {} FROM reminders
-                 WHERE COALESCE(snoozed_until, remind_at) >= ?1
-                   AND COALESCE(snoozed_until, remind_at) < ?2
-                 ORDER BY remind_at ASC", SELECT_COLS),
-            )
-            .map_err(|e| e.to_string())?;
+        let sql = format!(
+            "SELECT {} FROM reminders
+             WHERE {} >= ?1 AND {} < ?2
+             ORDER BY remind_at ASC",
+            SELECT_COLS, EFFECTIVE_TIME_EXPR, EFFECTIVE_TIME_EXPR
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
         let reminders = stmt
             .query_map(params![start, end], row_to_reminder)
             .map_err(|e| e.to_string())?
@@ -219,6 +224,31 @@ mod tests {
         let repo = setup();
         // 创建一个未到期的提醒（未来时间）
         let reminder = make_reminder("2026-12-31T00:00:00Z", "once");
+        repo.save(&reminder).unwrap();
+
+        let due = repo.find_due("2026-07-03T00:00:00Z").unwrap();
+        assert_eq!(due.len(), 0);
+    }
+
+    #[test]
+    fn test_find_due_snoozed_due() {
+        let repo = setup();
+        // remind_at 已过，但 snoozed_until 也已过 → 到期
+        let mut reminder = make_reminder("2026-01-01T00:00:00Z", "once");
+        reminder.snoozed_until = Some("2026-01-01T00:30:00Z".to_string());
+        repo.save(&reminder).unwrap();
+
+        let due = repo.find_due("2026-07-03T00:00:00Z").unwrap();
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].id, reminder.id);
+    }
+
+    #[test]
+    fn test_find_due_snoozed_not_due() {
+        let repo = setup();
+        // remind_at 已过，但 snoozed_until 在未来 → 未到期（is_due 看 snoozed_until）
+        let mut reminder = make_reminder("2026-01-01T00:00:00Z", "once");
+        reminder.snoozed_until = Some("2026-12-31T00:00:00Z".to_string());
         repo.save(&reminder).unwrap();
 
         let due = repo.find_due("2026-07-03T00:00:00Z").unwrap();

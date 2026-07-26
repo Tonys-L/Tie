@@ -10,6 +10,7 @@ export const getNote = (id: string) => invoke<Note>('get_note', { id });
 export const getAllNotes = () => invoke<Note[]>('get_all_notes');
 export const getArchivedNotes = () => invoke<Note[]>('get_archived_notes');
 export const openNote = (id: string) => invoke('open_note', { id });
+export const activateNoteById = (noteId: string) => invoke('activate_note_by_id', { noteId });
 export const updateNoteContent = (id: string, content: string) => invoke('update_note_content', { id, content });
 export const updateNoteTitle = (id: string, title: string) => invoke('update_note_title', { id, title });
 export const updateNoteStyle = (id: string, color: string, opacity: number, isPinned: boolean) =>
@@ -25,6 +26,7 @@ export const updateNoteTags = (id: string, tags: string[]) => invoke('update_not
 // ---- 批量操作 ----
 
 export const batchArchiveNotes = (ids: string[]) => invoke<number>('batch_archive_notes', { ids });
+export const batchUnarchiveNotes = (ids: string[]) => invoke<number>('batch_unarchive_notes', { ids });
 export const batchDeleteNotes = (ids: string[]) => invoke<number>('batch_delete_notes', { ids });
 export const batchUpdateColor = (ids: string[], color: string) => invoke<number>('batch_update_color', { ids, color });
 
@@ -86,3 +88,18 @@ export const sniffSuggestions = (content: string) =>
   invoke<Suggestion[]>('sniff_suggestions', { content });
 export const generateReport = (periodType: 'weekly' | 'monthly', startDate: string, endDate: string) =>
   invoke<ReportDraft>('generate_report', { periodType, startDate, endDate });
+
+// ---- 系统/图片/窗口 ----
+
+export const setLocale = (locale: string) => invoke('set_locale', { locale });
+export const getImageDir = () => invoke<string>('get_image_dir');
+export const restoreWindowOnTop = (id: string) => invoke('restore_window_on_top', { id });
+export const openUrl = (url: string) => invoke('open_url', { url });
+export const saveImage = (data: number[], ext: string) => invoke<string>('save_image', { data, ext });
+
+// ---- AI 文本操作 ----
+
+export const aiRewriteText = (text: string, operation: string) =>
+  invoke<string>('ai_rewrite_text', { text, operation });
+export const aiSortTodos = (todos: string[]) =>
+  invoke<string[]>('ai_sort_todos', { todos });

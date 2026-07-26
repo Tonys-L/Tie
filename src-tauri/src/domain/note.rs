@@ -100,6 +100,22 @@ impl Note {
         self.touch();
     }
 
+    /// 判断便签是否为空（title + content 均空）
+    ///
+    /// 业务规则 INV-003：空便签在窗口关闭时从 DB 删除。
+    /// 集中在 Note 聚合根，避免判断逻辑散布到 application 层多个模块。
+    pub fn is_empty(&self) -> bool {
+        self.title.is_empty() && self.content.is_empty()
+    }
+
+    /// 判断便签是否可触发提醒（未归档）
+    ///
+    /// 业务规则：归档便签不触发提醒。
+    /// 集中在 Note 聚合根，让 reminder_scheduler 无需直接访问 is_archived 字段。
+    pub fn is_reminder_eligible(&self) -> bool {
+        !self.is_archived
+    }
+
     /// 更新窗口位置和尺寸（宽高低于最小值时自动修正）
     pub fn update_window_state(&mut self, x: i32, y: i32, width: u32, height: u32) {
         self.window_state.pos_x = x;
@@ -354,5 +370,62 @@ mod tests {
         note.remove_tag("nonexistent");
         assert_eq!(note.tags.len(), 1);
         assert_eq!(note.updated_at, original_time);
+    }
+
+    // ============ is_empty 测试 (INV-003) ============
+
+    #[test]
+    fn test_is_empty_both_empty() {
+        // title + content 均空 → is_empty 返回 true
+        let mut note = Note::new(String::new(), "amber".to_string());
+        note.title = String::new();
+        note.content = String::new();
+        assert!(note.is_empty());
+    }
+
+    #[test]
+    fn test_is_empty_title_only() {
+        // 仅 title 非空 → is_empty 返回 false
+        let mut note = Note::new(String::new(), "amber".to_string());
+        note.title = "有标题".to_string();
+        note.content = String::new();
+        assert!(!note.is_empty());
+    }
+
+    #[test]
+    fn test_is_empty_content_only() {
+        // 仅 content 非空 → is_empty 返回 false
+        let mut note = Note::new(String::new(), "amber".to_string());
+        note.title = String::new();
+        note.content = "有内容".to_string();
+        assert!(!note.is_empty());
+    }
+
+    #[test]
+    fn test_is_empty_both_filled() {
+        // title + content 均非空 → is_empty 返回 false
+        let mut note = Note::new(String::new(), "amber".to_string());
+        note.title = "标题".to_string();
+        note.content = "内容".to_string();
+        assert!(!note.is_empty());
+    }
+
+    // ============ is_reminder_eligible 测试 ============
+
+    #[test]
+    fn test_is_reminder_eligible_not_archived() {
+        // 未归档便签可触发提醒
+        let note = Note::new("测试".to_string(), "amber".to_string());
+        assert!(!note.is_archived);
+        assert!(note.is_reminder_eligible());
+    }
+
+    #[test]
+    fn test_is_reminder_eligible_archived() {
+        // 归档便签不可触发提醒
+        let mut note = Note::new("测试".to_string(), "amber".to_string());
+        note.archive();
+        assert!(note.is_archived);
+        assert!(!note.is_reminder_eligible());
     }
 }

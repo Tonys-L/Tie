@@ -1,8 +1,38 @@
-use std::collections::HashMap;
+//! Note 窗口生命周期管理：开窗、关闭、聚焦、置顶、闪烁、提醒激活、启动恢复
+//!
+//! 职责：
+//! - Note 窗口创建（open_note_window / open_note_window_with_url）
+//! - Note 窗口关闭（close_note_window，强制销毁）
+//! - Note 窗口聚焦 + 事件发送（focus_note_window_and_emit）
+//! - Note 窗口置顶状态（set_note_pinned / restore_note_on_top）
+//! - 闪烁提示（flash_window，置顶 5s 匹配前端动画）
+//! - 提醒触发激活（activate_note_for_reminder）
+//! - 启动恢复（restore_all_windows，含空便签清理 + 重叠解析）
+//!
+//! 调用方：
+//! - `commands/note_commands.rs`：开窗/关窗/置顶/恢复
+//! - `note_service`：create_note / open_note / open_note_with_flag / update_note_style
+//! - `template_service`：create_note_from_template
+//! - `reminder_scheduler`：activate_note_for_reminder
+//! - `tray_manager` / `shortcut_manager`：restore_all_windows
+//! - `lib.rs` setup：restore_all_windows
+//!
+//! 依赖：
+//! - `domain::{Note, value_objects::WindowState}`
+//! - `application::window_overlap_resolver`（启动恢复时解析重叠）
+//! - `tauri::AppHandle`
+//!
+//! 设计要点：
+//! - Hub 窗口管理已拆到 `hub_window_manager`，重叠物理已拆到 `window_overlap_resolver`
+//! - 本 module 聚焦 note 窗口生命周期，关注点单一
 
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::domain::{Note, value_objects::WindowState};
+
+use super::window_overlap_resolver;
+use super::note_service;
+use super::event_names::{FLASH_WINDOW, REMINDER_TRIGGERED};
 
 /// 闪烁提示：临时置顶 5s 匹配前端动画时长（2.5s × 2 次），立即定向发送 flash-window 事件
 ///
@@ -14,7 +44,7 @@ fn flash_window(window: &tauri::WebviewWindow, restore_on_top: bool) {
     let label = window.label().to_string();
     let _ = window.set_always_on_top(true);
     // 立即定向发送事件，前端开始闪烁动画（窗口处于置顶状态，可见）
-    let _ = window.emit_to(&label, "flash-window", ());
+    let _ = window.emit_to(&label, FLASH_WINDOW, ());
     let win_clone = window.clone();
     std::thread::spawn(move || {
         // 置顶保持 5s 匹配前端动画时长
@@ -106,7 +136,7 @@ pub fn activate_note_for_reminder(app: &AppHandle, note: &Note, reminder_id: &st
         let _ = window.unminimize();
         flash_window(&window, true);
         let _ = window.set_focus();
-        let _ = app.emit_to(&label, "reminder-triggered", serde_json::json!({ "reminder_id": reminder_id }));
+        let _ = app.emit_to(&label, REMINDER_TRIGGERED, serde_json::json!({ "reminder_id": reminder_id }));
         eprintln!("[调度器] 窗口已存在，发送 reminder-triggered 事件: note_id={}, reminder_id={}", note.id, reminder_id);
         Ok(())
     } else {
@@ -125,16 +155,21 @@ pub fn activate_note_for_reminder(app: &AppHandle, note: &Note, reminder_id: &st
 /// 打开所有已保存便签的窗口（启动时恢复）
 ///
 /// 空便签（无标题且无内容）直接删除（INV-003），不创建窗口。
-/// 检测位置重叠的便签并级联偏移，避免完全遮挡。
+/// 检测位置重叠的便签并级联偏移，避免完全遮挡（委托 `window_overlap_resolver`）。
 pub fn restore_all_windows(app: &AppHandle) -> Result<usize, String> {
     let state = app.state::<crate::AppState>();
     let notes = state.note_repo.find_all()?;
     let mut count = 0;
     let mut valid_notes: Vec<&Note> = Vec::new();
     for note in &notes {
-        // INV-003：空便签不应存在，启动时清理
-        if note.title.is_empty() && note.content.is_empty() {
-            if let Err(e) = state.note_repo.delete(&note.id) {
+        // INV-003：空便签不应存在，启动时清理（委托 note_service，含 emit NoteWritten(Deleted) 事件）
+        if note.is_empty() {
+            if let Err(e) = note_service::delete_note(
+                state.note_repo.as_ref(),
+                state.reminder_repo.as_ref(),
+                state.event_bus.as_ref(),
+                &note.id,
+            ) {
                 eprintln!("[恢复] 空便签删除失败 {}: {}", note.id, e);
             } else {
                 eprintln!("[恢复] 空便签已清理: {}", note.id);
@@ -148,64 +183,55 @@ pub fn restore_all_windows(app: &AppHandle) -> Result<usize, String> {
         }
         count += 1;
     }
-    // 防重叠：检测相同位置的便签，级联偏移 30px
-    resolve_overlaps(app, &valid_notes);
+    // 防重叠：检测相同位置的便签，级联偏移 30px（委托 window_overlap_resolver）
+    window_overlap_resolver::resolve_overlaps(app, &valid_notes);
     Ok(count)
 }
 
-/// 检测位置重叠的便签窗口，对后续同位置便签级联偏移
+/// 关闭便签窗口（强制销毁，对应 INV-026）
 ///
-/// 偏移量 = 重复序号 × 30px（x 和 y 同时偏移），形成层叠效果。
-/// 仅移动窗口位置，不修改 DB 中的 window_state（下次启动仍会检测并偏移）。
-fn resolve_overlaps(app: &AppHandle, notes: &[&Note]) {
-    let mut seen_positions: HashMap<(i32, i32), usize> = HashMap::new();
-    const OFFSET_PX: i32 = 30;
-
-    for note in notes {
-        let key = (note.window_state.pos_x, note.window_state.pos_y);
-        let dup_index = seen_positions.entry(key).or_insert(0);
-        if *dup_index > 0 {
-            let offset = (*dup_index as i32) * OFFSET_PX;
-            let label = format!("note-{}", note.id);
-            if let Some(win) = app.get_webview_window(&label) {
-                let _ = win.set_position(tauri::Position::Logical(
-                    tauri::LogicalPosition::new(
-                        (note.window_state.pos_x + offset) as f64,
-                        (note.window_state.pos_y + offset) as f64,
-                    ),
-                ));
-            }
-        }
-        *dup_index += 1;
+/// 窗口不存在时静默跳过。使用 `destroy()` 而非 `close()`，
+/// 避免 Tauri 2.x `onCloseRequested` 时序问题导致关闭失败（LES-016）。
+pub fn close_note_window(app: &AppHandle, note_id: &str) {
+    let label = format!("note-{}", note_id);
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.destroy();
     }
 }
 
-/// 切换 Hub（设置中心）窗口可见性：已显示则隐藏，隐藏或未创建则显示
-pub fn toggle_hub_window(app: &AppHandle) {
-    use crate::application::locale_manager;
-    if let Some(window) = app.get_webview_window("hub") {
-        // 已存在：切换可见性
-        if window.is_visible().unwrap_or(false) {
-            let _ = window.hide();
-        } else {
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
-        return;
+/// 设置便签窗口置顶状态
+///
+/// 窗口不存在时静默跳过。用于 `update_note_style` 等场景同步窗口的 always_on_top。
+pub fn set_note_pinned(app: &AppHandle, note_id: &str, is_pinned: bool) {
+    let label = format!("note-{}", note_id);
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.set_always_on_top(is_pinned);
     }
-    // 不存在：创建新窗口
-    let _window = WebviewWindowBuilder::new(app, "hub", WebviewUrl::App("hub.html".into()))
-        .title(locale_manager::menu_hub_title())
-        .inner_size(640.0, 520.0)
-        .decorations(true)
-        .transparent(false)
-        .resizable(true)
-        .always_on_top(false)
-        .disable_drag_drop_handler()
-        .build();
+}
 
-    if _window.is_err() {
-        eprintln!("[快捷键] 切换 Hub 窗口失败");
+/// 恢复便签窗口置顶状态为便签自身的 `is_pinned` 值
+///
+/// 用于提醒触发时临时置顶后，用户操作横幅后恢复原始状态。
+pub fn restore_note_on_top(app: &AppHandle, note: &Note) {
+    let label = format!("note-{}", note.id);
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.set_always_on_top(note.is_pinned);
+    }
+}
+
+/// 聚焦便签窗口并向该窗口定向发送事件
+///
+/// 窗口存在时聚焦 + emit_to 定向发送事件，返回 `true`；
+/// 窗口不存在时返回 `false`，调用方可据此决定是否创建新窗口。
+///
+/// `event` 参数由调用方提供（如 `"show-reminder-panel"`），window_manager 不关心事件语义。
+pub fn focus_note_window_and_emit(app: &AppHandle, note_id: &str, event: &str) -> bool {
+    let label = format!("note-{}", note_id);
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.set_focus();
+        let _ = app.emit_to(&label, event, ());
+        true
+    } else {
+        false
     }
 }

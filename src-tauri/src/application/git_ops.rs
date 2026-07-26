@@ -5,8 +5,10 @@ use std::process::{Command, Stdio};
 use std::os::windows::process::CommandExt;
 
 /// Windows: 隐藏控制台窗口的标志
+///
+/// pub 供 git_sync.rs 和 sync_commands.rs 复用，避免 magic number 散布（INV-014）。
 #[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
+pub const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 use super::sync_json_io;
 

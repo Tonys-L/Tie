@@ -185,14 +185,6 @@ impl AiService {
             })
             .ok_or_else(|| AiError::ParseError("响应内容为空（content 和 reasoning_content 均为空）".to_string()))
     }
-
-    /// 发送轻量请求验证配置可用性
-    pub async fn test_connection(&self) -> Result<String, AiError> {
-        let result = self
-            .call(vec![ChatMessage::user("ping")])
-            .await?;
-        Ok(result)
-    }
 }
 
 #[cfg(test)]
@@ -267,22 +259,6 @@ mod tests {
 
         let service = AiService::new(config_with_base(&server.url()));
         let result = service.call(vec![ChatMessage::user("ping")]).await;
-        assert_eq!(result, Ok("pong".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_test_connection_returns_content() {
-        let mut server = mockito::Server::new_async().await;
-        let _m = server
-            .mock("POST", "/chat/completions")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"choices":[{"message":{"role":"assistant","content":"pong"}}]}"#)
-            .create_async()
-            .await;
-
-        let service = AiService::new(config_with_base(&server.url()));
-        let result = service.test_connection().await;
         assert_eq!(result, Ok("pong".to_string()));
     }
 }

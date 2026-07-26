@@ -43,6 +43,15 @@ impl AiConfig {
         serde_json::from_str(&content).map_err(|e| format!("解析 AI 配置失败: {}", e))
     }
 
+    /// 从默认路径加载配置（用户配置目录下 `tie/ai_config.json`）
+    ///
+    /// 便捷方法：封装 `default_path() + load`，消除命令层重复（7 处命令共享同一加载模式）。
+    /// 文件不存在时返回默认空值（`is_configured` 返回 false）。
+    pub fn load_default() -> Result<Self, String> {
+        let path = Self::default_path();
+        Self::load(&path)
+    }
+
     /// 保存配置到指定路径（自动创建父目录）
     pub fn save(&self, path: &Path) -> Result<(), String> {
         if let Some(parent) = path.parent() {
@@ -163,5 +172,38 @@ mod tests {
         assert!(loaded.sniff_enabled, "旧配置文件缺失 sniff_enabled 应回退为 true");
 
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn test_load_default_returns_configured_value() {
+        // 备份当前默认路径配置（若存在），避免污染用户实际配置
+        let path = AiConfig::default_path();
+        let backup = if path.exists() {
+            Some(std::fs::read_to_string(&path).unwrap())
+        } else {
+            None
+        };
+
+        // 写入测试配置到默认路径
+        let test_config = AiConfig {
+            base_url: "https://test.example.com".to_string(),
+            api_key: "sk-load-default-test".to_string(),
+            model: "test-model".to_string(),
+            sniff_enabled: false,
+        };
+        test_config.save(&path).unwrap();
+
+        // load_default 应读回相同配置
+        let loaded = AiConfig::load_default().unwrap();
+        assert_eq!(loaded.base_url, "https://test.example.com");
+        assert_eq!(loaded.api_key, "sk-load-default-test");
+        assert_eq!(loaded.model, "test-model");
+        assert!(!loaded.sniff_enabled);
+
+        // 恢复或清理
+        match backup {
+            Some(content) => { std::fs::write(&path, content).ok(); }
+            None => { std::fs::remove_file(&path).ok(); }
+        }
     }
 }
