@@ -9,11 +9,11 @@
  *
  * 被调用方：hub.ts (页面切换时调用 loadAiConfig) + 顶层按钮绑定（模块加载时执行）
  * 依赖：api.ts (getAiConfig/saveAiConfig/testAiConnection/generateReport/createNote/...) +
- *       utils.ts (showToast) + i18n (t) + notes-list.ts (loadNotes 刷新便签列表)
+ *       toast.ts (showToast) + i18n (t) + notes-list.ts (loadNotes 刷新便签列表)
  */
 
 import * as api from './api';
-import { showToast } from './utils';
+import { showToast } from './toast';
 import { t } from './i18n';
 import { loadNotes } from './notes-list';
 

@@ -5,17 +5,16 @@ use tauri::{AppHandle, Emitter, State};
 use crate::AppState;
 use super::super::ai_config::AiConfig;
 use super::super::ai_service::{AiService, ChatMessage};
+use super::super::event_names::AI_CONFIG_CHANGED;
 
-/// 统一 AI 调用链：加载配置 → 校验已配置 → 构造 AiService → 调用 call → 转字符串错误。
+/// 统一 AI 调用链：加载配置 → 构造 AiService → 调用 call → 转字符串错误。
 ///
 /// `test_ai_connection` / `ai_rewrite_text` / `ai_sort_todos` 三个命令共用此封装，
-/// 避免每处内联 `load_default + is_configured + AiService::new + map_err` 链。
-/// 各命令的解析逻辑（trim / JSON 数组提取）保留在调用方，因为解析语义属于命令的接口契约。
+/// 避免每处内联 `load_default + AiService::new + call + map_err` 链。
+/// is_configured 检查由 `AiService::call` 单一守护（返回 `AiError::NotConfigured`），
+/// 经 `map_err(|e| e.to_string())` 转为 "AI 未配置：缺少 API Key"。
 async fn ai_call_raw(messages: Vec<ChatMessage>) -> Result<String, String> {
     let config = AiConfig::load_default()?;
-    if !config.is_configured() {
-        return Err("AI 未配置".to_string());
-    }
     let service = AiService::new(config);
     service.call(messages).await.map_err(|e| e.to_string())
 }
@@ -39,7 +38,7 @@ pub async fn save_ai_config(app: AppHandle, base_url: String, api_key: String, m
         sniff_enabled,
     };
     config.save(&path)?;
-    let _ = app.emit("ai-config-changed", ());
+    let _ = app.emit(AI_CONFIG_CHANGED, ());
     Ok(())
 }
 
@@ -79,7 +78,7 @@ pub async fn sniff_suggestions(content: String) -> Result<Vec<super::super::remi
 /// - `period_type`：`"weekly"` 或 `"monthly"`
 /// - `start_date` / `end_date`：ISO 格式 `YYYY-MM-DD`，用于过滤便签范围
 ///
-/// 未配置 AI 时返回 `"AI 未配置"` 错误。
+/// 未配置 AI 时返回 `"AI 未配置：缺少 API Key"` 错误（由 `AiService::call` 单一守护）。
 #[tauri::command]
 pub async fn generate_report(
     state: State<'_, AppState>,
@@ -88,9 +87,6 @@ pub async fn generate_report(
     end_date: String,
 ) -> Result<super::super::report_generator::ReportDraft, String> {
     let config = AiConfig::load_default()?;
-    if !config.is_configured() {
-        return Err("AI 未配置".to_string());
-    }
     // period_type 解析下沉到 report_generator::parse_period
     let period = super::super::report_generator::parse_period(&period_type, &start_date, &end_date)?;
     let notes = state.note_repo.find_all()?;
@@ -107,7 +103,7 @@ pub async fn generate_report(
 /// - `operation`：`tidy` / `todo_split` / `style_formal` / `style_concise` / `style_mild`
 /// - 文本长度限制 5~500 字符（按字符计数，避免 UTF-8 切片 panic）
 ///
-/// 未配置 AI 时返回 `"AI 未配置"` 错误。
+/// 未配置 AI 时返回 `"AI 未配置：缺少 API Key"` 错误（由 `AiService::call` 单一守护）。
 #[tauri::command]
 pub async fn ai_rewrite_text(
     _state: State<'_, AppState>,
@@ -140,8 +136,9 @@ pub async fn ai_sort_todos(
     // 解析 JSON 数组
     let trimmed = result.trim();
     // 尝试提取 JSON 数组（兼容 AI 可能附加的额外文本）
-    let json_str = extract_json_array(trimmed).ok_or_else(|| "排序结果解析失败".to_string())?;
-    let arr: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
+    let json_str = super::super::json_extract::extract_array(trimmed)
+        .ok_or_else(|| "排序结果解析失败".to_string())?;
+    let arr: serde_json::Value = serde_json::from_str(json_str).map_err(|e| e.to_string())?;
     let arr = arr
         .as_array()
         .ok_or_else(|| "排序结果不是数组".to_string())?;
@@ -155,13 +152,3 @@ pub async fn ai_sort_todos(
     Ok(sorted)
 }
 
-/// 从 AI 返回文本中提取 JSON 数组片段
-fn extract_json_array(text: &str) -> Option<String> {
-    let start = text.find('[')?;
-    let end = text.rfind(']')?;
-    if end >= start {
-        Some(text[start..=end].to_string())
-    } else {
-        None
-    }
-}

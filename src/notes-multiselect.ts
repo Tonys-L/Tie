@@ -17,6 +17,7 @@
 
 import * as api from './api';
 import { t } from './i18n';
+import { BATCH_COLORS } from './colors';
 
 // ===== 模块级 state =====
 let selectedIds: Set<string> = new Set();
@@ -136,7 +137,7 @@ function showColorPicker(ids: string[]): void {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
   panel.style.cssText = 'background:var(--surface);border-radius:10px;padding:12px;box-shadow:0 8px 28px rgba(0,0,0,0.2);display:flex;gap:8px;flex-wrap:wrap;width:200px;';
-  const allColors: Record<string, string> = { amber: '#f59e0b', blue: '#3b82f6', green: '#22c55e', pink: '#ec4899', purple: '#8b5cf6' };
+  const allColors = BATCH_COLORS;
   Object.entries(allColors).forEach(([name, dot]) => {
     const c = document.createElement('div');
     c.style.cssText = `width:28px;height:28px;border-radius:50%;cursor:pointer;background:${dot};border:2px solid rgba(0,0,0,0.1);transition:transform 0.12s;`;

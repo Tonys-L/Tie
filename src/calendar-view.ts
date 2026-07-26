@@ -8,7 +8,7 @@
  * - showDayDetail 当日详情：提醒列表 + 当天更新便签列表（点击激活便签）
  *
  * 被调用方：hub.ts (页面切换时调用)
- * 依赖：@tauri-apps/api/core (invoke) + api.ts + utils.ts (escapeHtml/repeatLabel) +
+ * 依赖：@tauri-apps/api/core (invoke) + api.ts + html.ts (escapeHtml) + datetime.ts (repeatLabel) +
  *       i18n (t/getLocale/getLocaleTag) + types (Reminder) +
  *       notes-list.ts (getActiveNotes/getArchivedNotes 读取便签用于 showDayDetail)
  */
@@ -16,7 +16,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { Reminder } from './types';
 import * as api from './api';
-import { escapeHtml, repeatLabel } from './utils';
+import { escapeHtml } from './html';
+import { repeatLabel } from './datetime';
 import { t, getLocale, getLocaleTag } from './i18n';
 import { getActiveNotes, getArchivedNotes } from './notes-list';
 

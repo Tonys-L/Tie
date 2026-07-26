@@ -30,6 +30,7 @@ tauri-plugin-process = "2"
 tyme4rs = "1"
 reqwest = { version = "0.12", features = ["json"] }
 dirs = "5"
+tauri-plugin-wdio-webdriver = "1"
 
 [dev-dependencies]
 mockito = "1"

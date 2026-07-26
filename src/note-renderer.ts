@@ -7,33 +7,34 @@
  * - 横幅事件：关闭/贪睡/完成按钮
  * - 调用 setupEventsCallback 让 main.ts 编排其他 setup 函数（避免循环依赖）
  *
- * 不负责：applyNoteStyle / formatNoteTime（已下沉到 note-style.ts）
+ * 不负责：applyNoteStyle（在 colors.ts）/ formatNoteTime（在 datetime.ts）
  *
  * 被调用方：main.ts (initNoteWindow)
- * 依赖：note-style.ts (applyNoteStyle/formatNoteTime) + tag-bar.ts + image-resize.ts +
+ * 依赖：colors.ts (COLORS/applyNoteStyle) + datetime.ts (formatNoteTime) + tag-bar.ts + image-resize.ts +
  *       context-menu.ts (setupContextMenu) + ai-todo-sort.ts + template-ui.ts +
- *       markdown-renderer.ts + api.ts + utils.ts (COLORS/escapeHtml) + i18n + note-context.ts
+ *       markdown-renderer.ts + api.ts + html.ts (escapeHtml) + i18n + note-context.ts
  */
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { Note } from './types';
-import { COLORS, escapeHtml } from './utils';
 import { t } from './i18n';
 import * as api from './api';
 import { renderMarkdown } from './markdown-renderer';
-import { applyNoteStyle, formatNoteTime } from './note-style';
+import { escapeHtml } from './html';
+import { COLORS, applyNoteStyle } from './colors';
+import { formatNoteTime } from './datetime';
 import { renderTagPills, setupTagEvents } from './tag-bar';
 import { setupImageResize } from './image-resize';
 import { setupContextMenu } from './context-menu';
 import { setupTodoSortButton } from './ai-todo-sort';
 import { setupTemplateQuickBar } from './template-ui';
 import { getCurrentReminderId } from './note-context';
+import { REMINDER_CHANGED, NOTE_ARCHIVED, NOTE_UNARCHIVED, NOTE_COLOR_CHANGED } from './events';
 
 /**
- * 渲染便签窗口。
- * @param setupEventsCallback 由 main.ts 提供，用于编排 setupNoteEvents 等需要 main.ts 状态的事件绑定
+ * 生成便签 DOM 结构（纯 DOM 生成，无事件绑定）。
  */
-export function renderNote(note: Note, setupEventsCallback: (note: Note, app: HTMLElement) => void): void {
+function renderNoteDom(note: Note): HTMLElement {
   const app = document.getElementById('app')!;
   app.innerHTML = `
     <div class="reminder-banner" data-reminder-banner style="display:none">
@@ -76,12 +77,15 @@ export function renderNote(note: Note, setupEventsCallback: (note: Note, app: HT
 	      <button class="icon-btn del-btn" data-delete title="${t('note.delete')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg></button>
     </div>
   `;
+  return app;
+}
 
-  applyNoteStyle(note);
-  setupEventsCallback(note, app);
-  setupTagEvents(note);
-  setupImageResize(note);
-
+/**
+ * 设置后端事件监听：reminder-changed / note-archived / note-unarchived / note-color-changed。
+ *
+ * 无论谁触发（手动创建/AI创建/删除/贪睡/关闭），UI 都能自动同步。
+ */
+function setupNoteEventListeners(note: Note, app: HTMLElement): void {
   // 检查是否有活跃提醒，有则给提醒按钮添加 has-reminder class（图标变橙色）
   function refreshReminderIcon(): void {
     api.getReminders(note.id)
@@ -96,15 +100,14 @@ export function renderNote(note: Note, setupEventsCallback: (note: Note, app: HT
   refreshReminderIcon();
 
   // 监听后端 reminder-changed 事件，统一更新提醒图标状态
-  // 无论谁触发（手动创建/AI创建/删除/贪睡/关闭），UI 都能自动同步
-  getCurrentWindow().listen<string>('reminder-changed', (event) => {
+  getCurrentWindow().listen<string>(REMINDER_CHANGED, (event) => {
     if (event.payload === note.id) {
       refreshReminderIcon();
     }
   });
 
   // 监听后端 note-archived 事件：Hub 归档便签时，已打开的窗口加蒙层变只读
-  getCurrentWindow().listen<string>('note-archived', (event) => {
+  getCurrentWindow().listen<string>(NOTE_ARCHIVED, (event) => {
     if (event.payload !== note.id) return;
     note.is_archived = true;
     // 添加蒙层
@@ -135,7 +138,7 @@ export function renderNote(note: Note, setupEventsCallback: (note: Note, app: HT
   });
 
   // 监听后端 note-unarchived 事件：Hub 恢复便签时，已打开的窗口移除蒙层
-  getCurrentWindow().listen<string>('note-unarchived', (event) => {
+  getCurrentWindow().listen<string>(NOTE_UNARCHIVED, (event) => {
     if (event.payload !== note.id) return;
     note.is_archived = false;
     // 移除蒙层
@@ -158,7 +161,7 @@ export function renderNote(note: Note, setupEventsCallback: (note: Note, app: HT
   });
 
   // 监听后端 note-color-changed 事件：Hub 批量改色时，已打开的窗口同步更新
-  getCurrentWindow().listen<{id: string, color: string}>('note-color-changed', (event) => {
+  getCurrentWindow().listen<{id: string, color: string}>(NOTE_COLOR_CHANGED, (event) => {
     if (event.payload.id !== note.id) return;
     note.color = event.payload.color;
     applyNoteStyle(note);
@@ -167,13 +170,17 @@ export function renderNote(note: Note, setupEventsCallback: (note: Note, app: HT
       d.classList.toggle('active', (d as HTMLElement).dataset.color === note.color);
     });
   });
+}
 
-  // 关闭横幅按钮
+/**
+ * 设置提醒横幅按钮事件：关闭/贪睡/完成。
+ */
+function setupReminderBanner(note: Note, app: HTMLElement): void {
   const banner = app.querySelector('[data-reminder-banner]') as HTMLElement;
+  // 关闭横幅按钮
   app.querySelector('[data-banner-close]')!.addEventListener('click', () => {
     banner.style.display = 'none';
     app.classList.remove('reminder-flash');
-    // 恢复窗口原始置顶状态
     api.restoreWindowOnTop(note.id);
   });
   // 贪睡按钮：5分钟后再次提醒
@@ -196,13 +203,26 @@ export function renderNote(note: Note, setupEventsCallback: (note: Note, app: HT
     app.classList.remove('reminder-flash');
     api.restoreWindowOnTop(note.id);
   });
+}
 
-  // ---- 右键菜单 ----
+/**
+ * 渲染便签窗口（编排函数）。
+ *
+ * 依次调用：renderNoteDom → applyNoteStyle → setupEventsCallback → setupTagEvents →
+ * setupImageResize → setupNoteEventListeners → setupReminderBanner →
+ * setupContextMenu → setupTodoSortButton → setupTemplateQuickBar
+ *
+ * @param setupEventsCallback 由 main.ts 提供，用于编排需要 main.ts 状态的事件绑定
+ */
+export function renderNote(note: Note, setupEventsCallback: (note: Note, app: HTMLElement) => void): void {
+  const app = renderNoteDom(note);
+  applyNoteStyle(note);
+  setupEventsCallback(note, app);
+  setupTagEvents(note);
+  setupImageResize(note);
+  setupNoteEventListeners(note, app);
+  setupReminderBanner(note, app);
   setupContextMenu(note, app);
-
-  // ---- 待办排序按钮 ----
   setupTodoSortButton(note, app);
-
-  // ---- 空便签模板快捷条 ----
   setupTemplateQuickBar(note, app);
 }

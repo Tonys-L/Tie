@@ -10,13 +10,14 @@
  *
  * 被调用方：hub.ts (顶层按钮绑定在模块加载时执行)
  * 依赖：api.ts (getTemplates/saveTemplate/deleteTemplate/createNoteFromTemplate) +
- *       utils.ts (escapeHtml/showToast) + i18n (t) + types (Template) +
+ *       html.ts (escapeHtml) + toast.ts (showToast) + i18n (t) + types (Template) +
  *       notes-list.ts (loadNotes 从模板新建后刷新便签列表)
  */
 
 import type { Template } from './types';
 import * as api from './api';
-import { escapeHtml, showToast } from './utils';
+import { escapeHtml } from './html';
+import { showToast } from './toast';
 import { t } from './i18n';
 import { loadNotes } from './notes-list';
 

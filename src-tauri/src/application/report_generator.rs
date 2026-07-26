@@ -91,15 +91,12 @@ pub fn parse_period(period_type: &str, start_date: &str, end_date: &str) -> Resu
 /// - 每条取 content 前 200 字符
 /// - 格式化为 `[YYYY-MM-DD] 标题: 内容摘要`
 ///
-/// 未配置 AI（api_key 为空）时返回 `AiError::NotConfigured`。
+/// 未配置 AI（api_key 为空）时返回 `AiError::NotConfigured`（由 `AiService::call` 单一守护）。
 pub async fn generate_report(
     notes: &[Note],
     period_type: ReportPeriod,
     config: &AiConfig,
 ) -> Result<ReportDraft, AiError> {
-    if !config.is_configured() {
-        return Err(AiError::NotConfigured);
-    }
     let notes_summary = build_notes_summary(notes);
     let period_str = build_period_str(&period_type);
     let messages = build_report_messages(&period_str, &notes_summary);

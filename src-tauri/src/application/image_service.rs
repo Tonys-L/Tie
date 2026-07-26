@@ -58,12 +58,10 @@ pub fn cleanup_removed_images(old_content: &str, new_content: &str) {
 /// 获取图片存储目录（exe 同级 data/sync/images/）
 ///
 /// 目录不存在时会自动创建。
+/// 基础路径（exe 同级 data）委托 `application::paths::data_dir_path`（单一所有者），
+/// 本函数只追加 sync/images 子目录。
 pub fn image_dir() -> Result<PathBuf, String> {
-    let dir = std::env::current_exe()
-        .map_err(|e| format!("获取 exe 路径失败: {}", e))?
-        .parent()
-        .ok_or("无法获取父目录")?
-        .join("data")
+    let dir = crate::application::paths::data_dir_path()?
         .join("sync")
         .join("images");
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建图片目录失败: {}", e))?;

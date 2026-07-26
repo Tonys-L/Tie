@@ -134,38 +134,86 @@ impl Reminder {
         if self.status != ReminderStatus::Pending {
             return false;
         }
-        // 如果贪睡中，检查贪睡截止时间
-        if let Some(ref snoozed) = self.snoozed_until {
-            return snoozed.as_str() <= now;
-        }
-        self.remind_at.as_str() <= now
+        self.effective_time() <= now
+    }
+
+    /// 有效触发时间（单一真相源，INV-008）
+    ///
+    /// 贪睡中返回 `snoozed_until`，否则返回 `remind_at`。
+    /// infrastructure 的 SQL `COALESCE(snoozed_until, remind_at)` 必须与此语义一致。
+    pub fn effective_time(&self) -> &str {
+        self.snoozed_until.as_deref().unwrap_or(&self.remind_at)
     }
 
     /// 标记为已触发
-    pub fn mark_triggered(&mut self) {
-        self.status = ReminderStatus::Triggered;
-        self.snoozed_until = None;
-        self.touch();
+    ///
+    /// 仅 Pending 可触发（INV-008）。终态（Done/Cancelled）及 Triggered 拒绝转换。
+    pub fn mark_triggered(&mut self) -> Result<(), String> {
+        match self.status {
+            ReminderStatus::Pending => {
+                self.status = ReminderStatus::Triggered;
+                self.snoozed_until = None;
+                self.touch();
+                Ok(())
+            }
+            _ => Err(format!(
+                "非法状态转换: {} 不允许 mark_triggered（仅 Pending 可触发）",
+                self.status.as_str()
+            )),
+        }
     }
 
     /// 贪睡
-    pub fn snooze(&mut self, minutes: i64) {
-        let until = Utc::now() + chrono::Duration::minutes(minutes);
-        self.snoozed_until = Some(until.to_rfc3339());
-        self.status = ReminderStatus::Pending;
-        self.touch();
+    ///
+    /// 仅 Pending/Triggered 可贪睡（用户主动延后）。终态（Done/Cancelled）拒绝转换。
+    pub fn snooze(&mut self, minutes: i64) -> Result<(), String> {
+        match self.status {
+            ReminderStatus::Pending | ReminderStatus::Triggered => {
+                let until = Utc::now() + chrono::Duration::minutes(minutes);
+                self.snoozed_until = Some(until.to_rfc3339());
+                self.status = ReminderStatus::Pending;
+                self.touch();
+                Ok(())
+            }
+            _ => Err(format!(
+                "非法状态转换: {} 不允许 snooze（终态不可贪睡）",
+                self.status.as_str()
+            )),
+        }
     }
 
     /// 标记完成
-    pub fn mark_done(&mut self) {
-        self.status = ReminderStatus::Done;
-        self.touch();
+    ///
+    /// 仅 Pending/Triggered 可标记完成。终态（Done/Cancelled）拒绝转换。
+    pub fn mark_done(&mut self) -> Result<(), String> {
+        match self.status {
+            ReminderStatus::Pending | ReminderStatus::Triggered => {
+                self.status = ReminderStatus::Done;
+                self.touch();
+                Ok(())
+            }
+            _ => Err(format!(
+                "非法状态转换: {} 不允许 mark_done（终态不可转换）",
+                self.status.as_str()
+            )),
+        }
     }
 
     /// 取消
-    pub fn cancel(&mut self) {
-        self.status = ReminderStatus::Cancelled;
-        self.touch();
+    ///
+    /// 仅 Pending/Triggered 可取消。终态（Done/Cancelled）拒绝转换。
+    pub fn cancel(&mut self) -> Result<(), String> {
+        match self.status {
+            ReminderStatus::Pending | ReminderStatus::Triggered => {
+                self.status = ReminderStatus::Cancelled;
+                self.touch();
+                Ok(())
+            }
+            _ => Err(format!(
+                "非法状态转换: {} 不允许 cancel（终态不可转换）",
+                self.status.as_str()
+            )),
+        }
     }
 
     /// 是否为周期提醒
@@ -226,10 +274,15 @@ impl Reminder {
     ///
     /// 设计目的：把状态推进逻辑从 application 层下沉到 domain 层，
     /// 消除 fire_reminders 中"if repeat_type == LunarMonthly"的二次判别。
+    ///
+    /// 契约：调用方必须保证 `self.status == Pending`（`fire_reminders_with_deps` 通过
+    /// `find_due` 的 `WHERE status='pending'` 保证）。内部 `mark_triggered` 用 expect
+    /// 表达此契约，若违反则 panic 暴露调用方 bug。
     pub fn advance_state(&mut self, calendar: &dyn CalendarAdapter) -> AdvanceResult {
         match self.next_trigger() {
             NextTrigger::None => {
-                self.mark_triggered();
+                self.mark_triggered()
+                    .expect("advance_state 契约: 仅对 Pending 提醒调用");
                 AdvanceResult::MarkedTriggered
             }
             NextTrigger::DateTime(next) => {
@@ -247,7 +300,8 @@ impl Reminder {
                         AdvanceResult::ResetToNext
                     }
                     None => {
-                        self.mark_triggered();
+                        self.mark_triggered()
+                            .expect("advance_state 契约: 仅对 Pending 提醒调用");
                         AdvanceResult::MarkedTriggered
                     }
                 }
@@ -317,6 +371,56 @@ mod tests {
         assert!(r.is_due("2026-07-03T00:00:00Z"));
     }
 
+    // 回归测试：时间格式不一致时的 is_due 行为（LES-024 时间格式漂移）
+    // 字符串比较 ISO 8601 时间在数字部分（年月日时分秒）按字典序与数值比较一致
+    // 仅在同一秒内的毫秒部分可能出现边界问题（最多 1 秒误差，可接受）
+    #[test]
+    fn test_is_due_remind_at_with_millis_now_without_millis() {
+        // remind_at 带毫秒，now 不带毫秒，remind_at < now → 应到期
+        let r = Reminder::new(
+            "note-1".to_string(),
+            "".to_string(),
+            "2026-07-25T14:18:00.000Z".to_string(),
+            "once".to_string(),
+        );
+        assert!(r.is_due("2026-07-25T14:18:30Z"));
+    }
+
+    #[test]
+    fn test_is_due_both_without_millis_normal_case() {
+        // 修复后默认场景：remind_at 和 now 都不带毫秒
+        let r = Reminder::new(
+            "note-1".to_string(),
+            "".to_string(),
+            "2026-07-25T14:18:00Z".to_string(),
+            "once".to_string(),
+        );
+        // 正好到期
+        assert!(r.is_due("2026-07-25T14:18:00Z"));
+        // 提前 1 秒
+        assert!(!r.is_due("2026-07-25T14:17:59Z"));
+        // 延后 1 秒
+        assert!(r.is_due("2026-07-25T14:18:01Z"));
+    }
+
+    #[test]
+    fn test_is_due_same_second_millis_boundary() {
+        // 边界场景：remind_at 和 now 在同一秒，毫秒部分格式不一致
+        // remind_at="...14:18:00Z" vs now="...14:18:00.123Z"
+        // 字符串比较第 20 位 'Z'（90）> '.'（46）→ remind_at > now → is_due 返回 false
+        // 这是字符串比较的固有缺陷，最多导致 1 秒延迟，可接受
+        let r = Reminder::new(
+            "note-1".to_string(),
+            "".to_string(),
+            "2026-07-25T14:18:00Z".to_string(),
+            "once".to_string(),
+        );
+        // now 比 remind_at 晚 123ms，但因格式不一致字符串比较认为 remind_at > now
+        assert!(!r.is_due("2026-07-25T14:18:00.123Z"));
+        // 修复后 now 不带毫秒，此边界场景不会出现
+        assert!(r.is_due("2026-07-25T14:18:01Z"));
+    }
+
     #[test]
     fn test_snooze() {
         let mut r = Reminder::new(
@@ -325,8 +429,8 @@ mod tests {
             "2026-01-01T00:00:00Z".to_string(),
             "once".to_string(),
         );
-        r.mark_triggered();
-        r.snooze(5);
+        r.mark_triggered().unwrap();
+        r.snooze(5).unwrap();
         assert_eq!(r.status, ReminderStatus::Pending);
         assert!(r.snoozed_until.is_some());
     }
@@ -438,7 +542,7 @@ mod tests {
             "once".to_string(),
         );
         assert_eq!(r.status, ReminderStatus::Pending);
-        r.mark_done();
+        r.mark_done().unwrap();
         assert_eq!(r.status, ReminderStatus::Done);
     }
 
@@ -451,8 +555,124 @@ mod tests {
             "once".to_string(),
         );
         assert_eq!(r.status, ReminderStatus::Pending);
-        r.cancel();
+        r.cancel().unwrap();
         assert_eq!(r.status, ReminderStatus::Cancelled);
+    }
+
+    // ============ 状态转换合法性测试（INV-031）============
+    // 约束：constraints.md 第 363-367 行要求每个合法转换 + 每个禁止转换独立测试
+
+    fn make_reminder() -> Reminder {
+        Reminder::new(
+            "note-1".to_string(),
+            "".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "once".to_string(),
+        )
+    }
+
+    // --- 合法转换 ---
+
+    #[test]
+    fn test_snooze_from_pending_keeps_pending() {
+        let mut r = make_reminder();
+        r.snooze(5).unwrap();
+        assert_eq!(r.status, ReminderStatus::Pending);
+        assert!(r.snoozed_until.is_some());
+    }
+
+    #[test]
+    fn test_mark_done_from_triggered() {
+        let mut r = make_reminder();
+        r.mark_triggered().unwrap();
+        r.mark_done().unwrap();
+        assert_eq!(r.status, ReminderStatus::Done);
+    }
+
+    #[test]
+    fn test_cancel_from_triggered() {
+        let mut r = make_reminder();
+        r.mark_triggered().unwrap();
+        r.cancel().unwrap();
+        assert_eq!(r.status, ReminderStatus::Cancelled);
+    }
+
+    // --- 禁止转换：Done 终态拒绝所有 ---
+
+    #[test]
+    fn test_done_rejects_mark_triggered() {
+        let mut r = make_reminder();
+        r.status = ReminderStatus::Done;
+        assert!(r.mark_triggered().is_err());
+        assert_eq!(r.status, ReminderStatus::Done);
+    }
+
+    #[test]
+    fn test_done_rejects_snooze() {
+        let mut r = make_reminder();
+        r.status = ReminderStatus::Done;
+        assert!(r.snooze(5).is_err());
+        assert_eq!(r.status, ReminderStatus::Done);
+    }
+
+    #[test]
+    fn test_done_rejects_mark_done() {
+        let mut r = make_reminder();
+        r.status = ReminderStatus::Done;
+        assert!(r.mark_done().is_err());
+        assert_eq!(r.status, ReminderStatus::Done);
+    }
+
+    #[test]
+    fn test_done_rejects_cancel() {
+        let mut r = make_reminder();
+        r.status = ReminderStatus::Done;
+        assert!(r.cancel().is_err());
+        assert_eq!(r.status, ReminderStatus::Done);
+    }
+
+    // --- 禁止转换：Cancelled 终态拒绝所有 ---
+
+    #[test]
+    fn test_cancelled_rejects_mark_triggered() {
+        let mut r = make_reminder();
+        r.status = ReminderStatus::Cancelled;
+        assert!(r.mark_triggered().is_err());
+        assert_eq!(r.status, ReminderStatus::Cancelled);
+    }
+
+    #[test]
+    fn test_cancelled_rejects_snooze() {
+        let mut r = make_reminder();
+        r.status = ReminderStatus::Cancelled;
+        assert!(r.snooze(5).is_err());
+        assert_eq!(r.status, ReminderStatus::Cancelled);
+    }
+
+    #[test]
+    fn test_cancelled_rejects_mark_done() {
+        let mut r = make_reminder();
+        r.status = ReminderStatus::Cancelled;
+        assert!(r.mark_done().is_err());
+        assert_eq!(r.status, ReminderStatus::Cancelled);
+    }
+
+    #[test]
+    fn test_cancelled_rejects_cancel() {
+        let mut r = make_reminder();
+        r.status = ReminderStatus::Cancelled;
+        assert!(r.cancel().is_err());
+        assert_eq!(r.status, ReminderStatus::Cancelled);
+    }
+
+    // --- 禁止转换：Triggered 不可重复触发 ---
+
+    #[test]
+    fn test_triggered_rejects_mark_triggered() {
+        let mut r = make_reminder();
+        r.mark_triggered().unwrap();
+        assert!(r.mark_triggered().is_err());
+        assert_eq!(r.status, ReminderStatus::Triggered);
     }
 
     // ============ advance_state 测试 ============

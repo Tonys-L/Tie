@@ -78,7 +78,7 @@ fn register_handlers(gs: &GlobalShortcut<tauri::Wry>, config: &ShortcutConfig) -
 
     gs.on_shortcut(toggle_hub_key.as_str(), move |app: &AppHandle, _shortcut, event| {
         if event.state == ShortcutState::Pressed {
-            super::window_manager::toggle_hub_window(app);
+            super::hub_window_manager::toggle_hub_window(app);
         }
     })
     .map_err(|e| format!("注册快捷键 '{}' 失败: {}", toggle_hub_key, e))?;
@@ -126,10 +126,23 @@ impl ShortcutManager {
 }
 
 /// 启动时注册快捷键（首次注册，无需注销旧快捷键）
+///
+/// 容错策略：注册失败时记录警告但不阻止应用启动。
+/// 原因：快捷键可能被其他程序占用（如残留进程、其他应用），应用不应因此崩溃。
+/// 用户可通过 Hub 设置页修改快捷键配置（`save_and_reregister` 仍严格报错反馈用户）。
 pub fn setup_shortcuts(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<crate::AppState>();
     let config = state.shortcut_manager.get_config();
     let gs = app.global_shortcut();
 
-    register_handlers(&gs, &config)
+    match register_handlers(&gs, &config) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            eprintln!(
+                "[setup] 全局快捷键注册失败（应用继续启动，该快捷键不可用）: {}",
+                e
+            );
+            Ok(())
+        }
+    }
 }

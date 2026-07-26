@@ -9,7 +9,7 @@
  * 不负责：具体业务实现（已按 UI 部件拆分到独立模块，见下方 imports）
  *
  * 被调用方：HTML 入口（note.html）加载本模块
- * 依赖：note-renderer (renderNote) + note-style (applyNoteStyle) + context-menu (showCustomColorPanel) +
+ * 依赖：note-renderer (renderNote) + colors (applyNoteStyle) + context-menu (showCustomColorPanel) +
  *       reminder-panel (showReminderPanel) + ai-sniff (setupAiSniffButton/sniffAfterSave) +
  *       ai-todo-sort (setupTodoSortButton/clearSortedMark) +
  *       window-state + delete-confirm + title-edit + markdown-renderer + note-context + api + i18n
@@ -27,7 +27,7 @@ import './styles.css';
 // ===== 便签基础：state / 窗口 / 渲染 =====
 import { setNote, setCurrentReminderId } from './note-context';
 import { setupWindowEvents, setClosing } from './window-state';
-import { applyNoteStyle } from './note-style';
+import { applyNoteStyle } from './colors';
 import { renderNote } from './note-renderer';
 
 // ===== 便签 UI 部件 =====
@@ -39,6 +39,7 @@ import { showReminderPanel } from './reminder-panel';
 // ===== AI 能力 =====
 import { setupAiSniffButton, sniffAfterSave } from './ai-sniff';
 import { setupTodoSortButton, clearSortedMark } from './ai-todo-sort';
+import { FLASH_WINDOW, REMINDER_TRIGGERED } from './events';
 
 initLocale();
 applyLocale();
@@ -88,14 +89,14 @@ async function initNoteWindow(id: string) {
   }
 
   // 监听闪烁事件：窗口已存在时被聚焦，加边框闪烁动画
-  getCurrentWindow().listen('flash-window', () => {
+  getCurrentWindow().listen(FLASH_WINDOW, () => {
     const app = document.getElementById('app')!;
     app.classList.add('flash-highlight');
     setTimeout(() => app.classList.remove('flash-highlight'), 5100);
   });
 
   // 监听提醒触发事件：窗口已存在时，后端发送此事件显示横幅
-  getCurrentWindow().listen('reminder-triggered', (event) => {
+  getCurrentWindow().listen(REMINDER_TRIGGERED, (event) => {
     const payload = event.payload as { reminder_id: string };
     setCurrentReminderId(payload.reminder_id);
     const app = document.getElementById('app')!;
@@ -295,8 +296,25 @@ function bindToolbar(note: Note, app: HTMLElement): void {
     api.updateNoteStyle(note.id, note.color, note.opacity, note.is_pinned);
   });
 
-  // 关闭窗口
-  app.querySelector('[data-close]')!.addEventListener('click', () => {
+  // 关闭窗口：若处于编辑模式，先保存内容再关闭
+  // 避免 close_note_if_empty 检查到空内容导致便签被误删除（INV-003 竞态）
+  app.querySelector('[data-close]')!.addEventListener('click', async () => {
+    const textareaEl = app.querySelector('[data-content]') as HTMLTextAreaElement;
+    const contentViewEl = app.querySelector('[data-content-view]') as HTMLElement;
+    if (textareaEl.style.display !== 'none') {
+      const content = textareaEl.value;
+      if (content !== note.content) {
+        note.content = content;
+        try {
+          await api.updateNoteContent(note.id, content);
+        } catch (e) {
+          console.error('保存便签失败:', e);
+        }
+      }
+      textareaEl.style.display = 'none';
+      contentViewEl.style.display = 'block';
+      contentViewEl.innerHTML = renderMarkdown(content);
+    }
     setClosing(true);
     win.close();
   });

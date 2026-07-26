@@ -7,12 +7,14 @@
  * - sortedNoteIds 集合记录已排序便签，避免重复显示按钮
  *
  * 被调用方：main.ts (bindTodoSort) + note-renderer.ts (renderNote 回调) + template-ui.ts (应用模板后清除排序标记)
- * 依赖：api.ts (aiSortTodos) + markdown-renderer.ts (renderMarkdown) + utils.ts (showToast) + i18n
+ * 依赖：api.ts (aiSortTodos/updateNoteContent) + ai-client.ts (runAi 包装) +
+ *       markdown-renderer.ts (renderMarkdown) + toast.ts (showToast) + i18n
  */
 
 import type { Note } from './types';
 import { t } from './i18n';
-import { showToast } from './utils';
+import { showToast } from './toast';
+import { runAi } from './ai-client';
 import * as api from './api';
 import { renderMarkdown } from './markdown-renderer';
 
@@ -69,29 +71,27 @@ export function setupTodoSortButton(note: Note, app: HTMLElement): void {
   btn.addEventListener('click', async () => {
     btn.textContent = t('note.aiSorting');
     (btn as HTMLButtonElement).disabled = true;
-    try {
-      const sorted = await api.aiSortTodos(todos);
+    const sorted = await runAi(() => api.aiSortTodos(todos), {
+      errorPrefix: t('note.aiFailed'),
+    });
+    if (sorted) {
       if (sorted.length !== todos.length) {
         showToast(t('note.aiSortMismatch'), 'error');
-        return;
+      } else {
+        note.content = applySortedTodos(note.content, sorted);
+        // 标记为已排序，排序后不重新显示按钮
+        sortedNoteIds.add(note.id);
+        // 更新编辑框和视图
+        const textarea = app.querySelector('[data-content]') as HTMLTextAreaElement;
+        if (textarea) textarea.value = note.content;
+        contentView.innerHTML = renderMarkdown(note.content);
+        // 自动保存
+        api.updateNoteContent(note.id, note.content);
+        showToast(t('note.aiSortDone'), 'success');
       }
-      note.content = applySortedTodos(note.content, sorted);
-      // 标记为已排序，排序后不重新显示按钮
-      sortedNoteIds.add(note.id);
-      // 更新编辑框和视图
-      const textarea = app.querySelector('[data-content]') as HTMLTextAreaElement;
-      if (textarea) textarea.value = note.content;
-      contentView.innerHTML = renderMarkdown(note.content);
-      // 自动保存
-      api.updateNoteContent(note.id, note.content);
-      showToast(t('note.aiSortDone'), 'success');
-    } catch (e) {
-      console.error('AI 排序失败:', e);
-      showToast(t('note.aiFailed'), 'error');
-    } finally {
-      btn.textContent = t('note.aiSortTodos');
-      (btn as HTMLButtonElement).disabled = false;
     }
+    btn.textContent = t('note.aiSortTodos');
+    (btn as HTMLButtonElement).disabled = false;
   });
   contentView.insertBefore(btn, contentView.firstChild);
 }

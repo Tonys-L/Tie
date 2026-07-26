@@ -1,8 +1,38 @@
-use std::collections::HashMap;
+//! Note 窗口生命周期管理：开窗、关闭、聚焦、置顶、闪烁、提醒激活、启动恢复
+//!
+//! 职责：
+//! - Note 窗口创建（open_note_window / open_note_window_with_url）
+//! - Note 窗口关闭（close_note_window，强制销毁）
+//! - Note 窗口聚焦 + 事件发送（focus_note_window_and_emit）
+//! - Note 窗口置顶状态（set_note_pinned / restore_note_on_top）
+//! - 闪烁提示（flash_window，置顶 5s 匹配前端动画）
+//! - 提醒触发激活（activate_note_for_reminder）
+//! - 启动恢复（restore_all_windows，含空便签清理 + 重叠解析）
+//!
+//! 调用方：
+//! - `commands/note_commands.rs`：开窗/关窗/置顶/恢复
+//! - `note_service`：create_note / open_note / open_note_with_flag / update_note_style
+//! - `template_service`：create_note_from_template
+//! - `reminder_scheduler`：activate_note_for_reminder
+//! - `tray_manager` / `shortcut_manager`：restore_all_windows
+//! - `lib.rs` setup：restore_all_windows
+//!
+//! 依赖：
+//! - `domain::{Note, value_objects::WindowState}`
+//! - `application::window_overlap_resolver`（启动恢复时解析重叠）
+//! - `tauri::AppHandle`
+//!
+//! 设计要点：
+//! - Hub 窗口管理已拆到 `hub_window_manager`，重叠物理已拆到 `window_overlap_resolver`
+//! - 本 module 聚焦 note 窗口生命周期，关注点单一
 
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::domain::{Note, value_objects::WindowState};
+
+use super::window_overlap_resolver;
+use super::note_service;
+use super::event_names::{FLASH_WINDOW, REMINDER_TRIGGERED};
 
 /// 闪烁提示：临时置顶 5s 匹配前端动画时长（2.5s × 2 次），立即定向发送 flash-window 事件
 ///
@@ -14,7 +44,7 @@ fn flash_window(window: &tauri::WebviewWindow, restore_on_top: bool) {
     let label = window.label().to_string();
     let _ = window.set_always_on_top(true);
     // 立即定向发送事件，前端开始闪烁动画（窗口处于置顶状态，可见）
-    let _ = window.emit_to(&label, "flash-window", ());
+    let _ = window.emit_to(&label, FLASH_WINDOW, ());
     let win_clone = window.clone();
     std::thread::spawn(move || {
         // 置顶保持 5s 匹配前端动画时长
@@ -106,7 +136,7 @@ pub fn activate_note_for_reminder(app: &AppHandle, note: &Note, reminder_id: &st
         let _ = window.unminimize();
         flash_window(&window, true);
         let _ = window.set_focus();
-        let _ = app.emit_to(&label, "reminder-triggered", serde_json::json!({ "reminder_id": reminder_id }));
+        let _ = app.emit_to(&label, REMINDER_TRIGGERED, serde_json::json!({ "reminder_id": reminder_id }));
         eprintln!("[调度器] 窗口已存在，发送 reminder-triggered 事件: note_id={}, reminder_id={}", note.id, reminder_id);
         Ok(())
     } else {
@@ -125,16 +155,21 @@ pub fn activate_note_for_reminder(app: &AppHandle, note: &Note, reminder_id: &st
 /// 打开所有已保存便签的窗口（启动时恢复）
 ///
 /// 空便签（无标题且无内容）直接删除（INV-003），不创建窗口。
-/// 检测位置重叠的便签并级联偏移，避免完全遮挡。
+/// 检测位置重叠的便签并级联偏移，避免完全遮挡（委托 `window_overlap_resolver`）。
 pub fn restore_all_windows(app: &AppHandle) -> Result<usize, String> {
     let state = app.state::<crate::AppState>();
     let notes = state.note_repo.find_all()?;
     let mut count = 0;
     let mut valid_notes: Vec<&Note> = Vec::new();
     for note in &notes {
-        // INV-003：空便签不应存在，启动时清理
+        // INV-003：空便签不应存在，启动时清理（委托 note_service，含 emit NoteWritten(Deleted) 事件）
         if note.is_empty() {
-            if let Err(e) = state.note_repo.delete(&note.id) {
+            if let Err(e) = note_service::delete_note(
+                state.note_repo.as_ref(),
+                state.reminder_repo.as_ref(),
+                state.event_bus.as_ref(),
+                &note.id,
+            ) {
                 eprintln!("[恢复] 空便签删除失败 {}: {}", note.id, e);
             } else {
                 eprintln!("[恢复] 空便签已清理: {}", note.id);
@@ -148,54 +183,9 @@ pub fn restore_all_windows(app: &AppHandle) -> Result<usize, String> {
         }
         count += 1;
     }
-    // 防重叠：检测相同位置的便签，级联偏移 30px
-    resolve_overlaps(app, &valid_notes);
+    // 防重叠：检测相同位置的便签，级联偏移 30px（委托 window_overlap_resolver）
+    window_overlap_resolver::resolve_overlaps(app, &valid_notes);
     Ok(count)
-}
-
-/// 计算便签位置重叠的偏移结果（纯函数，无 Tauri 依赖）
-///
-/// 对相同位置的便签按出现顺序级联偏移 30px（x 和 y 同时偏移）。
-/// 第一个同位置便签不偏移，后续每个递增 30px。
-///
-/// 返回需要偏移的便签列表：(note_id, new_pos_x, new_pos_y)。
-/// 不偏移的便签（首位）不在返回列表中。
-fn compute_overlaps(notes: &[&Note]) -> Vec<(String, i32, i32)> {
-    let mut seen_positions: HashMap<(i32, i32), usize> = HashMap::new();
-    const OFFSET_PX: i32 = 30;
-    let mut result = Vec::new();
-
-    for note in notes {
-        let key = (note.window_state.pos_x, note.window_state.pos_y);
-        let dup_index = seen_positions.entry(key).or_insert(0);
-        if *dup_index > 0 {
-            let offset = (*dup_index as i32) * OFFSET_PX;
-            result.push((
-                note.id.clone(),
-                note.window_state.pos_x + offset,
-                note.window_state.pos_y + offset,
-            ));
-        }
-        *dup_index += 1;
-    }
-    result
-}
-
-/// 检测位置重叠的便签窗口，对后续同位置便签级联偏移
-///
-/// 偏移量 = 重复序号 × 30px（x 和 y 同时偏移），形成层叠效果。
-/// 仅移动窗口位置，不修改 DB 中的 window_state（下次启动仍会检测并偏移）。
-///
-/// 委托 `compute_overlaps` 计算偏移结果，再遍历执行 Tauri `set_position` 副作用。
-fn resolve_overlaps(app: &AppHandle, notes: &[&Note]) {
-    for (note_id, new_x, new_y) in compute_overlaps(notes) {
-        let label = format!("note-{}", note_id);
-        if let Some(win) = app.get_webview_window(&label) {
-            let _ = win.set_position(tauri::Position::Logical(
-                tauri::LogicalPosition::new(new_x as f64, new_y as f64),
-            ));
-        }
-    }
 }
 
 /// 关闭便签窗口（强制销毁，对应 INV-026）
@@ -243,142 +233,5 @@ pub fn focus_note_window_and_emit(app: &AppHandle, note_id: &str, event: &str) -
         true
     } else {
         false
-    }
-}
-
-/// 切换 Hub（设置中心）窗口可见性：已显示则隐藏，隐藏或未创建则显示
-pub fn toggle_hub_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("hub") {
-        // 已存在：切换可见性
-        if window.is_visible().unwrap_or(false) {
-            let _ = window.hide();
-        } else {
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
-        return;
-    }
-    // 不存在：创建新窗口
-    create_hub_window(app);
-}
-
-/// 打开或聚焦 Hub 窗口（托盘菜单调用）
-///
-/// 已存在则 unminimize + show + set_focus；不存在则创建。
-/// 与 `toggle_hub_window` 的差异：本函数始终显示（用于托盘菜单点击），
-/// `toggle_hub_window` 切换可见性（用于快捷键）。
-pub fn open_or_focus_hub(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("hub") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-        return;
-    }
-    create_hub_window(app);
-}
-
-/// 创建 Hub 窗口（统一入口，消除 toggle_hub_window 与 tray_manager::handle_hub 的重复）
-fn create_hub_window(app: &AppHandle) {
-    use crate::application::locale_manager;
-    let _window = WebviewWindowBuilder::new(app, "hub", WebviewUrl::App("hub.html".into()))
-        .title(locale_manager::menu_hub_title())
-        .inner_size(640.0, 520.0)
-        .decorations(true)
-        .transparent(false)
-        .resizable(true)
-        .always_on_top(false)
-        .disable_drag_drop_handler()
-        .build();
-
-    if _window.is_err() {
-        eprintln!("[窗口] 创建 Hub 窗口失败");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::domain::Note;
-    use crate::domain::value_objects::WindowState;
-
-    /// 构造测试用 Note（指定 id + 位置）
-    fn make_note(id: &str, pos_x: i32, pos_y: i32) -> Note {
-        let mut note = Note::new("测试".to_string(), "amber".to_string());
-        note.id = id.to_string();
-        note.window_state = WindowState {
-            pos_x,
-            pos_y,
-            width: 320,
-            height: 280,
-        };
-        note
-    }
-
-    #[test]
-    fn test_compute_overlaps_no_overlap() {
-        // 所有位置唯一 → 返回空 Vec
-        let n1 = make_note("n1", 100, 100);
-        let n2 = make_note("n2", 200, 200);
-        let n3 = make_note("n3", 300, 300);
-        let notes: Vec<&Note> = vec![&n1, &n2, &n3];
-
-        let result = compute_overlaps(&notes);
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_compute_overlaps_two_same_position() {
-        // 2 个同位置 → 第 2 个偏移 30px
-        let n1 = make_note("n1", 100, 100);
-        let n2 = make_note("n2", 100, 100);
-        let notes: Vec<&Note> = vec![&n1, &n2];
-
-        let result = compute_overlaps(&notes);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].0, "n2");
-        assert_eq!(result[0].1, 130); // 100 + 30
-        assert_eq!(result[0].2, 130);
-    }
-
-    #[test]
-    fn test_compute_overlaps_three_same_position() {
-        // 3 个同位置 → 第 2 个偏移 30px，第 3 个偏移 60px
-        let n1 = make_note("n1", 50, 50);
-        let n2 = make_note("n2", 50, 50);
-        let n3 = make_note("n3", 50, 50);
-        let notes: Vec<&Note> = vec![&n1, &n2, &n3];
-
-        let result = compute_overlaps(&notes);
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].0, "n2");
-        assert_eq!(result[0].1, 80); // 50 + 30
-        assert_eq!(result[1].0, "n3");
-        assert_eq!(result[1].1, 110); // 50 + 60
-    }
-
-    #[test]
-    fn test_compute_overlaps_multiple_groups() {
-        // 多组不同位置的重叠 → 各组独立计算
-        // 组 A: (100,100) 出现 2 次
-        // 组 B: (200,200) 出现 3 次
-        let n1 = make_note("n1", 100, 100);
-        let n2 = make_note("n2", 200, 200);
-        let n3 = make_note("n3", 100, 100); // 组 A 第 2 个 → +30
-        let n4 = make_note("n4", 200, 200); // 组 B 第 2 个 → +30
-        let n5 = make_note("n5", 200, 200); // 组 B 第 3 个 → +60
-        let notes: Vec<&Note> = vec![&n1, &n2, &n3, &n4, &n5];
-
-        let result = compute_overlaps(&notes);
-        assert_eq!(result.len(), 3);
-        // n3: 组 A 第 2 个 → (130, 130)
-        assert_eq!(result[0].0, "n3");
-        assert_eq!(result[0].1, 130);
-        // n4: 组 B 第 2 个 → (230, 230)
-        assert_eq!(result[1].0, "n4");
-        assert_eq!(result[1].1, 230);
-        // n5: 组 B 第 3 个 → (260, 260)
-        assert_eq!(result[2].0, "n5");
-        assert_eq!(result[2].1, 260);
     }
 }

@@ -2,9 +2,12 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use chrono::Datelike;
 
-use super::{Note, NoteRepository, Reminder, ReminderRepository, Template, TemplateRepository};
+use super::{Note, NoteQuery, NoteRepository, Reminder, ReminderQuery, ReminderRepository, Template, TemplateRepository};
 
 /// In-memory Note 仓储（仅用于测试）
+///
+/// 同时实现 [`NoteRepository`]（聚合 CRUD）和 [`NoteQuery`]（读投影），
+/// 测试时可作为任一 trait object 注入（CQRS 风味拆分，ADR-010）。
 pub struct InMemoryNoteRepository {
     notes: Mutex<HashMap<String, Note>>,
 }
@@ -33,17 +36,20 @@ impl NoteRepository for InMemoryNoteRepository {
     fn find_all(&self) -> Result<Vec<Note>, String> {
         let notes = self.notes.lock().unwrap();
         let mut result: Vec<Note> = notes.values().filter(|n| !n.is_archived).cloned().collect();
-        result.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        // 与 SqliteNoteRepository::find_all 排序对齐：is_pinned DESC, updated_at DESC
+        result.sort_by(|a, b| {
+            b.is_pinned
+                .cmp(&a.is_pinned)
+                .then_with(|| b.updated_at.cmp(&a.updated_at))
+        });
         Ok(result)
     }
 
     fn delete(&self, id: &str) -> Result<(), String> {
-        self.notes
-            .lock()
-            .unwrap()
-            .remove(id)
-            .map(|_| ())
-            .ok_or_else(|| format!("便签不存在: {}", id))
+        // 幂等删除：与 SqliteNoteRepository 对齐（DELETE WHERE id=? 删除 0 行也返回 Ok）。
+        // 存在性守卫由 service 层负责（避免对不存在的项 emit 事件）。
+        self.notes.lock().unwrap().remove(id);
+        Ok(())
     }
 
     fn find_archived(&self) -> Result<Vec<Note>, String> {
@@ -52,7 +58,9 @@ impl NoteRepository for InMemoryNoteRepository {
         result.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         Ok(result)
     }
+}
 
+impl NoteQuery for InMemoryNoteRepository {
     fn search_notes(&self, query: &str) -> Result<Vec<Note>, String> {
         let q = query.to_lowercase();
         let notes = self.notes.lock().unwrap();
@@ -65,7 +73,12 @@ impl NoteRepository for InMemoryNoteRepository {
             })
             .cloned()
             .collect();
-        result.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        // 与 SqliteNoteRepository::search_notes 排序对齐：is_pinned DESC, updated_at DESC
+        result.sort_by(|a, b| {
+            b.is_pinned
+                .cmp(&a.is_pinned)
+                .then_with(|| b.updated_at.cmp(&a.updated_at))
+        });
         Ok(result)
     }
 
@@ -91,6 +104,9 @@ impl NoteRepository for InMemoryNoteRepository {
 }
 
 /// In-memory Reminder 仓储（仅用于测试）
+///
+/// 同时实现 [`ReminderRepository`]（聚合 CRUD）和 [`ReminderQuery`]（读投影），
+/// 测试时可作为任一 trait object 注入（CQRS 风味拆分，ADR-010）。
 pub struct InMemoryReminderRepository {
     reminders: Mutex<HashMap<String, Reminder>>,
 }
@@ -117,38 +133,29 @@ impl ReminderRepository for InMemoryReminderRepository {
     }
 
     fn find_all(&self) -> Result<Vec<Reminder>, String> {
-        Ok(self.reminders.lock().unwrap().values().cloned().collect())
-    }
-
-    fn find_due(&self, now: &str) -> Result<Vec<Reminder>, String> {
-        Ok(self
-            .reminders
-            .lock()
-            .unwrap()
-            .values()
-            .filter(|r| r.is_due(now))
-            .cloned()
-            .collect())
+        let reminders = self.reminders.lock().unwrap();
+        let mut result: Vec<Reminder> = reminders.values().cloned().collect();
+        // 与 SqliteReminderRepository::find_all 排序对齐：remind_at ASC
+        result.sort_by(|a, b| a.remind_at.cmp(&b.remind_at));
+        Ok(result)
     }
 
     fn find_by_note_id(&self, note_id: &str) -> Result<Vec<Reminder>, String> {
-        Ok(self
-            .reminders
-            .lock()
-            .unwrap()
+        let reminders = self.reminders.lock().unwrap();
+        let mut result: Vec<Reminder> = reminders
             .values()
             .filter(|r| r.note_id == note_id)
             .cloned()
-            .collect())
+            .collect();
+        // 与 SqliteReminderRepository::find_by_note_id 排序对齐：remind_at ASC
+        result.sort_by(|a, b| a.remind_at.cmp(&b.remind_at));
+        Ok(result)
     }
 
     fn delete(&self, id: &str) -> Result<(), String> {
-        self.reminders
-            .lock()
-            .unwrap()
-            .remove(id)
-            .map(|_| ())
-            .ok_or_else(|| format!("提醒不存在: {}", id))
+        // 幂等删除：与 SqliteReminderRepository 对齐。
+        self.reminders.lock().unwrap().remove(id);
+        Ok(())
     }
 
     fn delete_by_note_id(&self, note_id: &str) -> Result<(), String> {
@@ -163,6 +170,19 @@ impl ReminderRepository for InMemoryReminderRepository {
         }
         Ok(())
     }
+}
+
+impl ReminderQuery for InMemoryReminderRepository {
+    fn find_due(&self, now: &str) -> Result<Vec<Reminder>, String> {
+        Ok(self
+            .reminders
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|r| r.is_due(now))
+            .cloned()
+            .collect())
+    }
 
     fn find_next_due_time(&self) -> Result<Option<String>, String> {
         let reminders = self.reminders.lock().unwrap();
@@ -175,7 +195,7 @@ impl ReminderRepository for InMemoryReminderRepository {
         } else {
             let min_time = pending
                 .iter()
-                .map(|r| r.snoozed_until.as_deref().unwrap_or(&r.remind_at))
+                .map(|r| r.effective_time())
                 .min()
                 .unwrap()
                 .to_string();
@@ -190,7 +210,7 @@ impl ReminderRepository for InMemoryReminderRepository {
             .unwrap()
             .values()
             .filter(|r| {
-                let t = r.snoozed_until.as_deref().unwrap_or(&r.remind_at);
+                let t = r.effective_time();
                 t >= start && t < end
             })
             .cloned()
@@ -221,7 +241,15 @@ impl TemplateRepository for InMemoryTemplateRepository {
     }
 
     fn find_all(&self) -> Result<Vec<Template>, String> {
-        Ok(self.templates.lock().unwrap().values().cloned().collect())
+        let templates = self.templates.lock().unwrap();
+        let mut result: Vec<Template> = templates.values().cloned().collect();
+        // 与 SqliteTemplateRepository::find_all 排序对齐：sort_order ASC, created_at ASC
+        result.sort_by(|a, b| {
+            a.sort_order
+                .cmp(&b.sort_order)
+                .then_with(|| a.created_at.cmp(&b.created_at))
+        });
+        Ok(result)
     }
 
     fn find_by_id(&self, id: &str) -> Result<Option<Template>, String> {
@@ -229,11 +257,8 @@ impl TemplateRepository for InMemoryTemplateRepository {
     }
 
     fn delete(&self, id: &str) -> Result<(), String> {
-        self.templates
-            .lock()
-            .unwrap()
-            .remove(id)
-            .map(|_| ())
-            .ok_or_else(|| format!("模板不存在: {}", id))
+        // 幂等删除：与 SqliteTemplateRepository 对齐。
+        self.templates.lock().unwrap().remove(id);
+        Ok(())
     }
 }

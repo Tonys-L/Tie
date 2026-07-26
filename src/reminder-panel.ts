@@ -7,14 +7,15 @@
  * - updateReminderBtnState 同步底部提醒按钮橙色状态
  *
  * 被调用方：note-events.ts (data-reminder 按钮点击)
- * 依赖：api.ts (createReminder/getReminders/deleteReminder) + datetime-picker + utils.ts (repeatLabel) + i18n
+ * 依赖：api.ts (createReminder/getReminders/deleteReminder) + datetime-picker + datetime.ts (repeatLabel) + i18n
  */
 
 import type { Note } from './types';
 import { t, getLocaleTag } from './i18n';
-import { repeatLabel } from './utils';
+import { repeatLabel } from './datetime';
 import * as api from './api';
 import { DateTimeSegmentPicker } from './datetime-picker';
+import { setupQuickTimeButtons, setupRepeatButtons } from './reminder-form';
 
 export function showReminderPanel(note: Note, app: HTMLElement): void {
   if (app.querySelector('.reminder-overlay')) return;
@@ -74,37 +75,11 @@ export function showReminderPanel(note: Note, app: HTMLElement): void {
     initialValue: new Date(defaultTime),
   });
 
-  // 快捷时间按钮
-  let selectedRepeat = 'none';
-  overlay.querySelectorAll('[data-quick]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const now = new Date();
-      const type = (btn as HTMLElement).dataset.quick;
-      if (type === '1h') {
-        now.setHours(now.getHours() + 1);
-      } else if (type === '3h') {
-        now.setHours(now.getHours() + 3);
-      } else if (type === 'tomorrow') {
-        now.setDate(now.getDate() + 1);
-        now.setHours(9, 0, 0, 0);
-      } else if (type === 'week') {
-        const day = now.getDay();
-        const daysUntilMonday = day === 0 ? 1 : 8 - day;
-        now.setDate(now.getDate() + daysUntilMonday);
-        now.setHours(9, 0, 0, 0);
-      }
-      dts.setValue(now);
-    });
-  });
+  // 快捷时间按钮（委托 reminder-form 共享逻辑）
+  setupQuickTimeButtons(overlay, (date) => dts.setValue(date));
 
-  // 重复选择
-  overlay.querySelectorAll('[data-repeat]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      overlay.querySelectorAll('[data-repeat]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      selectedRepeat = (btn as HTMLElement).dataset.repeat!;
-    });
-  });
+  // 重复选择（委托 reminder-form 共享逻辑）
+  const getRepeat = setupRepeatButtons(overlay);
 
   // AI 自然语言解析已移至便签保存后的自动嗅探气泡，此处仅保留手动表单
   const reminderTitle = note.title || t('app.note');
@@ -113,9 +88,11 @@ export function showReminderPanel(note: Note, app: HTMLElement): void {
   overlay.querySelector('[data-save-reminder]')!.addEventListener('click', async () => {
     const dt = dts.getValue();
     if (isNaN(dt.getTime())) return;
+    // 界面只到分钟，显式把秒和毫秒设为 0，与界面精度对齐
+    dt.setSeconds(0, 0);
     const remindAt = dt.toISOString();
     try {
-      await api.createReminder(note.id, reminderTitle, remindAt, selectedRepeat);
+      await api.createReminder(note.id, reminderTitle, remindAt, getRepeat());
       // 新建提醒成功，更新提醒按钮状态为橙色
       const btn = app.querySelector('.reminder-btn');
       if (btn) btn.classList.add('has-reminder');

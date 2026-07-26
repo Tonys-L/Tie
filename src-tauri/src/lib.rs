@@ -20,7 +20,9 @@ pub static USER_QUIT: AtomicBool = AtomicBool::new(false);
 /// event_bus 用于解耦 service 层写操作与 schedule_auto_sync 副作用（ADR-007）。
 pub struct AppState {
     pub note_repo: Box<dyn domain::NoteRepository>,
+    pub note_query: Box<dyn domain::NoteQuery>,
     pub reminder_repo: Box<dyn domain::ReminderRepository>,
+    pub reminder_query: Box<dyn domain::ReminderQuery>,
     pub template_repo: Box<dyn domain::TemplateRepository>,
     pub event_bus: Arc<EventBus>,
     pub git_sync: application::git_sync::GitSync,
@@ -40,6 +42,8 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        // E2E 测试：embedded WebDriver 服务器（WebdriverIO 驱动，无需外部 tauri-driver）
+        .plugin(tauri_plugin_wdio_webdriver::init())
         .on_window_event(|window, event| {
             match event {
                 tauri::WindowEvent::CloseRequested { .. } => {
@@ -63,11 +67,8 @@ pub fn run() {
 
             // ---- 初始化数据库 ----
             // 统一使用 exe 同级目录的 data 文件夹（避开沙箱限制）
-            let db_dir = std::env::current_exe()
-                .map_err(|e| format!("获取 exe 路径失败: {}", e))?
-                .parent()
-                .ok_or("无法获取父目录")?
-                .join("data");
+            // 路径解析委托 data_dir_path（单一所有者，避免 3 处重复解析导致规则漂移）
+            let db_dir = commands::system_commands::data_dir_path()?;
             std::fs::create_dir_all(&db_dir)
                 .map_err(|e| format!("创建目录失败 {:?}: {}", db_dir, e))?;
             eprintln!("[setup] 数据库目录: {:?}", db_dir);
@@ -85,28 +86,43 @@ pub fn run() {
             eprintln!("[setup] 数据库初始化成功");
 
             let note_repo = Box::new(SqliteNoteRepository::new(db.clone()));
+            let note_query: Box<dyn domain::NoteQuery> = Box::new(SqliteNoteRepository::new(db.clone()));
             let reminder_repo = Box::new(SqliteReminderRepository::new(db.clone()));
+            let reminder_query: Box<dyn domain::ReminderQuery> = Box::new(SqliteReminderRepository::new(db.clone()));
             let template_repo = Box::new(SqliteTemplateRepository::new(db));
             let git_sync = application::git_sync::GitSync::new(&db_dir);
             let shortcut_mgr = application::shortcut_manager::ShortcutManager::new(&db_dir);
             let scheduler = application::reminder_scheduler::ReminderScheduler::new();
 
-            // ---- 创建事件总线并注册监听器（ADR-007）----
-            // 写操作事件（NoteWritten/ReminderWritten/TemplateWritten）→ schedule_auto_sync
+            // ---- 创建事件总线并注册监听器（ADR-007 + ADR-008 扩展）----
+            // 写操作事件（NoteWritten/ReminderWritten/TemplateWritten）→ schedule_auto_sync（ADR-007）
+            // ReminderWritten → schedule_recalc（ADR-008 扩展：scheduler 重算副作用统一）
             // 监听器在 app.manage 之前注册，但闭包通过 app.handle() 在事件触发时才拿 state
             let event_bus = Arc::new(EventBus::new());
             {
                 let app_handle = app.handle().clone();
-                let bus_for_subscribe = event_bus.clone();
-                bus_for_subscribe.subscribe(Box::new(move |_event: &DomainEvent| {
+                let bus_for_auto_sync = event_bus.clone();
+                bus_for_auto_sync.subscribe(Box::new(move |_event: &DomainEvent| {
                     let state = app_handle.state::<AppState>();
                     state.git_sync.schedule_auto_sync(app_handle.clone());
+                }));
+            }
+            {
+                let app_handle = app.handle().clone();
+                let bus_for_recalc = event_bus.clone();
+                bus_for_recalc.subscribe(Box::new(move |event: &DomainEvent| {
+                    if matches!(event, DomainEvent::ReminderWritten { .. }) {
+                        let state = app_handle.state::<AppState>();
+                        state.scheduler.schedule_recalc();
+                    }
                 }));
             }
 
             app.manage(AppState {
                 note_repo,
+                note_query,
                 reminder_repo,
+                reminder_query,
                 template_repo,
                 event_bus,
                 git_sync,
@@ -121,9 +137,10 @@ pub fn run() {
             eprintln!("[setup] 系统托盘设置成功");
 
             // ---- 全局快捷键 ----
+            // setup_shortcuts 容错：注册失败时不阻止应用启动（快捷键可能被残留进程占用）
             shortcut_manager::setup_shortcuts(app.handle())
                 .map_err(|e| format!("注册全局快捷键失败: {}", e))?;
-            eprintln!("[setup] 全局快捷键注册成功");
+            eprintln!("[setup] 全局快捷键注册流程完成");
 
             // ---- 提醒调度器 ----
             reminder_scheduler::start(app.handle().clone());
@@ -139,6 +156,12 @@ pub fn run() {
             match application::window_manager::restore_all_windows(app.handle()) {
                 Ok(count) => eprintln!("[setup] 恢复了 {} 张便签", count),
                 Err(e) => eprintln!("[setup] 恢复便签失败: {}", e),
+            }
+
+            // ---- 测试模式：自动打开 Hub 窗口（WebdriverIO embedded 需要 Webview 连接） ----
+            if std::env::args().any(|arg| arg == "--test-mode") {
+                application::hub_window_manager::open_or_focus_hub(app.handle());
+                eprintln!("[setup] 测试模式：已自动打开 Hub 窗口");
             }
 
             eprintln!("[setup] 初始化完成!");

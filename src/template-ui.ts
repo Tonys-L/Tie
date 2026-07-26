@@ -9,12 +9,13 @@
  *
  * 被调用方：note-events.ts (setupTemplateQuickBar)、context-menu.ts (showTemplatePicker/Applier)
  * 依赖：api.ts (getTemplates/createNoteFromTemplate/updateNoteContent) + markdown-renderer.ts +
- *       ai-todo-sort.ts (clearSortedMark + setupTodoSortButton) + utils.ts (escapeHtml/showToast) + i18n
+ *       ai-todo-sort.ts (clearSortedMark + setupTodoSortButton) + html.ts (escapeHtml) + toast.ts (showToast) + i18n
  */
 
 import type { Note, Template } from './types';
 import { t } from './i18n';
-import { escapeHtml, showToast } from './utils';
+import { escapeHtml } from './html';
+import { showToast } from './toast';
 import * as api from './api';
 import { renderMarkdown } from './markdown-renderer';
 import { clearSortedMark, setupTodoSortButton } from './ai-todo-sort';

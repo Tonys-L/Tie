@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use rusqlite::{params, OptionalExtension, Row};
 
-use crate::domain::{Note, NoteRepository, WindowState};
+use crate::domain::{Note, NoteQuery, NoteRepository, WindowState};
 
 use super::Database;
 
@@ -134,7 +134,10 @@ impl NoteRepository for SqliteNoteRepository {
             .map_err(|e| e.to_string())?;
         Ok(notes)
     }
+}
 
+/// Note 读投影实现（CQRS 风味拆分，ADR-010）
+impl NoteQuery for SqliteNoteRepository {
     fn search_notes(&self, query: &str) -> Result<Vec<Note>, String> {
         let conn = self.db.lock()?;
         let trimmed = query.trim();
@@ -195,16 +198,8 @@ impl NoteRepository for SqliteNoteRepository {
     }
 
     fn find_activity_by_month(&self, year: i32, month: u32) -> Result<Vec<u32>, String> {
-        let start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
-            .ok_or("无效年月")?;
-        let end = if month == 12 {
-            chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
-        } else {
-            chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
-        }
-        .ok_or("无效年月")?;
-        let start_str = start.and_hms_opt(0, 0, 0).unwrap().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
-        let end_str = end.and_hms_opt(0, 0, 0).unwrap().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+        let start_str = crate::application::month_range::month_start_iso(year, month)?;
+        let end_str = crate::application::month_range::month_end_iso(year, month)?;
 
         let conn = self.db.lock()?;
         let mut stmt = conn

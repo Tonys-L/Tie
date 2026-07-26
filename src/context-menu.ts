@@ -8,17 +8,19 @@
  * - applyCustomColor 应用自定义颜色
  *
  * 被调用方：note-renderer.ts (renderNote) + main.ts (颜色圆点点击)
- * 依赖：ai-rewrite.ts (getSelectedText/rewriteText) + template-ui.ts (showTemplatePicker/Applier) +
- *       note-style.ts (applyNoteStyle) + utils.ts (showToast) + api.ts (getAiConfig/updateNoteStyle) + i18n
+ * 依赖：ai-rewrite.ts (getSelectedText/rewriteText) + ai-client.ts (isAiConfigured) +
+ *       template-ui.ts (showTemplatePicker/Applier) + colors.ts (applyNoteStyle) +
+ *       toast.ts (showToast) + api.ts (updateNoteStyle) + i18n
  */
 
 import type { Note } from './types';
 import { t } from './i18n';
-import { showToast } from './utils';
+import { showToast } from './toast';
 import * as api from './api';
+import { isAiConfigured } from './ai-client';
 import { getSelectedText, rewriteText } from './ai-rewrite';
 import { showTemplatePicker, showTemplateApplier } from './template-ui';
-import { applyNoteStyle } from './note-style';
+import { applyNoteStyle } from './colors';
 
 export function setupContextMenu(note: Note, app: HTMLElement): void {
   const contentView = app.querySelector('[data-content-view]') as HTMLElement;
@@ -181,12 +183,8 @@ async function showContextMenu(e: MouseEvent, note: Note, app: HTMLElement): Pro
 
   type MenuItem = { label?: string; action?: () => void; type?: string; danger?: boolean; disabled?: boolean };
 
-  // 检查 AI 是否已配置
-  let aiConfigured = false;
-  try {
-    const config = await api.getAiConfig();
-    aiConfigured = !!(config && config.api_key && config.api_key.length > 0);
-  } catch { /* 读取失败视为未配置 */ }
+  // 检查 AI 是否已配置（带缓存，ai-config-changed 事件触发时自动失效）
+  const aiConfigured = await isAiConfigured();
 
   // AI 操作始终显示，未配置时禁用
   const selection = getSelectedText(note, app);

@@ -10,17 +10,21 @@
  *
  * 被调用方：note-events.ts (setupAiSniffButton)、context-menu.ts (sniffAfterSave via main.ts)
  * 依赖：api.ts (getAiConfig/sniffSuggestions/createReminder/updateNoteContent/updateNoteTags) +
+ *       ai-client.ts (isAiConfigured/getAiConfigCached) +
  *       markdown-renderer.ts (renderMarkdown) + tag-bar.ts (refreshTagBar) +
- *       utils.ts (escapeHtml/showToast) + i18n + types.ts (Suggestion/SniffResult)
+ *       html.ts (escapeHtml) + toast.ts (showToast) + i18n + types.ts (Suggestion/SniffResult)
  */
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { Note, SniffResult, Suggestion } from './types';
 import { t } from './i18n';
-import { escapeHtml, showToast } from './utils';
+import { escapeHtml } from './html';
+import { showToast } from './toast';
+import { isAiConfigured, getAiConfigCached } from './ai-client';
 import * as api from './api';
 import { renderMarkdown } from './markdown-renderer';
 import { refreshTagBar } from './tag-bar';
+import { AI_CONFIG_CHANGED } from './events';
 
 // 每个便签最近一次嗅探时间戳（noteId → ts），10 秒内不重复嗅探同一便签
 const sniffDebounceMap = new Map<string, number>();
@@ -46,23 +50,17 @@ export function setupAiSniffButton(note: Note, app: HTMLElement): void {
     btn.title = configured ? t('hub.aiAssistant') : t('hub.aiNotConfigured');
   }
 
-  // 异步检查 AI 配置
-  api.getAiConfig()
-    .then(config => {
-      updateSniffBtnState(!!(config && config.api_key && config.api_key.length > 0));
-    })
-    .catch(() => {
-      updateSniffBtnState(false);
+  // 异步检查 AI 配置（带缓存，ai-config-changed 事件触发时自动失效）
+  isAiConfigured()
+    .then(configured => {
+      updateSniffBtnState(configured);
     });
 
-  // 监听 AI 配置变更事件（Hub 保存配置后实时更新灯泡状态）
-  getCurrentWindow().listen('ai-config-changed', () => {
-    api.getAiConfig()
-      .then(config => {
-        updateSniffBtnState(!!(config && config.api_key && config.api_key.length > 0));
-      })
-      .catch(() => {
-        updateSniffBtnState(false);
+  // 监听 AI 配置变更事件（Hub 保存配置后实时更新灯泡状态；ai-client 已监听并清缓存，这里只需重新查询）
+  getCurrentWindow().listen(AI_CONFIG_CHANGED, () => {
+    isAiConfigured()
+      .then(configured => {
+        updateSniffBtnState(configured);
       });
   });
 
@@ -78,7 +76,8 @@ export function setupAiSniffButton(note: Note, app: HTMLElement): void {
       // 恢复按钮
       btn.innerHTML = originalHTML;
       // 重新检查配置状态以决定是否启用（配置可能在加载时已就绪）
-      api.getAiConfig()
+      // 失败时保持启用：嗅探刚完成说明之前 AI 可用，IPC 失败更可能是临时问题
+      getAiConfigCached()
         .then(config => {
           updateSniffBtnState(!!(config && config.api_key && config.api_key.length > 0));
         })
@@ -124,7 +123,7 @@ export async function sniffAfterSave(note: Note, force: boolean = false, onDone?
     if (now - last < SNIFF_DEBOUNCE_MS) { if (onDone) onDone([]); return; }
     // 前端预检查嗅探开关：关闭则直接跳过，不发起 IPC 调用
     try {
-      const config = await api.getAiConfig();
+      const config = await getAiConfigCached();
       if (!config.sniff_enabled) { if (onDone) onDone([]); return; }
     } catch { /* 读取配置失败则继续，后端会再次校验 */ }
     sniffDebounceMap.set(note.id, now);

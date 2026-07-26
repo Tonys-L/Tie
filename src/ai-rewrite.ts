@@ -7,12 +7,13 @@
  * - 选中文本 < 5 字符返回 null（前端预检查，与后端校验对齐）
  *
  * 被调用方：context-menu.ts (右键菜单"AI 重写")
- * 依赖：api.ts (aiRewriteText) + markdown-renderer.ts (renderMarkdown) + utils.ts (showToast) + i18n
+ * 依赖：api.ts (aiRewriteText/updateNoteContent) + ai-client.ts (runAi 包装) +
+ *       markdown-renderer.ts (renderMarkdown) + i18n
  */
 
 import type { Note } from './types';
 import { t } from './i18n';
-import { showToast } from './utils';
+import { runAi } from './ai-client';
 import * as api from './api';
 import { renderMarkdown } from './markdown-renderer';
 
@@ -64,18 +65,14 @@ export function getSelectedText(note: Note, app: HTMLElement): Selection | null 
 
 /**
  * 调用后端 ai_rewrite_text 重写选中文本并替换。
- * 显示 loading → 调用后端 → 替换文本 → 显示结果提示。
+ * 显示 loading → 调用后端 → 替换文本 → 显示结果提示（统一由 runAi 包装）。
  */
 export async function rewriteText(selection: Selection, operation: string): Promise<void> {
-  try {
-    showToast(t('note.aiProcessing'), 'info', true);
-    const result = await api.aiRewriteText(selection.text, operation);
-    if (result) {
-      selection.replace(result);
-      showToast(t('note.aiReplaced'), 'success');
-    }
-  } catch (e) {
-    console.error('AI 重写失败:', e);
-    showToast(t('note.aiFailed') + ': ' + e, 'error');
+  const result = await runAi(() => api.aiRewriteText(selection.text, operation), {
+    loadingMsg: t('note.aiProcessing'),
+    successMsg: t('note.aiReplaced'),
+  });
+  if (result) {
+    selection.replace(result);
   }
 }

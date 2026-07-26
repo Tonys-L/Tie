@@ -7,14 +7,17 @@
  * - 不打开便签窗口，纯 Hub 页面内操作
  *
  * 被调用方：hub.ts (renderList 中的"提醒"按钮)
- * 依赖：api.ts (createReminder/getReminders/deleteReminder) + utils.ts (escapeHtml/localISO/quickDate/repeatLabel) +
+ * 依赖：api.ts (createReminder/getReminders/deleteReminder) +
+ *       html.ts (escapeHtml) + datetime.ts (localISO/quickDate/repeatLabel) +
  *       i18n (t/getLocaleTag) + types (Reminder) + 外部传入 onNotesChanged 回调
  */
 
 import type { Reminder } from './types';
 import { t, getLocaleTag } from './i18n';
-import { escapeHtml, localISO, quickDate, repeatLabel } from './utils';
+import { escapeHtml } from './html';
+import { localISO, repeatLabel } from './datetime';
 import * as api from './api';
+import { setupQuickTimeButtons, setupRepeatButtons } from './reminder-form';
 
 /**
  * 显示提醒设置弹窗。
@@ -62,8 +65,6 @@ export function showReminderDialog(noteId: string, noteTitle: string, onNotesCha
   style.textContent = '.rbtn.active{background:#3b82f6!important;color:#fff!important;border-color:#3b82f6!important;}';
   dialog.appendChild(style);
 
-  let selectedRepeat = 'none';
-
   // 加载已有提醒
   loadExistingReminders(noteId, onNotesChanged);
 
@@ -71,31 +72,22 @@ export function showReminderDialog(noteId: string, noteTitle: string, onNotesCha
   dialog.querySelector('#rm-close')!.addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
-  // 快捷时间
-  dialog.querySelectorAll('[data-quick]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const input = dialog.querySelector('#rm-datetime') as HTMLInputElement;
-      const type = (btn as HTMLElement).dataset.quick!;
-      input.value = localISO(quickDate(type));
-    });
-  });
+  // 快捷时间（委托 reminder-form 共享逻辑）
+  const datetimeInput = dialog.querySelector('#rm-datetime') as HTMLInputElement;
+  setupQuickTimeButtons(dialog, (date) => { datetimeInput.value = localISO(date); });
 
-  // 重复选择
-  dialog.querySelectorAll('[data-repeat]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      dialog.querySelectorAll('[data-repeat]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      selectedRepeat = (btn as HTMLElement).dataset.repeat!;
-    });
-  });
+  // 重复选择（委托 reminder-form 共享逻辑）
+  const getRepeat = setupRepeatButtons(dialog);
 
   // 保存
   dialog.querySelector('#rm-save')!.addEventListener('click', async () => {
-    const input = dialog.querySelector('#rm-datetime') as HTMLInputElement;
-    const dt = new Date(input.value);
+    const dt = new Date(datetimeInput.value);
     if (isNaN(dt.getTime())) return;
+    // 界面 datetime-local 只到分钟，显式把秒和毫秒设为 0，与界面精度对齐
+    // 避免与后端 now 字符串比较时出现格式不一致的边界问题
+    dt.setSeconds(0, 0);
     try {
-      await api.createReminder(noteId, noteTitle, dt.toISOString(), selectedRepeat);
+      await api.createReminder(noteId, noteTitle, dt.toISOString(), getRepeat());
       overlay.remove();
       onNotesChanged();
     } catch (e) { console.error('创建提醒失败:', e); }

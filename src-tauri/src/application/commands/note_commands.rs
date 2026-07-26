@@ -1,9 +1,10 @@
 //! 便签命令：CRUD、归档/恢复、搜索、标签、窗口状态、批量操作。
 //!
 //! 命令层为薄壳：业务编排下沉到 `note_service`，命令仅负责调用 service +
-//! 执行 Tauri 副作用（emit / schedule_recalc / window_manager）。
+//! 执行 Tauri 副作用（emit / window_manager）。
 //!
-//! schedule_auto_sync 已下沉到 service 层 emit 事件，由 lib.rs 监听器统一处理（ADR-007）。
+//! schedule_auto_sync + schedule_recalc 均已下沉到 service 层 emit 事件，
+//! 由 lib.rs 监听器统一处理（ADR-007 + ADR-008 扩展）。
 
 use tauri::{AppHandle, Emitter, State};
 
@@ -11,6 +12,7 @@ use crate::domain::Note;
 use crate::AppState;
 
 use super::super::{note_service, window_manager};
+use super::super::event_names::{NOTE_ARCHIVED, NOTE_UNARCHIVED, NOTE_COLOR_CHANGED};
 
 /// 新建便签并打开窗口
 #[tauri::command]
@@ -102,13 +104,15 @@ pub async fn update_note_window_state(
 
 /// 删除便签（同时删除关联提醒 + 清理图片 + 关闭窗口）
 ///
-/// 图片清理由 note_service::delete_note 内部处理（locality），命令层仅做窗口关闭副作用。
+/// 图片清理由 note_service::delete_note 内部处理（locality），
+/// 级联删除 reminder 时 emit ReminderWritten(Deleted) 触发 schedule_recalc（ADR-008 扩展），
+/// 命令层仅做窗口关闭副作用。
 #[tauri::command]
 pub async fn delete_note(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     note_service::delete_note(state.note_repo.as_ref(), state.reminder_repo.as_ref(), state.event_bus.as_ref(), &id)?;
     // 删除成功后关闭便签窗口（destroy 强制销毁，避免 close 不可靠）
     window_manager::close_note_window(&app, &id);
-    state.scheduler.schedule_recalc();
+    // schedule_recalc 由 lib.rs 监听 ReminderWritten(Deleted) 事件触发（ADR-008 扩展）
     Ok(())
 }
 
@@ -124,7 +128,7 @@ pub async fn restore_window_on_top(app: AppHandle, state: State<'_, AppState>, i
 #[tauri::command]
 pub async fn archive_note(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     note_service::archive_note(state.note_repo.as_ref(), state.event_bus.as_ref(), &id)?;
-    let _ = app.emit("note-archived", &id);
+    let _ = app.emit(NOTE_ARCHIVED, &id);
     Ok(())
 }
 
@@ -132,7 +136,7 @@ pub async fn archive_note(app: AppHandle, state: State<'_, AppState>, id: String
 #[tauri::command]
 pub async fn unarchive_note(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     note_service::unarchive_note(state.note_repo.as_ref(), state.event_bus.as_ref(), &id)?;
-    let _ = app.emit("note-unarchived", &id);
+    let _ = app.emit(NOTE_UNARCHIVED, &id);
     Ok(())
 }
 
@@ -145,7 +149,7 @@ pub async fn get_archived_notes(state: State<'_, AppState>) -> Result<Vec<Note>,
 /// 搜索便签（标题 + 内容 + 标签）
 #[tauri::command]
 pub async fn search_notes(state: State<'_, AppState>, query: String) -> Result<Vec<Note>, String> {
-    state.note_repo.search_notes(&query)
+    state.note_query.search_notes(&query)
 }
 
 /// 更新便签标签
@@ -162,7 +166,7 @@ pub async fn update_note_tags(app: AppHandle, state: State<'_, AppState>, id: St
 pub async fn batch_archive_notes(app: AppHandle, state: State<'_, AppState>, ids: Vec<String>) -> Result<usize, String> {
     let succeeded = note_service::batch_archive(state.note_repo.as_ref(), state.event_bus.as_ref(), &ids)?;
     for id in &succeeded {
-        let _ = app.emit("note-archived", id);
+        let _ = app.emit(NOTE_ARCHIVED, id);
     }
     Ok(succeeded.len())
 }
@@ -172,7 +176,7 @@ pub async fn batch_archive_notes(app: AppHandle, state: State<'_, AppState>, ids
 pub async fn batch_unarchive_notes(app: AppHandle, state: State<'_, AppState>, ids: Vec<String>) -> Result<usize, String> {
     let succeeded = note_service::batch_unarchive(state.note_repo.as_ref(), state.event_bus.as_ref(), &ids)?;
     for id in &succeeded {
-        let _ = app.emit("note-unarchived", id);
+        let _ = app.emit(NOTE_UNARCHIVED, id);
     }
     Ok(succeeded.len())
 }
@@ -190,7 +194,7 @@ pub async fn batch_delete_notes(app: AppHandle, state: State<'_, AppState>, ids:
         // destroy 强制销毁窗口（close 在 onCloseRequested 注册后不可靠）
         window_manager::close_note_window(&app, id);
     }
-    state.scheduler.schedule_recalc();
+    // schedule_recalc 由 lib.rs 监听 ReminderWritten(Deleted) 事件触发（ADR-008 扩展）
     Ok(succeeded.len())
 }
 
@@ -199,7 +203,7 @@ pub async fn batch_delete_notes(app: AppHandle, state: State<'_, AppState>, ids:
 pub async fn batch_update_color(app: AppHandle, state: State<'_, AppState>, ids: Vec<String>, color: String) -> Result<usize, String> {
     let succeeded = note_service::batch_update_color(state.note_repo.as_ref(), state.event_bus.as_ref(), &ids, color.clone())?;
     for id in &succeeded {
-        let _ = app.emit("note-color-changed", serde_json::json!({ "id": id, "color": color }));
+        let _ = app.emit(NOTE_COLOR_CHANGED, serde_json::json!({ "id": id, "color": color }));
     }
     Ok(succeeded.len())
 }

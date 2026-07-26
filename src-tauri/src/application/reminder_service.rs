@@ -38,7 +38,8 @@ pub fn create_reminder(
 
 /// 贪睡提醒，emit `ReminderWritten(Updated)` 事件
 ///
-/// 编排：find → snooze → save → 返回 note_id 用于通知
+/// 编排：find → snooze → save → 返回 note_id 用于通知。
+/// 若当前状态不允许 snooze（终态），返回错误且不 save 不 emit。
 pub fn snooze_reminder(
     reminder_repo: &dyn ReminderRepository,
     publisher: &dyn EventPublisher,
@@ -47,7 +48,7 @@ pub fn snooze_reminder(
 ) -> Result<String, String> {
     let mut reminder = reminder_repo.find_by_id(id)?.ok_or("提醒不存在")?;
     let note_id = reminder.note_id.clone();
-    reminder.snooze(minutes);
+    reminder.snooze(minutes)?;
     reminder_repo.save(&reminder)?;
     publisher.emit(DomainEvent::ReminderWritten {
         action: WriteAction::Updated,
@@ -58,7 +59,8 @@ pub fn snooze_reminder(
 
 /// 关闭提醒，emit `ReminderWritten(Updated)` 事件
 ///
-/// 编排：find → mark_done → save → 返回 note_id 用于通知
+/// 编排：find → mark_done → save → 返回 note_id 用于通知。
+/// 若当前状态不允许 mark_done（终态），返回错误且不 save 不 emit。
 pub fn dismiss_reminder(
     reminder_repo: &dyn ReminderRepository,
     publisher: &dyn EventPublisher,
@@ -66,7 +68,7 @@ pub fn dismiss_reminder(
 ) -> Result<String, String> {
     let mut reminder = reminder_repo.find_by_id(id)?.ok_or("提醒不存在")?;
     let note_id = reminder.note_id.clone();
-    reminder.mark_done();
+    reminder.mark_done()?;
     reminder_repo.save(&reminder)?;
     publisher.emit(DomainEvent::ReminderWritten {
         action: WriteAction::Updated,
@@ -79,22 +81,24 @@ pub fn dismiss_reminder(
 ///
 /// 编排：查 note_id → delete → 返回 note_id 用于通知。
 /// 返回 `Option<String>`：被删除提醒对应的 note_id（若提醒不存在则为 None）。
+///
+/// 存在性守卫：提醒不存在时幂等返回 `Ok(None)`，不 emit 事件（INV-013 保真度缺口修复）。
 pub fn delete_reminder(
     reminder_repo: &dyn ReminderRepository,
     publisher: &dyn EventPublisher,
     id: &str,
 ) -> Result<Option<String>, String> {
-    let note_id = reminder_repo
-        .find_by_id(id)
-        .ok()
-        .flatten()
-        .map(|r| r.note_id.clone());
+    let reminder = match reminder_repo.find_by_id(id)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let note_id = reminder.note_id.clone();
     reminder_repo.delete(id)?;
     publisher.emit(DomainEvent::ReminderWritten {
         action: WriteAction::Deleted,
         id: id.to_string(),
     });
-    Ok(note_id)
+    Ok(Some(note_id))
 }
 
 #[cfg(test)]
@@ -260,6 +264,40 @@ mod tests {
         assert_eq!(count_events(&events), 0);
     }
 
+    // ============ 终态拒绝转换测试（INV-031）============
+
+    #[test]
+    fn test_snooze_reminder_on_done_returns_err_no_emit() {
+        let repo = InMemoryReminderRepository::new();
+        let (mock, events) = mock_publisher();
+        let r = sample_reminder(&repo);
+
+        // 手动置为 Done 终态
+        let mut done = r.clone();
+        done.status = crate::domain::reminder::ReminderStatus::Done;
+        repo.save(&done).unwrap();
+
+        let result = snooze_reminder(&repo, &mock, &r.id, 10);
+        assert!(result.is_err());
+        assert_eq!(count_events(&events), 0, "终态拒绝转换不应 emit");
+    }
+
+    #[test]
+    fn test_dismiss_reminder_on_done_returns_err_no_emit() {
+        let repo = InMemoryReminderRepository::new();
+        let (mock, events) = mock_publisher();
+        let r = sample_reminder(&repo);
+
+        // 手动置为 Done 终态
+        let mut done = r.clone();
+        done.status = crate::domain::reminder::ReminderStatus::Done;
+        repo.save(&done).unwrap();
+
+        let result = dismiss_reminder(&repo, &mock, &r.id);
+        assert!(result.is_err());
+        assert_eq!(count_events(&events), 0, "终态拒绝转换不应 emit");
+    }
+
     // ============ delete_reminder 测试 ============
 
     #[test]
@@ -286,13 +324,14 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_reminder_nonexistent_returns_err_no_emit() {
+    fn test_delete_reminder_nonexistent_idempotent_no_emit() {
+        // 幂等删除：提醒不存在时返回 Ok(None) 且不 emit 事件（与 sqlite 行为对齐）
         let repo = InMemoryReminderRepository::new();
         let (mock, events) = mock_publisher();
 
-        // 删除不存在的提醒：mock_repo.delete 返回 Err（与 sqlite 行为一致）
         let result = delete_reminder(&repo, &mock, "nonexistent");
-        assert!(result.is_err());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), None);
         assert_eq!(count_events(&events), 0);
     }
 }

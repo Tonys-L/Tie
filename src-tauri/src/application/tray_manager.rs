@@ -8,17 +8,17 @@ use super::locale_manager;
 
 /// 构造托盘菜单（setup_tray 与 rebuild_tray_menu 共用，消除重复）
 fn build_tray_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>, String> {
-    let new_note = MenuItem::with_id(app, "new_note", locale_manager::menu_new_note(), true, None::<&str>)
+    let new_note = MenuItem::with_id(app, "new_note", locale_manager::MENU_NEW_NOTE.get(), true, None::<&str>)
         .map_err(|e| e.to_string())?;
-    let show_all = MenuItem::with_id(app, "show_all", locale_manager::menu_show_all(), true, None::<&str>)
+    let show_all = MenuItem::with_id(app, "show_all", locale_manager::MENU_SHOW_ALL.get(), true, None::<&str>)
         .map_err(|e| e.to_string())?;
-    let hub = MenuItem::with_id(app, "hub", locale_manager::menu_hub(), true, None::<&str>)
+    let hub = MenuItem::with_id(app, "hub", locale_manager::MENU_HUB.get(), true, None::<&str>)
         .map_err(|e| e.to_string())?;
     let separator1 = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
-    let sync_now = MenuItem::with_id(app, "sync_now", locale_manager::menu_sync_now(), true, None::<&str>)
+    let sync_now = MenuItem::with_id(app, "sync_now", locale_manager::MENU_SYNC_NOW.get(), true, None::<&str>)
         .map_err(|e| e.to_string())?;
     let separator2 = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
-    let quit = MenuItem::with_id(app, "quit", locale_manager::menu_quit(), true, None::<&str>)
+    let quit = MenuItem::with_id(app, "quit", locale_manager::MENU_QUIT.get(), true, None::<&str>)
         .map_err(|e| e.to_string())?;
 
     Menu::with_items(app, &[&new_note, &show_all, &hub, &separator1, &sync_now, &separator2, &quit])
@@ -36,7 +36,7 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), String> {
 
     TrayIconBuilder::with_id("main-tray")
         .icon(icon)
-        .tooltip(locale_manager::menu_tooltip())
+        .tooltip(locale_manager::MENU_TOOLTIP.get())
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| {
@@ -82,7 +82,7 @@ pub fn rebuild_tray_menu(app: &AppHandle) -> Result<(), String> {
 
     let tray = app.tray_by_id("main-tray").ok_or("未找到托盘图标")?;
     tray.set_menu(Some(menu)).map_err(|e| e.to_string())?;
-    tray.set_tooltip(Some(locale_manager::menu_tooltip())).map_err(|e| e.to_string())?;
+    tray.set_tooltip(Some(locale_manager::MENU_TOOLTIP.get())).map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -107,8 +107,8 @@ fn handle_show_all(app: &AppHandle) {
 }
 
 fn handle_hub(app: &AppHandle) {
-    // 委托 window_manager（消除内联 WebviewWindowBuilder 约束违规）
-    super::window_manager::open_or_focus_hub(app);
+    // 委托 hub_window_manager（ADR-009：Hub 窗口职责从 window_manager 拆出）
+    super::hub_window_manager::open_or_focus_hub(app);
 }
 
 fn handle_sync(app: &AppHandle) {

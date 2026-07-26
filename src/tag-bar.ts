@@ -7,11 +7,11 @@
  * - setupTagEvents 绑定输入框回车添加 + × 删除事件，调用 api.updateNoteTags
  *
  * 被调用方：note-events.ts (setupNoteEvents 编排)、note-renderer.ts (renderNote 调用 refreshTagBar)
- * 依赖：api.ts (updateNoteTags) + utils.ts (escapeHtml) + types.ts (Note)
+ * 依赖：api.ts (updateNoteTags) + html.ts (escapeHtml) + types.ts (Note)
  */
 
 import type { Note } from './types';
-import { escapeHtml } from './utils';
+import { escapeHtml } from './html';
 import * as api from './api';
 
 export function renderTagPills(tags: string[]): string {

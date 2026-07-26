@@ -19,7 +19,7 @@
 
 ### AppState
 
-应用全局状态，在 setup 中创建并通过 Tauri State 管理器注入到各命令。包含 `note_repo`、`reminder_repo`、`template_repo`、`git_sync`、`shortcut_manager`、`scheduler`、`event_bus` 七个成员。是组合根的具体实现。
+应用全局状态，在 setup 中创建并通过 Tauri State 管理器注入到各命令。包含 `note_repo`、`note_query`、`reminder_repo`、`reminder_query`、`template_repo`、`git_sync`、`shortcut_manager`、`scheduler`、`event_bus` 九个成员。是组合根的具体实现。
 
 ---
 
@@ -69,7 +69,7 @@
 
 ### 领域事件 (DomainEvent)
 
-后端内部事件总线传递的写操作完成信号（ADR-007）。按实体 + 操作类型粒度：`NoteWritten`/`ReminderWritten`/`TemplateWritten` 携带 `WriteAction`（`Created`/`Updated`/`Deleted`）+ 实体 id。由 `note_service`/`reminder_service`/`template_service` 在写操作完成后 emit，监听器（`lib.rs` setup 注册）接收并触发 `schedule_auto_sync` 等副作用。纯后端事件，不经过 Tauri emit/listen，不广播给前端。
+后端内部事件总线传递的写操作完成信号（ADR-007 + ADR-008 扩展）。按实体 + 操作类型粒度：`NoteWritten`/`ReminderWritten`/`TemplateWritten` 携带 `WriteAction`（`Created`/`Updated`/`Deleted`）+ 实体 id。由 `note_service`/`reminder_service`/`template_service` 在写操作完成后 emit，**以及 `reminder_scheduler::fire_reminders_with_deps` 在 save 推进状态后 emit `ReminderWritten(Updated)`**（ADR-008 扩展，覆盖 scheduler 系统自动写场景）。监听器（`lib.rs` setup 注册两条）接收事件并触发副作用：所有 `DomainEvent` → `schedule_auto_sync`；`ReminderWritten` → `schedule_recalc`。纯后端事件，不经过 Tauri emit/listen，不广播给前端。
 
 ---
 
@@ -141,11 +141,31 @@ service 层依赖的事件发布抽象 trait（依赖倒置原则）。service �
 
 ### 提醒 (Reminder)
 
-关联到便签的时间触发器。支持一次性（Once）、每日（Daily）、每周（Weekly）、每月（Monthly）、农历每月（LunarMonthly）五种重复类型。状态机：Pending → Triggered → Done/Cancelled。Monthly 按精确日历月计算（月末溢出取目标月最后一天）；LunarMonthly 按农历月计算（domain 层返回 None，由 application 层调用 tyme4rs 库计算）。
+关联到便签的时间触发器。支持一次性（Once）、每日（Daily）、每周（Weekly）、每月（Monthly）、农历每月（LunarMonthly）五种重复类型。状态机：Pending → Triggered → Done/Cancelled；4 个转换方法（mark_triggered/snooze/mark_done/cancel）返回 `Result<(), String>` 表达转换合法性（INV-031）——终态 Done/Cancelled 拒绝所有转换，Triggered 拒绝重复 mark_triggered；Triggered → Pending via snooze 合法（用户主动延后）。Monthly 按精确日历月计算（月末溢出取目标月最后一天）；LunarMonthly 按农历月计算（domain 层返回 None，由 application 层调用 tyme4rs 库计算）。
 
 ### 仓储 trait (Repository Trait)
 
 domain 层定义的数据访问能力契约（`NoteRepository`/`ReminderRepository`），infrastructure 层提供 SQLite 实现。依赖倒置原则的体现。
+
+### CQRS 风味拆分 (CQRS-flavored Repository Split)
+
+Repository trait 按聚合 CRUD 与读投影分离的拆分模式（ADR-010）。`NoteRepository`（5 方法：save/find_by_id/find_all/delete/find_archived）与 `NoteQuery`（2 方法：search_notes/find_activity_by_month）独立 trait；`ReminderRepository`（6 方法）与 `ReminderQuery`（3 方法：find_due/find_next_due_time/find_by_date_range）独立 trait。实现层 `SqliteXxxRepository` 同时 impl 两个 trait（双 impl 块）。不引入完整 CQRS 框架（无单独 Command/Query 模型），仅 trait 接口分离。目的：缩小 mock surface，让 scheduler 签名表达"只读投影"语义，为未来读模型优化（缓存/只读副本）留路径。
+
+### NoteQuery
+
+Note 读投影查询 trait（CQRS 拆分，ADR-010）。承载 `search_notes`（FTS5 搜索）+ `find_activity_by_month`（日历视图活动查询）2 个方法。`SqliteNoteRepository` 同时 impl `NoteRepository` + `NoteQuery`。`AppState.note_query: Box<dyn NoteQuery>` 持有，`note_commands::search_notes` / `reminder_commands::find_activity_by_month` 通过此字段调用。
+
+### ReminderQuery
+
+Reminder 读投影查询 trait（CQRS 拆分，ADR-010）。承载 `find_due`（scheduler 查到期）+ `find_next_due_time`（scheduler 计算下次）+ `find_by_date_range`（日历视图时间范围）3 个方法。`SqliteReminderRepository` 同时 impl `ReminderRepository` + `ReminderQuery`。`AppState.reminder_query: Box<dyn ReminderQuery>` 持有，`reminder_scheduler` 签名要求 `&dyn ReminderQuery`（非 `&dyn ReminderRepository`）表达"scheduler 只依赖读投影"语义。
+
+### ai-client (前端 AI 调用统一入口)
+
+前端 AI 调用的统一封装模块（`src/ai-client.ts`，ADR-009 同批次）。提供三个公开 API：`isAiConfigured()`（带 5 秒缓存的"AI 是否已配置"查询，避免右键菜单每次打开都发起 IPC）+ `getAiConfigCached()`（带缓存的完整配置读取，用于 ai-sniff 等需要 sniff_enabled 等字段的场景）+ `runAi<T>(op, opts)`（统一包装 AI 调用，处理 loading/success/error toast）。配置缓存通过 `ai-config-changed` 事件自动清空（Hub 保存配置后立即生效）。例外：`ai-settings.ts` 配置页本身每次刷新表单需读最新值，仍直接调用 `api.getAiConfig`。
+
+### runAi
+
+`ai-client.ts` 提供的 AI 调用包装函数。签名 `runAi<T>(op: () => Promise<T>, opts: RunAiOptions): Promise<T | undefined>`。流程：可选 loading toast → 执行 op → 成功显示 successMsg 返回结果 / 失败 console.error + 显示 errorPrefix toast 返回 undefined。`RunAiOptions` 含 `loadingMsg`/`successMsg`/`errorPrefix`/`silentError` 4 个可选字段。被 `ai-todo-sort`/`ai-rewrite` 复用，消除 4 个 AI module 的 try/catch + toast 重复模式。
 
 ---
 
@@ -215,3 +235,5 @@ SQLite FTS5 的一种分词器，将文本按 3 字符滑动窗口生成 trigram
 | 2026-07-18 | 右键菜单改为两项并存：「从模板新建便签」+「应用模板到当前便签」（追加到末尾，非破坏性）；模板快捷条多模板时横向单行滚动 | — | #FEAT-013 同步更新 constraints.md/boundaries.md |
 | 2026-07-19 | 新增图片宽度语法、图片拖拽调整术语 | AI | v0.8.5 |
 | 2026-07-21 | 新增领域事件（DomainEvent）、事件总线（EventBus）、事件发布者（EventPublisher）术语；更新 AppState 词条（新增 template_repo/event_bus 成员，5→7 个） | AI | #REFACTOR-036 同步更新 ADR-007/constraints.md/boundaries.md |
+| 2026-07-21 | 新增 CQRS 风味拆分、NoteQuery、ReminderQuery、ai-client、runAi 术语；更新 AppState 词条（新增 note_query/reminder_query 成员，7→9 个）；更新 DomainEvent 词条（ADR-008 扩展：scheduler 也 emit ReminderWritten，监听器两条） | AI | #REFACTOR-038 同步更新 ADR-008/010/constraints.md/boundaries.md/lessons/README.md |
+| 2026-07-22 | 更新提醒（Reminder）词条：4 个转换方法（mark_triggered/snooze/mark_done/cancel）返回 `Result<(), String>` 表达转换合法性（INV-031）——终态 Done/Cancelled 拒绝所有转换，Triggered 拒绝重复 mark_triggered；Triggered → Pending via snooze 合法（用户主动延后） | AI | #REFACTOR-039 同步更新 constraints.md/flows.md/boundaries.md/lessons/README.md |

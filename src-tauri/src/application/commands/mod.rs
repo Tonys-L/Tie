@@ -8,21 +8,29 @@
 //!
 //! 拆分原因：原 `commands.rs` 单文件 814 行，违反单一职责。
 //! 拆分后每个子模块 50~200 行，按业务能力聚合。
+//! 进一步拆分：sync_commands 原承担"同步 + 快捷键 + 语言 + 系统操作"四类职责，
+//! 现已按业务能力拆为 sync_commands / shortcut_commands / locale_commands / system_commands。
 //!
 //! 注意：必须用 `pub use mod::*;` glob，不能用显式列表，否则 `__cmd__xxx` 辅助项
 //! 无法重导出，`tauri::generate_handler!` 会找不到命令。
 
 pub mod ai_commands;
 pub mod image_commands;
+pub mod locale_commands;
 pub mod note_commands;
 pub mod reminder_commands;
+pub mod shortcut_commands;
 pub mod sync_commands;
+pub mod system_commands;
 pub mod template_commands;
 
 // glob 重导出所有 pub 项（含 #[tauri::command] 生成的 __cmd__xxx 辅助函数）
 pub use ai_commands::*;
 pub use image_commands::*;
+pub use locale_commands::*;
 pub use note_commands::*;
 pub use reminder_commands::*;
+pub use shortcut_commands::*;
 pub use sync_commands::*;
+pub use system_commands::*;
 pub use template_commands::*;

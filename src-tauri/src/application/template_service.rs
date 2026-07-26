@@ -40,11 +40,16 @@ pub fn save_template(
 }
 
 /// 删除模板，emit `TemplateWritten(Deleted)` 事件
+///
+/// 存在性守卫：模板不存在时幂等返回 `Ok(())`，不 emit 事件（INV-013 保真度缺口修复）。
 pub fn delete_template(
     template_repo: &dyn TemplateRepository,
     publisher: &dyn EventPublisher,
     id: &str,
 ) -> Result<(), String> {
+    if template_repo.find_by_id(id)?.is_none() {
+        return Ok(());
+    }
     template_repo.delete(id)?;
     publisher.emit(DomainEvent::TemplateWritten {
         action: WriteAction::Deleted,

@@ -41,7 +41,7 @@ pub fn sync_with_notification(
             let _ = app
                 .notification()
                 .builder()
-                .title(locale_manager::notify_sync_ok())
+                .title(locale_manager::NOTIFY_SYNC_OK.get())
                 .body(msg)
                 .show();
         }
@@ -49,7 +49,7 @@ pub fn sync_with_notification(
             let _ = app
                 .notification()
                 .builder()
-                .title(locale_manager::notify_sync_fail())
+                .title(locale_manager::NOTIFY_SYNC_FAIL.get())
                 .body(e)
                 .show();
         }

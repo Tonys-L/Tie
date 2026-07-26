@@ -6,8 +6,9 @@ use tauri_plugin_notification::NotificationExt;
 use tokio::sync::Notify;
 use tokio::time::{Instant, sleep_until};
 
+use crate::application::event_bus::{DomainEvent, EventPublisher, WriteAction};
 use crate::domain::reminder::{AdvanceResult, CalendarAdapter};
-use crate::domain::{Note, NoteRepository, ReminderRepository};
+use crate::domain::{Note, NoteRepository, ReminderQuery, ReminderRepository};
 use super::{lunar_calendar::TymeCalendarAdapter, window_manager};
 
 /// 提醒调度器：事件驱动 + 单定时器
@@ -50,7 +51,7 @@ pub fn start(app: AppHandle) {
         loop {
             let next_time = {
                 let state = app.state::<crate::AppState>();
-                state.reminder_repo.find_next_due_time()
+                state.reminder_query.find_next_due_time()
             };
 
             let deadline = match &next_time {
@@ -81,7 +82,13 @@ pub fn start(app: AppHandle) {
 
 fn check_and_fire(app: &AppHandle) {
     let state = app.state::<crate::AppState>();
-    fire_reminders(app, state.note_repo.as_ref(), state.reminder_repo.as_ref());
+    fire_reminders(
+        app,
+        state.note_repo.as_ref(),
+        state.reminder_repo.as_ref(),
+        state.reminder_query.as_ref(),
+        state.event_bus.as_ref(),
+    );
 }
 
 /// 提醒通知器 trait：把"发送通知 + 弹出窗口"抽象为可注入接口
@@ -132,26 +139,35 @@ pub fn fire_reminders(
     app: &AppHandle,
     note_repo: &dyn NoteRepository,
     reminder_repo: &dyn ReminderRepository,
+    reminder_query: &dyn ReminderQuery,
+    publisher: &dyn EventPublisher,
 ) {
     let notifier = TauriReminderNotifier::new(app.clone());
     let calendar = TymeCalendarAdapter;
-    fire_reminders_with_deps(&notifier, &calendar, note_repo, reminder_repo);
+    fire_reminders_with_deps(&notifier, &calendar, note_repo, reminder_repo, reminder_query, publisher);
 }
 
 /// 触发所有到期提醒（可测试入口）
 ///
 /// 接收 trait object 而非 AppHandle，核心逻辑可注入 mock 测试（INV-028）。
-/// 编排流程：查询到期提醒 → 发送通知 → 弹出窗口 → 推进状态 → save。
+/// 编排流程：查询到期提醒 → 发送通知 → 弹出窗口 → 推进状态 → save → emit `ReminderWritten(Updated)` 事件。
+///
+/// 事件 emit（ADR-007 扩展）：每次 save 后 emit `ReminderWritten(Updated)`，由 lib.rs 监听器
+/// 统一触发 `schedule_recalc` + `schedule_auto_sync`，消除调用方手动触发副作用（INV-029）。
 pub fn fire_reminders_with_deps(
     notifier: &dyn ReminderNotifier,
     calendar: &dyn CalendarAdapter,
     note_repo: &dyn NoteRepository,
     reminder_repo: &dyn ReminderRepository,
+    reminder_query: &dyn ReminderQuery,
+    publisher: &dyn EventPublisher,
 ) {
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    // now 用秒级精度（不带毫秒），与界面分钟级 remind_at 格式对齐
+    // 避免带毫秒的 now 与不带毫秒的 remind_at 字符串比较时出现边界问题
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     eprintln!("[调度器] 轮询, now={}", now);
 
-    let due_reminders = match reminder_repo.find_due(&now) {
+    let due_reminders = match reminder_query.find_due(&now) {
         Ok(r) => {
             eprintln!("[调度器] 查到 {} 条到期提醒", r.len());
             r
@@ -213,15 +229,29 @@ pub fn fire_reminders_with_deps(
         }
         if let Err(e) = reminder_repo.save(&updated) {
             eprintln!("[调度器] 保存提醒状态失败: {}", e);
+        } else {
+            // save 成功后 emit ReminderWritten(Updated)，listener 统一处理 schedule_recalc + schedule_auto_sync
+            publisher.emit(DomainEvent::ReminderWritten {
+                action: WriteAction::Updated,
+                id: updated.id.clone(),
+            });
         }
     }
 }
 
 /// 将 ISO 时间字符串转为 tokio Instant
 fn parse_instant(iso_time: &str) -> Instant {
-    let target = chrono::DateTime::parse_from_rfc3339(iso_time)
-        .map(|dt| dt.with_timezone(&chrono::Utc))
-        .unwrap_or_else(|_| chrono::Utc::now());
+    let target = match chrono::DateTime::parse_from_rfc3339(iso_time) {
+        Ok(dt) => dt.with_timezone(&chrono::Utc),
+        Err(e) => {
+            // 解析失败时记录警告日志，便于排查异常时间格式导致的提前触发
+            eprintln!(
+                "[调度器] 警告: 时间解析失败 '{}': {}, fallback 到立即触发",
+                iso_time, e
+            );
+            chrono::Utc::now()
+        }
+    };
 
     let now = chrono::Utc::now();
     let duration = if target > now {
@@ -237,9 +267,20 @@ fn parse_instant(iso_time: &str) -> Instant {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::event_bus::MockEventPublisher;
     use crate::domain::reminder::{Reminder, ReminderStatus, RepeatType};
     use crate::domain::mock_repo::{InMemoryNoteRepository, InMemoryReminderRepository};
     use crate::domain::Note;
+
+    fn mock_publisher() -> (MockEventPublisher, std::sync::Arc<std::sync::Mutex<Vec<DomainEvent>>>) {
+        let mock = MockEventPublisher::new();
+        let events = mock.events_clone();
+        (mock, events)
+    }
+
+    fn count_events(events: &std::sync::Arc<std::sync::Mutex<Vec<DomainEvent>>>) -> usize {
+        events.lock().unwrap().len()
+    }
 
     #[test]
     fn test_parse_instant_future_time() {
@@ -358,35 +399,39 @@ mod tests {
 
     #[test]
     fn test_fire_reminders_with_deps_no_due() {
-        // 无到期提醒 → 不调用 notifier
+        // 无到期提醒 → 不调用 notifier，不 emit
         let notifier = MockNotifier::new();
         let calendar = MockCalendar { next: None };
         let note_repo = InMemoryNoteRepository::new();
         let reminder_repo = InMemoryReminderRepository::new();
+        let (mock, events) = mock_publisher();
 
-        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo);
+        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo, &reminder_repo, &mock);
 
         assert_eq!(notifier.notify_calls.lock().unwrap().len(), 0);
         assert_eq!(notifier.activate_calls.lock().unwrap().len(), 0);
+        assert_eq!(count_events(&events), 0);
     }
 
     #[test]
     fn test_fire_reminders_with_deps_archived_note_skipped() {
-        // 归档便签 → 跳过提醒（不发通知、不弹窗）
+        // 归档便签 → 跳过提醒（不发通知、不弹窗、不 save → 不 emit）
         let notifier = MockNotifier::new();
         let calendar = MockCalendar { next: None };
         let note_repo = InMemoryNoteRepository::new();
         let reminder_repo = InMemoryReminderRepository::new();
+        let (mock, events) = mock_publisher();
 
         let note = make_note("note-1", "归档便签", "内容", true);
         note_repo.save(&note).unwrap();
         let reminder = make_due_reminder("rem-1", "note-1", "归档便签", RepeatType::Once);
         reminder_repo.save(&reminder).unwrap();
 
-        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo);
+        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo, &reminder_repo, &mock);
 
         assert_eq!(notifier.notify_calls.lock().unwrap().len(), 0, "归档便签不应发通知");
         assert_eq!(notifier.activate_calls.lock().unwrap().len(), 0, "归档便签不应弹窗");
+        assert_eq!(count_events(&events), 0, "归档便签跳过 → 不 emit");
         // 提醒状态保持 Pending（未触发）
         let saved = reminder_repo.find_by_id("rem-1").unwrap().unwrap();
         assert_eq!(saved.status, ReminderStatus::Pending);
@@ -394,81 +439,115 @@ mod tests {
 
     #[test]
     fn test_fire_reminders_with_deps_once_reminder_marked_triggered() {
-        // 一次性到期提醒 → 发通知 + 弹窗 + 标记 Triggered
+        // 一次性到期提醒 → 发通知 + 弹窗 + 标记 Triggered + emit Updated
         let notifier = MockNotifier::new();
         let calendar = MockCalendar { next: None };
         let note_repo = InMemoryNoteRepository::new();
         let reminder_repo = InMemoryReminderRepository::new();
+        let (mock, events) = mock_publisher();
 
         let note = make_note("note-1", "测试便签", "内容", false);
         note_repo.save(&note).unwrap();
         let reminder = make_due_reminder("rem-1", "note-1", "测试便签", RepeatType::Once);
         reminder_repo.save(&reminder).unwrap();
 
-        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo);
+        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo, &reminder_repo, &mock);
 
         assert_eq!(notifier.notify_calls.lock().unwrap().len(), 1);
         assert_eq!(notifier.activate_calls.lock().unwrap().len(), 1);
         let saved = reminder_repo.find_by_id("rem-1").unwrap().unwrap();
         assert_eq!(saved.status, ReminderStatus::Triggered);
+        assert_eq!(count_events(&events), 1, "save 成功应 emit ReminderWritten(Updated)");
+        let events_guard = events.lock().unwrap();
+        match &events_guard[0] {
+            DomainEvent::ReminderWritten { action, id } => {
+                assert_eq!(*action, WriteAction::Updated);
+                assert_eq!(id, "rem-1");
+            }
+            _ => panic!("expected ReminderWritten"),
+        }
     }
 
     #[test]
     fn test_fire_reminders_with_deps_daily_reminder_reset_to_next() {
-        // Daily 周期提醒 → 发通知 + 保持 Pending + remind_at 推进到下一天
+        // Daily 周期提醒 → 发通知 + 保持 Pending + remind_at 推进到下一天 + emit Updated
         let notifier = MockNotifier::new();
         let calendar = MockCalendar { next: None };
         let note_repo = InMemoryNoteRepository::new();
         let reminder_repo = InMemoryReminderRepository::new();
+        let (mock, events) = mock_publisher();
 
         let note = make_note("note-1", "周期便签", "内容", false);
         note_repo.save(&note).unwrap();
         let reminder = make_due_reminder("rem-1", "note-1", "周期便签", RepeatType::Daily);
         reminder_repo.save(&reminder).unwrap();
 
-        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo);
+        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo, &reminder_repo, &mock);
 
         let saved = reminder_repo.find_by_id("rem-1").unwrap().unwrap();
         assert_eq!(saved.status, ReminderStatus::Pending, "Daily 应保持 Pending");
         assert!(saved.remind_at.contains("2020-01-02"), "remind_at 应推进到次日");
+        assert_eq!(count_events(&events), 1, "save 成功应 emit");
     }
 
     #[test]
     fn test_fire_reminders_with_deps_lunar_monthly_success() {
-        // LunarMonthly 周期提醒 + 农历计算成功 → 保持 Pending + remind_at 推进
+        // LunarMonthly 周期提醒 + 农历计算成功 → 保持 Pending + remind_at 推进 + emit Updated
         let notifier = MockNotifier::new();
         let calendar = MockCalendar { next: Some("2020-02-01T00:00:00Z".to_string()) };
         let note_repo = InMemoryNoteRepository::new();
         let reminder_repo = InMemoryReminderRepository::new();
+        let (mock, events) = mock_publisher();
 
         let note = make_note("note-1", "农历便签", "内容", false);
         note_repo.save(&note).unwrap();
         let reminder = make_due_reminder("rem-1", "note-1", "农历便签", RepeatType::LunarMonthly);
         reminder_repo.save(&reminder).unwrap();
 
-        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo);
+        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo, &reminder_repo, &mock);
 
         let saved = reminder_repo.find_by_id("rem-1").unwrap().unwrap();
         assert_eq!(saved.status, ReminderStatus::Pending, "LunarMonthly 成功应保持 Pending");
         assert_eq!(saved.remind_at, "2020-02-01T00:00:00Z");
+        assert_eq!(count_events(&events), 1, "save 成功应 emit");
     }
 
     #[test]
     fn test_fire_reminders_with_deps_lunar_monthly_fail_marked_triggered() {
-        // LunarMonthly 周期提醒 + 农历计算失败 → 标记 Triggered
+        // LunarMonthly 周期提醒 + 农历计算失败 → 标记 Triggered + emit Updated
         let notifier = MockNotifier::new();
         let calendar = MockCalendar { next: None };
         let note_repo = InMemoryNoteRepository::new();
         let reminder_repo = InMemoryReminderRepository::new();
+        let (mock, events) = mock_publisher();
 
         let note = make_note("note-1", "农历便签", "内容", false);
         note_repo.save(&note).unwrap();
         let reminder = make_due_reminder("rem-1", "note-1", "农历便签", RepeatType::LunarMonthly);
         reminder_repo.save(&reminder).unwrap();
 
-        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo);
+        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo, &reminder_repo, &mock);
 
         let saved = reminder_repo.find_by_id("rem-1").unwrap().unwrap();
         assert_eq!(saved.status, ReminderStatus::Triggered, "LunarMonthly 失败应标记 Triggered");
+        assert_eq!(count_events(&events), 1, "save 成功应 emit");
+    }
+
+    #[test]
+    fn test_fire_reminders_with_deps_note_not_found_no_emit() {
+        // 提醒存在但便签不存在 → continue 跳过，不 save → 不 emit
+        let notifier = MockNotifier::new();
+        let calendar = MockCalendar { next: None };
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+        let (mock, events) = mock_publisher();
+
+        let reminder = make_due_reminder("rem-1", "nonexistent-note", "不存在便签", RepeatType::Once);
+        reminder_repo.save(&reminder).unwrap();
+
+        fire_reminders_with_deps(&notifier, &calendar, &note_repo, &reminder_repo, &reminder_repo, &mock);
+
+        assert_eq!(notifier.notify_calls.lock().unwrap().len(), 0);
+        assert_eq!(count_events(&events), 0, "便签不存在 → 跳过 → 不 emit");
     }
 }

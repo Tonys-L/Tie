@@ -20,7 +20,9 @@
  */
 
 import * as api from './api';
-import { COLOR_MAP, escapeHtml, formatDate } from './utils';
+import { COLOR_MAP } from './colors';
+import { escapeHtml } from './html';
+import { formatDate } from './datetime';
 import { t } from './i18n';
 import { showReminderDialog } from './reminder-dialog';
 import {
@@ -31,6 +33,7 @@ import {
   refreshSelectionUI,
 } from './notes-multiselect';
 import { showDeleteConfirm } from './delete-confirm';
+import * as reminderCountCache from './reminder-count-cache';
 
 // ===== 模块级 state =====
 let currentTab = 'active';
@@ -75,15 +78,8 @@ searchInput?.addEventListener('input', () => {
   searchTimer = setTimeout(async () => {
     try {
       const results = await api.searchNotes(searchQuery);
-      // 补充提醒数量缓存
-      await Promise.allSettled(results.map(async (n: any) => {
-        if (n._reminderCount === undefined) {
-          try {
-            const reminders = await api.getReminders(n.id);
-            n._reminderCount = (reminders as any[]).filter(r => r.status === 'pending').length;
-          } catch { n._reminderCount = 0; }
-        }
-      }));
+      // 补充提醒数量缓存（委托 reminder-count-cache 集中管理）
+      await reminderCountCache.bulkLoadCounts(results.map((n: any) => n.id));
       searchResults = results;
       renderList();
     } catch(e) { console.error('搜索失败:', e); }
@@ -145,32 +141,15 @@ export async function loadNotes(): Promise<void> {
     const [active, archived] = await Promise.all([api.getAllNotes(), api.getArchivedNotes()]);
     activeNotes = active as any[];
     archivedNotes = archived as any[];
-    // 保留已有搜索结果的提醒缓存
-    if (searchResults) {
-      const cached = new Map<string, number>();
-      [...activeNotes, ...archivedNotes].forEach(n => {
-        if (n._reminderCount !== undefined) cached.set(n.id, n._reminderCount);
-      });
-      searchResults.forEach(n => {
-        if (n._reminderCount === undefined && cached.has(n.id)) {
-          n._reminderCount = cached.get(n.id);
-        }
-      });
-    }
-    // 并行加载每条便签的提醒数量
+    // 并行加载每条便签的提醒数量（委托 reminder-count-cache 集中管理，已缓存则跳过）
     const allNotes = [...activeNotes, ...archivedNotes];
-    await Promise.allSettled(allNotes.map(async (n: any) => {
-      try {
-        const reminders = await api.getReminders(n.id);
-        n._reminderCount = (reminders as any[]).filter(r => r.status === 'pending').length;
-      } catch { n._reminderCount = 0; }
-    }));
+    await reminderCountCache.bulkLoadCounts(allNotes.map(n => n.id));
     const ca = document.getElementById('count-active');
     const cb = document.getElementById('count-archived');
     const cr = document.getElementById('count-reminders');
     if (ca) ca.textContent = String(activeNotes.length);
     if (cb) cb.textContent = String(archivedNotes.length);
-    if (cr) cr.textContent = String([...activeNotes, ...archivedNotes].filter(n => n._reminderCount > 0).length);
+    if (cr) cr.textContent = String(reminderCountCache.countNotesWithReminders(allNotes.map(n => n.id)));
     renderTagSidebar();
     renderList();
   } catch(e) { console.error('加载失败:', e); }
@@ -225,7 +204,7 @@ function renderList(): void {
     isSearchMode = true;
     notes = searchResults;
   } else if (currentTab === 'reminders') {
-    notes = [...activeNotes, ...archivedNotes].filter(n => (n._reminderCount || 0) > 0);
+    notes = [...activeNotes, ...archivedNotes].filter(n => reminderCountCache.getCount(n.id) > 0);
   } else {
     notes = currentTab === 'active' ? activeNotes : archivedNotes;
   }
@@ -273,7 +252,8 @@ function renderList(): void {
     const actionBtn = isArchived
 	      ? `<button class="act-btn restore" data-restore="${n.id}" title="${t('hub.restore')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button>`
 	      : `<button class="act-btn reminder" data-reminder="${n.id}" data-title="${escapeHtml(title)}" title="${t('hub.reminders')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></button><button class="act-btn archive" data-archive="${n.id}" title="${t('note.archive')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg></button>`;
-    const reminderBadge = n._reminderCount > 0 ? `<span class="reminder-badge">${n._reminderCount}</span>` : '';
+    const reminderCount = reminderCountCache.getCount(n.id);
+    const reminderBadge = reminderCount > 0 ? `<span class="reminder-badge">${reminderCount}</span>` : '';
     return `<div class="note-item" data-id="${n.id}"><div class="note-color" style="background:${color}"></div><div class="note-text"><div class="note-title">${escapeHtml(title)} ${tag}</div><div class="note-preview">${previewHtml}</div>${tagsHtml}</div>${reminderBadge}<span class="note-date">${dateStr}</span><div class="note-actions">${actionBtn}<button class="act-btn delete" data-delete="${n.id}" title="${t('note.delete')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button></div></div>`;
   }).join('');
   // 列表 DOM 被替换后重新高亮选中项

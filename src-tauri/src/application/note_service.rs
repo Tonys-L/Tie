@@ -26,21 +26,37 @@ use super::{image_service, window_manager};
 /// 创建便签并打开窗口，emit `NoteWritten(Created)` 事件
 ///
 /// color 为 None 时降级为 "amber"。返回新建便签的 id。
+///
+/// 薄封装：委托 [`create_note_with_deps`] 处理 save + emit，再调用 window_manager 开窗。
+/// 核心写逻辑抽取到 `create_note_with_deps`，脱离 AppHandle 依赖可单测（仿 INV-028 模式）。
 pub fn create_note(
     app: &AppHandle,
     note_repo: &dyn NoteRepository,
     publisher: &dyn EventPublisher,
     color: Option<String>,
 ) -> Result<String, String> {
+    let note = create_note_with_deps(note_repo, publisher, color)?;
+    window_manager::open_note_window(app, &note)?;
+    Ok(note.id)
+}
+
+/// 创建便签核心逻辑（可测试，不依赖 AppHandle）
+///
+/// 保存 Note + emit `NoteWritten(Created)` 事件，返回新建的 Note 供调用方开窗。
+/// color 为 None 时降级为 "amber"。
+pub fn create_note_with_deps(
+    note_repo: &dyn NoteRepository,
+    publisher: &dyn EventPublisher,
+    color: Option<String>,
+) -> Result<Note, String> {
     let color = color.unwrap_or_else(|| "amber".to_string());
     let note = Note::new(String::new(), color);
     note_repo.save(&note)?;
-    window_manager::open_note_window(app, &note)?;
     publisher.emit(DomainEvent::NoteWritten {
         action: WriteAction::Created,
         id: note.id.clone(),
     });
-    Ok(note.id)
+    Ok(note)
 }
 
 /// 打开便签窗口（查询 + 开窗，非写操作，不 emit 事件）
@@ -93,19 +109,35 @@ pub fn update_note_style(
     Ok(())
 }
 
-/// 删除便签及关联提醒，清理孤儿图片，emit `NoteWritten(Deleted)` 事件
+/// 删除便签及关联提醒，清理孤儿图片，emit `NoteWritten(Deleted)` + 每个级联删除的 `ReminderWritten(Deleted)` 事件
 ///
 /// 图片清理职责内聚到本函数（locality），所有调用方（单删除命令、batch_delete、
 /// 未来可能的 tray/AI 调用方）自动获得清理行为，无需手动调用 image_service。
+///
+/// 事件 emit（ADR-007 扩展）：级联删除 reminder 时同步 emit `ReminderWritten(Deleted)`，
+/// 让 lib.rs listener 统一触发 `schedule_recalc`，消除命令层手动调用（INV-029）。
 pub fn delete_note(
     note_repo: &dyn NoteRepository,
     reminder_repo: &dyn ReminderRepository,
     publisher: &dyn EventPublisher,
     id: &str,
 ) -> Result<(), String> {
+    // 存在性守卫：便签不存在时幂等返回 Ok(())，不 emit 事件。
+    // 避免生产环境（sqlite delete 静默成功）对不存在的便签 emit NoteWritten(Deleted)
+    // 触发不必要的 schedule_auto_sync（INV-013 保真度缺口修复）。
+    let note = match note_repo.find_by_id(id)? {
+        Some(n) => n,
+        None => return Ok(()),
+    };
     // 删除前清理便签内容中的图片文件（先取 content 再 delete）
-    if let Ok(Some(note)) = note_repo.find_by_id(id) {
-        image_service::cleanup_removed_images(&note.content, "");
+    image_service::cleanup_removed_images(&note.content, "");
+    // 级联删除 reminder 前 emit ReminderWritten(Deleted)，让 listener 触发 schedule_recalc
+    let reminders = reminder_repo.find_by_note_id(id)?;
+    for reminder in &reminders {
+        publisher.emit(DomainEvent::ReminderWritten {
+            action: WriteAction::Deleted,
+            id: reminder.id.clone(),
+        });
     }
     reminder_repo.delete_by_note_id(id)?;
     note_repo.delete(id)?;
@@ -308,6 +340,11 @@ pub fn batch_delete(
 ) -> Result<Vec<String>, String> {
     let mut succeeded = Vec::new();
     for id in ids {
+        // 幂等删除：delete_note 对不存在的便签返回 Ok(())（与 sqlite 对齐），
+        // 但 batch_delete 只应返回"实际删除了"的 id，故预检查存在性。
+        if note_repo.find_by_id(id)?.is_none() {
+            continue;
+        }
         if delete_note(note_repo, reminder_repo, publisher, id).is_ok() {
             succeeded.push(id.clone());
         }
@@ -355,16 +392,39 @@ mod tests {
         events.lock().unwrap().len()
     }
 
-    // ============ create_note 测试 ============
+    // ============ create_note_with_deps 测试 ============
 
     #[test]
-    fn test_create_note_emits_created_event() {
+    fn test_create_note_with_deps_emits_created() {
+        // 验证 create_note_with_deps（脱离 AppHandle）正确 save + emit NoteWritten(Created)
         let note_repo = InMemoryNoteRepository::new();
         let (mock, events) = mock_publisher();
 
-        // 注意：create_note 需要 AppHandle，这里仅验证 emit 逻辑不直接测试开窗
-        // 改为测试不依赖 AppHandle 的写方法
-        let _ = (mock, events);
+        let note = create_note_with_deps(&note_repo, &mock, Some("blue".into())).unwrap();
+
+        assert_eq!(note.color, "blue");
+        assert!(note.title.is_empty());
+        assert!(note_repo.find_by_id(&note.id).unwrap().is_some());
+
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            DomainEvent::NoteWritten { action, id } => {
+                assert_eq!(*action, WriteAction::Created);
+                assert_eq!(id, &note.id);
+            }
+            _ => panic!("expected NoteWritten(Created)"),
+        }
+    }
+
+    #[test]
+    fn test_create_note_with_deps_defaults_amber() {
+        // color 为 None 时降级为 "amber"
+        let note_repo = InMemoryNoteRepository::new();
+        let (mock, _events) = mock_publisher();
+
+        let note = create_note_with_deps(&note_repo, &mock, None).unwrap();
+        assert_eq!(note.color, "amber");
     }
 
     // ============ delete_note 测试 ============
@@ -382,6 +442,7 @@ mod tests {
             "2099-01-01T00:00:00Z".to_string(),
             "once".to_string(),
         );
+        let reminder_id = reminder.id.clone();
         note_repo.save(&note).unwrap();
         reminder_repo.save(&reminder).unwrap();
 
@@ -389,25 +450,39 @@ mod tests {
 
         assert!(note_repo.find_by_id(&note.id).unwrap().is_none());
         assert!(reminder_repo.find_by_note_id(&note.id).unwrap().is_empty());
-        assert_eq!(count_events(&events), 1);
+        // 应 emit 2 个事件：ReminderWritten(Deleted) + NoteWritten(Deleted)
+        assert_eq!(count_events(&events), 2);
         let events_guard = events.lock().unwrap();
-        match &events_guard[0] {
-            DomainEvent::NoteWritten { action, id } => {
-                assert_eq!(*action, WriteAction::Deleted);
-                assert_eq!(id, &note.id);
+        let mut found_reminder_deleted = false;
+        let mut found_note_deleted = false;
+        for event in events_guard.iter() {
+            match event {
+                DomainEvent::ReminderWritten { action, id } => {
+                    assert_eq!(*action, WriteAction::Deleted);
+                    assert_eq!(id, &reminder_id);
+                    found_reminder_deleted = true;
+                }
+                DomainEvent::NoteWritten { action, id } => {
+                    assert_eq!(*action, WriteAction::Deleted);
+                    assert_eq!(id, &note.id);
+                    found_note_deleted = true;
+                }
+                _ => panic!("unexpected event"),
             }
-            _ => panic!("expected NoteWritten"),
         }
+        assert!(found_reminder_deleted, "应 emit ReminderWritten(Deleted)");
+        assert!(found_note_deleted, "应 emit NoteWritten(Deleted)");
     }
 
     #[test]
-    fn test_delete_note_not_exists_no_emit() {
+    fn test_delete_note_not_exists_idempotent_no_emit() {
+        // 幂等删除：便签不存在时返回 Ok(()) 且不 emit 事件（与 sqlite 行为对齐）
         let note_repo = InMemoryNoteRepository::new();
         let reminder_repo = InMemoryReminderRepository::new();
         let (mock, events) = mock_publisher();
 
         let result = delete_note(&note_repo, &reminder_repo, &mock, "nonexistent");
-        assert!(result.is_err());
+        assert!(result.is_ok());
         assert_eq!(count_events(&events), 0);
     }
 
@@ -786,7 +861,18 @@ mod tests {
         assert_eq!(succeeded.len(), 2);
         assert!(note_repo.find_by_id(&id1).unwrap().is_none());
         assert!(reminder_repo.find_by_note_id(&id1).unwrap().is_empty());
-        assert_eq!(count_events(&events), 2);
+        // 事件数 = 3：n1 级联删除 reminder emit ReminderWritten(Deleted) + n1 emit NoteWritten(Deleted) + n2 emit NoteWritten(Deleted)
+        assert_eq!(count_events(&events), 3);
+        // 验证事件类型分布
+        let events_guard = events.lock().unwrap();
+        let reminder_deleted_count = events_guard.iter().filter(|e| {
+            matches!(e, DomainEvent::ReminderWritten { action: WriteAction::Deleted, .. })
+        }).count();
+        let note_deleted_count = events_guard.iter().filter(|e| {
+            matches!(e, DomainEvent::NoteWritten { action: WriteAction::Deleted, .. })
+        }).count();
+        assert_eq!(reminder_deleted_count, 1, "n1 级联删除 1 个 reminder");
+        assert_eq!(note_deleted_count, 2, "删除 2 张 note");
     }
 
     #[test]

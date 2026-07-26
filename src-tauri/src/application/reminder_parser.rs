@@ -77,16 +77,9 @@ struct SniffResponse {
     suggestions: Vec<serde_json::Value>,
 }
 
-/// 嗅探便签正文，返回通用建议列表
+/// 将 AI 嗅探响应遍历包装为 `Suggestion` 列表（纯函数，无 I/O 可独立单测）
 ///
-/// 流程：
-/// 1. 未配置 AI（api_key 为空）→ 返回 `Ok(vec![])`，静默跳过
-/// 2. 用户关闭嗅探（`sniff_enabled=false`）→ 返回 `Ok(vec![])`，静默跳过
-/// 3. 调用 AI：build_sniff_messages → AiService::call → 解析 JSON → SniffResponse
-/// 4. AI 返回 `{"suggestions": []}` → 返回 `Ok(vec![])`
-/// 5. AI 返回含建议 → 遍历建议项，按 `type` 包装为 `Suggestion` 返回
-///
-/// 支持 5 种建议类型：
+/// 遍历 `SniffResponse.suggestions`，按 `type` 字段分发到 5 种建议类型：
 /// - `reminder`：解析为 `SniffResult`（`detected` 置 true），data = SniffResult 序列化
 /// - `todo_split`：data = `Vec<String>`（todos 数组）
 /// - `tidy`：data = `String`（tidy_text）
@@ -94,41 +87,8 @@ struct SniffResponse {
 /// - `tag_suggest`：data = `Vec<String>`（tags 数组）
 ///
 /// 未知类型跳过。各类型在数据为空时跳过（不 push 建议）。
-pub async fn sniff_suggestions(content: &str, config: &AiConfig) -> Result<Vec<Suggestion>, AiError> {
-    // 未配置：静默跳过
-    if !config.is_configured() {
-        log::info!("AI分析跳过：AI 未配置（api_key 为空）");
-        return Ok(vec![]);
-    }
-    // sniff_enabled 仅控制保存时自动分析，手动触发（灯泡）不受此开关限制
-    // 调用 AI
-    let messages = build_sniff_messages(content);
-    let service = AiService::new(config.clone());
-    let resp = service.call(messages).await?;
-    // AI 返回空内容则无建议
-    if resp.trim().is_empty() {
-        log::debug!("嗅探：AI 返回空内容");
-        return Ok(vec![]);
-    }
-    let resp_preview: String = resp.chars().take(1000).collect();
-    log::debug!("=== 嗅探解析 ===");
-    log::debug!("AI 返回内容: {}", resp_preview);
-    // 4. 解析 JSON（兼容 markdown 代码块或附带解释文字）
-    let json_str = extract_json(&resp);
-    log::debug!("extract_json 提取后: {}", json_str);
-    if json_str.trim().is_empty() {
-        let preview: String = resp.chars().take(200).collect();
-        log::warn!("嗅探 AI 返回内容中未找到 JSON: {}", preview);
-        return Ok(vec![]);
-    }
-    let response: SniffResponse = serde_json::from_str(json_str)
-        .map_err(|e| {
-            let preview: String = resp.chars().take(200).collect();
-            log::error!("嗅探 JSON 解析失败: {}, json_str: {}", e, json_str);
-            AiError::ParseError(format!("嗅探结果 JSON 解析失败: {}，原始内容: {}", e, preview))
-        })?;
-    log::debug!("解析到 {} 条建议", response.suggestions.len());
-    // 5. 遍历建议项，按 type 包装为 Suggestion
+/// 兼容两种格式：字段在顶层 或 嵌套在 `data` 里。
+fn build_suggestions(response: SniffResponse) -> Result<Vec<Suggestion>, AiError> {
     let mut suggestions = Vec::new();
     for item in response.suggestions {
         let item_type = item
@@ -232,11 +192,66 @@ pub async fn sniff_suggestions(content: &str, config: &AiConfig) -> Result<Vec<S
     Ok(suggestions)
 }
 
+/// 嗅探便签正文，返回通用建议列表
+///
+/// 流程：
+/// 1. 未配置 AI（api_key 为空）→ 返回 `Ok(vec![])`，静默跳过
+/// 2. 用户关闭嗅探（`sniff_enabled=false`）→ 返回 `Ok(vec![])`，静默跳过
+/// 3. 调用 AI：build_sniff_messages → AiService::call → 解析 JSON → SniffResponse
+/// 4. AI 返回 `{"suggestions": []}` → 返回 `Ok(vec![])`
+/// 5. AI 返回含建议 → 遍历建议项，按 `type` 包装为 `Suggestion` 返回
+///
+/// 支持 5 种建议类型：
+/// - `reminder`：解析为 `SniffResult`（`detected` 置 true），data = SniffResult 序列化
+/// - `todo_split`：data = `Vec<String>`（todos 数组）
+/// - `tidy`：data = `String`（tidy_text）
+/// - `style`：data = `{"style_type": String, "styled_text": String}`
+/// - `tag_suggest`：data = `Vec<String>`（tags 数组）
+///
+/// 未知类型跳过。各类型在数据为空时跳过（不 push 建议）。
+pub async fn sniff_suggestions(content: &str, config: &AiConfig) -> Result<Vec<Suggestion>, AiError> {
+    // 未配置：静默跳过
+    if !config.is_configured() {
+        log::info!("AI分析跳过：AI 未配置（api_key 为空）");
+        return Ok(vec![]);
+    }
+    // sniff_enabled 仅控制保存时自动分析，手动触发（灯泡）不受此开关限制
+    // 调用 AI
+    let messages = build_sniff_messages(content);
+    let service = AiService::new(config.clone());
+    let resp = service.call(messages).await?;
+    // AI 返回空内容则无建议
+    if resp.trim().is_empty() {
+        log::debug!("嗅探：AI 返回空内容");
+        return Ok(vec![]);
+    }
+    let resp_preview: String = resp.chars().take(1000).collect();
+    log::debug!("=== 嗅探解析 ===");
+    log::debug!("AI 返回内容: {}", resp_preview);
+    // 4. 解析 JSON（兼容 markdown 代码块或附带解释文字）
+    let json_str = super::json_extract::extract_object(&resp).unwrap_or(&resp);
+    log::debug!("extract_json 提取后: {}", json_str);
+    if json_str.trim().is_empty() {
+        let preview: String = resp.chars().take(200).collect();
+        log::warn!("嗅探 AI 返回内容中未找到 JSON: {}", preview);
+        return Ok(vec![]);
+    }
+    let response: SniffResponse = serde_json::from_str(json_str)
+        .map_err(|e| {
+            let preview: String = resp.chars().take(200).collect();
+            log::error!("嗅探 JSON 解析失败: {}, json_str: {}", e, json_str);
+            AiError::ParseError(format!("嗅探结果 JSON 解析失败: {}，原始内容: {}", e, preview))
+        })?;
+    log::debug!("解析到 {} 条建议", response.suggestions.len());
+    // 5. 遍历建议项，按 type 包装为 Suggestion（纯函数，可独立单测）
+    build_suggestions(response)
+}
+
 /// 从 AI 返回内容中解析 ReminderDraft
 ///
 /// 自动提取 JSON 片段（兼容 AI 返回 markdown 代码块或附带解释文字的情况）。
 pub fn parse_reminder_json(content: &str) -> Result<ReminderDraft, AiError> {
-    let json_str = extract_json(content);
+    let json_str = super::json_extract::extract_object(content).unwrap_or(content);
     let draft: ReminderDraft = serde_json::from_str(json_str)
         .map_err(|e| AiError::ParseError(format!("JSON 解析失败: {}", e)))?;
 
@@ -252,22 +267,6 @@ pub fn parse_reminder_json(content: &str) -> Result<ReminderDraft, AiError> {
     }
 
     Ok(draft)
-}
-
-/// 从文本中提取最外层 JSON 对象片段
-fn extract_json(content: &str) -> &str {
-    let start = match content.find('{') {
-        Some(idx) => idx,
-        None => return content,
-    };
-    let end = match content.rfind('}') {
-        Some(idx) => idx + 1,
-        None => return content,
-    };
-    if end <= start {
-        return content;
-    }
-    &content[start..end]
 }
 
 #[cfg(test)]
@@ -349,13 +348,6 @@ mod tests {
             Err(AiError::ParseError(msg)) => assert!(msg.contains("start_time"), "msg={}", msg),
             other => panic!("期望 ParseError（缺少 start_time），实际: {:?}", other),
         }
-    }
-
-    #[test]
-    fn test_extract_json_strips_markdown_code_block() {
-        let content = "```json\n{\"title\":\"x\"}\n```";
-        let extracted = extract_json(content);
-        assert_eq!(extracted, "{\"title\":\"x\"}");
     }
 
     #[test]
@@ -640,5 +632,180 @@ mod tests {
         // 未知类型应被跳过，只保留 1 条 reminder
         assert_eq!(result.len(), 1, "未知类型应被跳过，只保留 1 条 reminder");
         assert_eq!(result[0].r#type, "reminder", "应只保留 reminder 建议");
+    }
+
+    // ============ build_suggestions 纯函数单测（无 mockito，毫秒级） ============
+
+    /// 构造 SniffResponse 辅助函数
+    fn sniff_response(items: &[serde_json::Value]) -> SniffResponse {
+        SniffResponse {
+            suggestions: items.to_vec(),
+        }
+    }
+
+    #[test]
+    fn test_build_suggestions_reminder() {
+        let item = serde_json::json!({
+            "type": "reminder",
+            "time_text": "明天上午9点",
+            "start_time": "2026-07-17 09:00",
+            "title": "开会",
+            "repeat_type": "once",
+            "repeat_day": null
+        });
+        let result = build_suggestions(sniff_response(&[item])).unwrap();
+        assert_eq!(result.len(), 1);
+        let s = &result[0];
+        assert_eq!(s.r#type, "reminder");
+        assert_eq!(s.title, "添加提醒");
+        assert!(s.description.contains("明天上午9点"));
+        assert_eq!(s.data["detected"], true);
+        assert_eq!(s.data["time_text"], "明天上午9点");
+        assert_eq!(s.data["start_time"], "2026-07-17 09:00");
+    }
+
+    #[test]
+    fn test_build_suggestions_todo_split() {
+        let item = serde_json::json!({
+            "type": "todo_split",
+            "todos": ["买牛奶", "交水电费", "取快递"]
+        });
+        let result = build_suggestions(sniff_response(&[item])).unwrap();
+        assert_eq!(result.len(), 1);
+        let s = &result[0];
+        assert_eq!(s.r#type, "todo_split");
+        assert_eq!(s.title, "拆分为待办");
+        assert!(s.description.contains("3"));
+        let todos = s.data.as_array().expect("data 应为数组");
+        assert_eq!(todos.len(), 3);
+        assert_eq!(todos[0], "买牛奶");
+    }
+
+    #[test]
+    fn test_build_suggestions_tidy() {
+        let item = serde_json::json!({
+            "type": "tidy",
+            "tidy_text": "明天上午九点召开部门会议"
+        });
+        let result = build_suggestions(sniff_response(&[item])).unwrap();
+        assert_eq!(result.len(), 1);
+        let s = &result[0];
+        assert_eq!(s.r#type, "tidy");
+        assert_eq!(s.title, "规整文本");
+        assert_eq!(s.data, "明天上午九点召开部门会议");
+    }
+
+    #[test]
+    fn test_build_suggestions_style_formal() {
+        let item = serde_json::json!({
+            "type": "style",
+            "style_type": "formal",
+            "styled_text": "请于周一前提交项目报告"
+        });
+        let result = build_suggestions(sniff_response(&[item])).unwrap();
+        assert_eq!(result.len(), 1);
+        let s = &result[0];
+        assert_eq!(s.r#type, "style");
+        assert_eq!(s.title, "更正式");
+        assert_eq!(s.data["style_type"], "formal");
+        assert_eq!(s.data["styled_text"], "请于周一前提交项目报告");
+    }
+
+    #[test]
+    fn test_build_suggestions_style_unknown_label() {
+        // 未知 style_type 应 fallback 到 "文风优化"
+        let item = serde_json::json!({
+            "type": "style",
+            "style_type": "custom_style",
+            "styled_text": "优化后的文本"
+        });
+        let result = build_suggestions(sniff_response(&[item])).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].title, "文风优化");
+    }
+
+    #[test]
+    fn test_build_suggestions_tag_suggest() {
+        let item = serde_json::json!({
+            "type": "tag_suggest",
+            "tags": ["工作", "项目", "报告"]
+        });
+        let result = build_suggestions(sniff_response(&[item])).unwrap();
+        assert_eq!(result.len(), 1);
+        let s = &result[0];
+        assert_eq!(s.r#type, "tag_suggest");
+        assert_eq!(s.title, "推荐标签");
+        assert!(s.description.contains("工作") && s.description.contains("项目"));
+        let tags = s.data.as_array().expect("data 应为数组");
+        assert_eq!(tags.len(), 3);
+        assert_eq!(tags[0], "工作");
+    }
+
+    #[test]
+    fn test_build_suggestions_skips_unknown_type() {
+        let unknown = serde_json::json!({"type": "unknown_future_type", "foo": "bar"});
+        let reminder = serde_json::json!({
+            "type": "reminder",
+            "time_text": "明天上午9点",
+            "start_time": "2026-07-17 09:00",
+            "title": "开会",
+            "repeat_type": "once",
+            "repeat_day": null
+        });
+        let result = build_suggestions(sniff_response(&[unknown, reminder])).unwrap();
+        assert_eq!(result.len(), 1, "未知类型应被跳过");
+        assert_eq!(result[0].r#type, "reminder");
+    }
+
+    #[test]
+    fn test_build_suggestions_skips_empty_data() {
+        // 空数据应被跳过：todo_split 空 todos、tidy 空 tidy_text、style 空 styled_text、tag_suggest 空 tags
+        let items = vec![
+            serde_json::json!({"type": "todo_split", "todos": []}),
+            serde_json::json!({"type": "tidy", "tidy_text": ""}),
+            serde_json::json!({"type": "style", "style_type": "formal", "styled_text": ""}),
+            serde_json::json!({"type": "tag_suggest", "tags": []}),
+        ];
+        let result = build_suggestions(sniff_response(&items)).unwrap();
+        assert_eq!(result.len(), 0, "所有空数据建议应被跳过");
+    }
+
+    #[test]
+    fn test_build_suggestions_empty_response() {
+        let result = build_suggestions(sniff_response(&[])).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_build_suggestions_multiple_mixed() {
+        let items = vec![
+            serde_json::json!({
+                "type": "reminder",
+                "time_text": "明天上午9点",
+                "start_time": "2026-07-17 09:00",
+                "title": "开会",
+                "repeat_type": "once",
+                "repeat_day": null
+            }),
+            serde_json::json!({"type": "todo_split", "todos": ["准备议程", "通知参会人员"]}),
+            serde_json::json!({"type": "tag_suggest", "tags": ["会议", "工作"]}),
+        ];
+        let result = build_suggestions(sniff_response(&items)).unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].r#type, "reminder");
+        assert_eq!(result[1].r#type, "todo_split");
+        assert_eq!(result[2].r#type, "tag_suggest");
+    }
+
+    #[test]
+    fn test_build_suggestions_reminder_parse_error() {
+        // reminder 类型 data 无法解析为 SniffResult 应返回 ParseError
+        let item = serde_json::json!({"type": "reminder", "time_text": 123}); // 类型错误
+        let result = build_suggestions(sniff_response(&[item]));
+        assert!(result.is_err());
+        match result {
+            Err(AiError::ParseError(msg)) => assert!(msg.contains("reminder 建议解析失败")),
+            other => panic!("期望 ParseError，实际: {:?}", other),
+        }
     }
 }

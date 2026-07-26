@@ -157,25 +157,23 @@ fn clear_dir_json(dir: &Path) -> Result<(), String> {
 }
 
 /// 从 JSON 字符串中提取 updated_at 字段值
+///
+/// 用 `serde_json::Value` 解析后取字段，避免手写 `find("\"updated_at\"")` 切片
+/// 在字段名出现在字符串值内（如 `content` 含 `"updated_at"` 子串）时误匹配。
+/// 此函数喂给 `git_ops::resolve_json_conflict`（INV-011 last-write-wins），
+/// 误匹配会导致冲突仲裁方向错误 → 数据丢失。
+///
+/// 解析失败或字段缺失时返回空字符串（保持旧行为，git_ops 兜底取 ours 版本）。
 pub fn extract_updated_at(json: &str) -> String {
-    if let Some(idx) = json.find("\"updated_at\"") {
-        let rest = &json[idx..];
-        // rest = `"updated_at":"value",...`
-        // 跳过键名，找到冒号
-        if let Some(colon_idx) = rest.find(':') {
-            let after_colon = &rest[colon_idx + 1..];
-            // after_colon = `"value",...` 或 ` "value",...`
-            // 找到值的开始引号
-            if let Some(open_quote) = after_colon.find('"') {
-                let val_rest = &after_colon[open_quote + 1..];
-                // val_rest = `value",...`
-                if let Some(val_end) = val_rest.find('"') {
-                    return val_rest[..val_end].to_string();
-                }
-            }
-        }
-    }
-    String::new()
+    let value: serde_json::Value = match serde_json::from_str(json) {
+        Ok(v) => v,
+        Err(_) => return String::new(),
+    };
+    value
+        .get("updated_at")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 #[cfg(test)]
@@ -323,6 +321,32 @@ mod tests {
     #[test]
     fn test_extract_updated_at_not_found() {
         let json = r#"{"id":"abc","content":"test"}"#;
+        let extracted = extract_updated_at(json);
+        assert_eq!(extracted, "");
+    }
+
+    /// 字段名 "updated_at" 出现在字符串值内时，旧手写切片会误匹配，
+    /// 导致 git_ops 冲突仲裁取错版本（INV-011 数据完整性风险）。
+    #[test]
+    fn test_extract_updated_at_field_name_in_string_value() {
+        // content 字段值含 "updated_at" 子串，真正的 updated_at 在最后
+        let json = r#"{"id":"abc","content":"the updated_at field is tricky","updated_at":"2026-07-13T10:00:00Z"}"#;
+        let extracted = extract_updated_at(json);
+        assert_eq!(extracted, "2026-07-13T10:00:00Z");
+    }
+
+    /// 非法 JSON 返回空字符串（git_ops 兜底取 ours 版本）
+    #[test]
+    fn test_extract_updated_at_invalid_json() {
+        let json = r#"not a json"#;
+        let extracted = extract_updated_at(json);
+        assert_eq!(extracted, "");
+    }
+
+    /// updated_at 字段类型非字符串时返回空（防御性）
+    #[test]
+    fn test_extract_updated_at_non_string_field() {
+        let json = r#"{"id":"abc","updated_at":123}"#;
         let extracted = extract_updated_at(json);
         assert_eq!(extracted, "");
     }
