@@ -14,6 +14,9 @@ pub mod lunar_calendar;
 pub mod month_range;
 pub mod note_service;
 pub mod paths;
+pub mod pin_desktop_config;
+#[cfg(target_os = "windows")]
+pub mod win_pin;
 pub mod prompts;
 pub mod reminder_parser;
 pub mod reminder_scheduler;

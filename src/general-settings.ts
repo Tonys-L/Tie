@@ -9,6 +9,7 @@
  */
 
 import { enable as enableAutoStart, disable as disableAutoStart, isEnabled as isAutoStartEnabled } from '@tauri-apps/plugin-autostart';
+import { invoke } from '@tauri-apps/api/core';
 import * as api from './api';
 
 let generalSettingsLoaded = false;
@@ -34,6 +35,22 @@ export async function loadGeneralSettings(): Promise<void> {
         el.classList.remove('on');
       }
     } catch (e) { console.error('设置自启失败:', e); }
+  });
+
+  // 置顶免疫显示桌面开关
+  try {
+    const pinEnabled = await invoke<boolean>('get_pin_desktop');
+    if (pinEnabled) document.getElementById('pin-desktop')!.classList.add('on');
+  } catch (e) { console.error('获取置顶免疫状态失败:', e); }
+
+  document.getElementById('pin-desktop')?.addEventListener('click', async () => {
+    const el = document.getElementById('pin-desktop')!;
+    const turningOn = !el.classList.contains('on');
+    try {
+      const result = await invoke<boolean>('set_pin_desktop', { enabled: turningOn });
+      if (result) el.classList.add('on');
+      else el.classList.remove('on');
+    } catch (e) { console.error('设置置顶免疫失败:', e); }
   });
 
   // 数据目录路径

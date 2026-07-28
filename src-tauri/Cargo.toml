@@ -31,6 +31,7 @@ tyme4rs = "1"
 reqwest = { version = "0.12", features = ["json"] }
 dirs = "5"
 tauri-plugin-wdio-webdriver = "1"
+windows = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
 
 [dev-dependencies]
 mockito = "1"

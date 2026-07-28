@@ -140,6 +140,8 @@ export default {
     syncFailed: 'Sync failed',
     autoStart: 'Auto Start',
     autoStartDesc: 'Launch Tie on system startup',
+    pinDesktop: 'Pin immune to Show Desktop',
+    pinDesktopDesc: 'Pinned notes survive Win+D, always visible',
     general: 'General',
     generalDesc: 'Basic app settings',
     startup: 'Startup',

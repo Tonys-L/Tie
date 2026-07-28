@@ -4754,6 +4754,7 @@ dependencies = [
  "tokio",
  "tyme4rs",
  "uuid",
+ "windows",
 ]
 
 [[package]]

@@ -58,7 +58,33 @@ pub fn run() {
                         );
                     }
                 }
-                tauri::WindowEvent::Destroyed => {}
+                tauri::WindowEvent::Focused(is_focused) => {
+                    // 非置顶便签从任务栏/最小化恢复后，可能不在最前
+                    // 使用 Win32 HWND_TOP（非 TOPMOST）提升 z-order，不影响其他应用
+                    if *is_focused {
+                        let label = window.label();
+                        if label.starts_with("note-") {
+                            let is_pinned = window.is_always_on_top().unwrap_or(false);
+                            if !is_pinned {
+                                #[cfg(target_os = "windows")]
+                                {
+                                    use windows::Win32::Foundation::HWND;
+                                    use windows::Win32::UI::WindowsAndMessaging::*;
+                                    if let Ok(hwnd) = window.hwnd() {
+                                        let _ = unsafe {
+                                            SetWindowPos(
+                                                hwnd,
+                                                Some(HWND::default()), // HWND_TOP = 在同层级置顶
+                                                0, 0, 0, 0,
+                                                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                                            )
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
         })
@@ -221,6 +247,8 @@ pub fn run() {
             commands::save_template,
             commands::delete_template,
             commands::create_note_from_template,
+            commands::get_pin_desktop,
+            commands::set_pin_desktop,
         ])
         .build(tauri::generate_context!())
         .expect("启动应用失败");

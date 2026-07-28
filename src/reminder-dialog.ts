@@ -27,7 +27,7 @@ export function showReminderDialog(noteId: string, noteTitle: string, onNotesCha
   const existing = document.getElementById('reminder-overlay');
   if (existing) existing.remove();
 
-  const defaultTime = new Date(Date.now() + 3600000);
+  const defaultTime = new Date();
 
   const overlay = document.createElement('div');
   overlay.id = 'reminder-overlay';

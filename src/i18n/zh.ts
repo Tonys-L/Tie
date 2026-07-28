@@ -140,6 +140,8 @@ export default {
     syncFailed: '同步失败',
     autoStart: '开机自启',
     autoStartDesc: '系统启动时自动运行 Tie',
+    pinDesktop: '置顶免疫显示桌面',
+    pinDesktopDesc: '置顶便签不受 Win+D 影响，始终可见',
     general: '通用',
     generalDesc: '基础应用设置',
     startup: '启动',

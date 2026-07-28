@@ -40,9 +40,19 @@ use super::event_names::{FLASH_WINDOW, REMINDER_TRIGGERED};
 /// 被其他 always_on_top 便签遮挡，导致看不到闪烁。
 ///
 /// 注意：必须使用 emit_to 定向发送到当前窗口，禁止使用 emit 广播（会导致所有便签都闪烁）
-fn flash_window(window: &tauri::WebviewWindow, restore_on_top: bool) {
+fn flash_window(_app: &AppHandle, window: &tauri::WebviewWindow, restore_on_top: bool) {
     let label = window.label().to_string();
     let _ = window.set_always_on_top(true);
+
+    // 置顶时附加 pin（免疫 Win+D）
+    let pin_enabled = super::pin_desktop_config::PinDesktopConfig::load()
+        .map(|c| c.enabled)
+        .unwrap_or(true);
+    #[cfg(target_os = "windows")]
+    if pin_enabled {
+        let _ = super::win_pin::pin_window(window);
+    }
+
     // 立即定向发送事件，前端开始闪烁动画（窗口处于置顶状态，可见）
     let _ = window.emit_to(&label, FLASH_WINDOW, ());
     let win_clone = window.clone();
@@ -50,6 +60,11 @@ fn flash_window(window: &tauri::WebviewWindow, restore_on_top: bool) {
         // 置顶保持 5s 匹配前端动画时长
         std::thread::sleep(std::time::Duration::from_millis(5000));
         let _ = win_clone.set_always_on_top(restore_on_top);
+        // 闪烁结束后根据 restore_on_top 决定是否保持 pin
+        #[cfg(target_os = "windows")]
+        if !(restore_on_top && pin_enabled) {
+            let _ = super::win_pin::unpin_window(&win_clone);
+        }
     });
 }
 
@@ -70,10 +85,12 @@ pub fn open_note_window_with_url(app: &AppHandle, note: &Note, url: &str, keep_o
     // 窗口已存在 → 聚焦并闪烁提示
     if let Some(window) = app.get_webview_window(&label) {
         eprintln!("[窗口] 窗口已存在, 聚焦并闪烁");
-        let _ = window.set_focus();
+        // 临时置顶确保窗口从最小化恢复后显示在最前
+        let _ = window.set_always_on_top(true);
         let _ = window.show();
-        let was_on_top = window.is_always_on_top().unwrap_or(false);
-        flash_window(&window, was_on_top);
+        let _ = window.set_focus();
+        // flash_window 5s 后根据 keep_on_top 决定是否保持置顶
+        flash_window(app, &window, keep_on_top);
         return Ok(());
     }
 
@@ -111,10 +128,11 @@ pub fn open_note_window_with_url(app: &AppHandle, note: &Note, url: &str, keep_o
     // （新建窗口的前端页面还在加载，立即 emit_to 事件会丢失）
     if let Some(win) = app.get_webview_window(&label) {
         let _ = win.show();
+        let app_clone = app.clone();
         let win_clone = win.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(800));
-            flash_window(&win_clone, keep_on_top);
+            flash_window(&app_clone, &win_clone, keep_on_top);
         });
     }
 
@@ -134,7 +152,7 @@ pub fn activate_note_for_reminder(app: &AppHandle, note: &Note, reminder_id: &st
         // 窗口已存在 → 显示+闪烁（flash_window 内部立即置顶 + 5s 后保持置顶）+ 发送事件
         let _ = window.show();
         let _ = window.unminimize();
-        flash_window(&window, true);
+        flash_window(app, &window, true);
         let _ = window.set_focus();
         let _ = app.emit_to(&label, REMINDER_TRIGGERED, serde_json::json!({ "reminder_id": reminder_id }));
         eprintln!("[调度器] 窗口已存在，发送 reminder-triggered 事件: note_id={}, reminder_id={}", note.id, reminder_id);
@@ -201,21 +219,53 @@ pub fn close_note_window(app: &AppHandle, note_id: &str) {
 
 /// 设置便签窗口置顶状态
 ///
-/// 窗口不存在时静默跳过。用于 `update_note_style` 等场景同步窗口的 always_on_top。
+/// 罗口时根据全局配置决定是否附加 pin()（免疫 Win+D）；
+/// 取消置顶时如果之前有 pin，则 unpin() 恢复正常。
 pub fn set_note_pinned(app: &AppHandle, note_id: &str, is_pinned: bool) {
     let label = format!("note-{}", note_id);
     if let Some(win) = app.get_webview_window(&label) {
         let _ = win.set_always_on_top(is_pinned);
+
+        // pin/unpin 使窗口免疫 Win+D（拦截 WM_SHOWWINDOW + WM_WINDOWPOSCHANGING）
+        let pin_enabled = super::pin_desktop_config::PinDesktopConfig::load()
+            .map(|c| c.enabled)
+            .unwrap_or(true);
+        eprintln!("[窗口] set_note_pinned: label={}, is_pinned={}, pin_enabled={}", label, is_pinned, pin_enabled);
+        #[cfg(target_os = "windows")]
+        {
+            if is_pinned && pin_enabled {
+                if let Err(e) = super::win_pin::pin_window(&win) {
+                    eprintln!("[窗口] pin_window 失败: {} - {}", label, e);
+                }
+            } else {
+                let _ = super::win_pin::unpin_window(&win);
+            }
+        }
+    } else {
+        eprintln!("[窗口] set_note_pinned: 窗口不存在 label={}", label);
     }
 }
 
 /// 恢复便签窗口置顶状态为便签自身的 `is_pinned` 值
 ///
 /// 用于提醒触发时临时置顶后，用户操作横幅后恢复原始状态。
+/// 如果恢复到非置顶，则同时 unpin。
 pub fn restore_note_on_top(app: &AppHandle, note: &Note) {
     let label = format!("note-{}", note.id);
     if let Some(win) = app.get_webview_window(&label) {
         let _ = win.set_always_on_top(note.is_pinned);
+
+        let pin_enabled = super::pin_desktop_config::PinDesktopConfig::load()
+            .map(|c| c.enabled)
+            .unwrap_or(true);
+        #[cfg(target_os = "windows")]
+        {
+            if note.is_pinned && pin_enabled {
+                let _ = super::win_pin::pin_window(&win);
+            } else {
+                let _ = super::win_pin::unpin_window(&win);
+            }
+        }
     }
 }
 

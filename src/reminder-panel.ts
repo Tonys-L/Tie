@@ -23,8 +23,8 @@ export function showReminderPanel(note: Note, app: HTMLElement): void {
   const overlay = document.createElement('div');
   overlay.className = 'reminder-overlay';
 
-  // 默认提醒时间：1小时后
-  const defaultTime = new Date(Date.now() + 3600000);
+  // 默认提醒时间：当前时间
+  const defaultTime = new Date();
 
   overlay.innerHTML = `
     <div class="reminder-dialog">

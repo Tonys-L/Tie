@@ -31,6 +31,38 @@ pub fn open_data_dir() -> Result<(), String> {
     Ok(())
 }
 
+/// 获取置顶免疫显示桌面配置
+#[tauri::command]
+pub async fn get_pin_desktop() -> Result<bool, String> {
+    let config = crate::application::pin_desktop_config::PinDesktopConfig::load()?;
+    Ok(config.enabled)
+}
+
+/// 设置置顶免疫显示桌面配置，并立即对所有已置顶窗口应用/取消 pin
+#[tauri::command]
+pub async fn set_pin_desktop(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+    let config = crate::application::pin_desktop_config::PinDesktopConfig { enabled };
+    config.save()?;
+
+    // 立即对所有 note-* 窗口应用或取消 pin
+    use tauri::Manager;
+
+    for window in app.webview_windows().values() {
+        let label = window.label();
+        if !label.starts_with("note-") { continue; }
+        let is_on_top = window.is_always_on_top().unwrap_or(false);
+        if !is_on_top { continue; }
+        #[cfg(target_os = "windows")]
+        if enabled {
+            let _ = crate::application::win_pin::pin_window(window);
+        } else {
+            let _ = crate::application::win_pin::unpin_window(window);
+        }
+    }
+
+    Ok(enabled)
+}
+
 /// 在系统默认浏览器中打开 URL
 #[tauri::command]
 pub fn open_url(url: String) -> Result<(), String> {
