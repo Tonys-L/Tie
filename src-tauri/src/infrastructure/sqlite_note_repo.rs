@@ -204,11 +204,7 @@ impl NoteQuery for SqliteNoteRepository {
         let conn = self.db.lock()?;
         let mut stmt = conn
             .prepare(
-                "SELECT DISTINCT CAST(strftime('%d', updated_at) AS INTEGER) AS day
-                 FROM notes
-                 WHERE updated_at >= ?1 AND updated_at < ?2
-                 UNION
-                 SELECT DISTINCT CAST(strftime('%d', created_at) AS INTEGER) AS day
+                "SELECT DISTINCT CAST(strftime('%d', created_at) AS INTEGER) AS day
                  FROM notes
                  WHERE created_at >= ?1 AND created_at < ?2",
             )

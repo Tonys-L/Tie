@@ -145,6 +145,7 @@ export default {
     general: 'General',
     generalDesc: 'Basic app settings',
     startup: 'Startup',
+    window: 'Window',
     branchNotFoundTitle: 'Branch Not Found',
     branchNotFoundMsg: 'Branch "{branch}" does not exist in the remote repository. Existing branches: {existing}',
     branchCreateConfirm: 'Create and push to this branch?',

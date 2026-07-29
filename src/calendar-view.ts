@@ -236,9 +236,9 @@ function showDayDetail(day: number): void {
     const d = new Date(r.remind_at);
     return d.getDate() === day && d.getMonth() + 1 === calMonth && d.getFullYear() === calYear;
   });
-  // 过滤当天更新的便签（按 updated_at 本地日期匹配）
+  // 过滤当天创建的便签（按 created_at 本地日期匹配）
   const dayNotes = [...getActiveNotes(), ...getArchivedNotes()].filter(n => {
-    const d = new Date(n.updated_at);
+    const d = new Date(n.created_at);
     return d.getDate() === day && d.getMonth() + 1 === calMonth && d.getFullYear() === calYear;
   });
   const lunarText = calLunarMap.get(day) || '';

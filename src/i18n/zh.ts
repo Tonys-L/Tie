@@ -145,6 +145,7 @@ export default {
     general: '通用',
     generalDesc: '基础应用设置',
     startup: '启动',
+    window: '窗口',
     branchNotFoundTitle: '分支不存在',
     branchNotFoundMsg: '远程仓库中不存在分支 "{branch}"，已有分支：{existing}',
     branchCreateConfirm: '是否创建并推送到此分支？',
