@@ -4732,7 +4732,7 @@ dependencies = [
 
 [[package]]
 name = "tie"
-version = "0.8.7"
+version = "0.8.9"
 dependencies = [
  "chrono",
  "dirs 5.0.1",

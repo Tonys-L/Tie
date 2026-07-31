@@ -167,11 +167,13 @@ export function getArchivedNotes(): any[] {
 
 // ===== 内部函数 =====
 
-/** 渲染左侧标签栏 */
+/** 渲染左侧标签栏（按当前 tab 显示对应便签的标签） */
 function renderTagSidebar(): void {
-  const allNotes = [...activeNotes, ...archivedNotes];
+  const notes = currentTab === 'active' ? activeNotes
+    : currentTab === 'archived' ? archivedNotes
+    : [...activeNotes, ...archivedNotes];
   const tagMap = new Map<string, number>();
-  allNotes.forEach(n => {
+  notes.forEach(n => {
     (n.tags || []).forEach((tag: string) => {
       tagMap.set(tag, (tagMap.get(tag) || 0) + 1);
     });
