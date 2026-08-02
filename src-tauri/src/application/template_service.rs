@@ -39,7 +39,10 @@ pub fn save_template(
     Ok(())
 }
 
-/// 删除模板，emit `TemplateWritten(Deleted)` 事件
+/// 删除模板（软删除，墓碑机制 INV-032），emit `TemplateWritten(Deleted)` 事件
+///
+/// 走 domain `Template::delete()` + `save` 软删除路径：设 `deleted_at` 和 `updated_at`，
+/// 保留墓碑供跨设备同步传播删除（LES-028）。
 ///
 /// 存在性守卫：模板不存在时幂等返回 `Ok(())`，不 emit 事件（INV-013 保真度缺口修复）。
 pub fn delete_template(
@@ -47,10 +50,12 @@ pub fn delete_template(
     publisher: &dyn EventPublisher,
     id: &str,
 ) -> Result<(), String> {
-    if template_repo.find_by_id(id)?.is_none() {
-        return Ok(());
-    }
-    template_repo.delete(id)?;
+    let mut template = match template_repo.find_by_id(id)? {
+        Some(t) => t,
+        None => return Ok(()),
+    };
+    template.delete(); // 软删除（INV-032）
+    template_repo.save(&template)?;
     publisher.emit(DomainEvent::TemplateWritten {
         action: WriteAction::Deleted,
         id: id.to_string(),
@@ -154,6 +159,68 @@ mod tests {
     }
 
     #[test]
+    fn delete_template_is_soft_delete() {
+        // 软删除（INV-032）：delete 后 find_all 不含该模板，
+        // find_all_including_deleted 含墓碑且 is_deleted() 为 true
+        let repo = InMemoryTemplateRepository::new();
+        let mock = MockEventPublisher::new();
+        let template = make_template();
+        repo.save(&template).unwrap();
+
+        delete_template(&repo, &mock, &template.id).unwrap();
+
+        // find_all 不含已删除模板（墓碑被过滤）
+        let active = repo.find_all().unwrap();
+        assert!(
+            active.iter().all(|t| t.id != template.id),
+            "find_all 不应返回已软删除的模板"
+        );
+
+        // find_all_including_deleted 含墓碑，且 is_deleted 为 true
+        let all = repo.find_all_including_deleted().unwrap();
+        let tombstone = all
+            .iter()
+            .find(|t| t.id == template.id)
+            .expect("墓碑应保留在 find_all_including_deleted 中");
+        assert!(tombstone.is_deleted());
+    }
+
+    #[test]
+    fn delete_template_emits_event() {
+        // delete_template 必须 emit TemplateWritten { action: Deleted, id } 事件
+        let repo = InMemoryTemplateRepository::new();
+        let mock = MockEventPublisher::new();
+        let events = mock.events_clone();
+        let template = make_template();
+        repo.save(&template).unwrap();
+
+        delete_template(&repo, &mock, &template.id).unwrap();
+
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            DomainEvent::TemplateWritten { action, id } => {
+                assert_eq!(*action, WriteAction::Deleted);
+                assert_eq!(id, &template.id);
+            }
+            _ => panic!("expected TemplateWritten"),
+        }
+    }
+
+    #[test]
+    fn delete_template_not_found_is_idempotent() {
+        // 不存在的 id 幂等返回 Ok(())，不 emit 事件（INV-013 存在性守卫）
+        let repo = InMemoryTemplateRepository::new();
+        let mock = MockEventPublisher::new();
+        let events = mock.events_clone();
+
+        let result = delete_template(&repo, &mock, "nonexistent-id");
+
+        assert!(result.is_ok());
+        assert_eq!(events.lock().unwrap().len(), 0);
+    }
+
+    #[test]
     fn test_save_template_propagates_repo_error() {
         // 验证 repo 失败时不 emit 事件
         struct FailingRepo;
@@ -166,6 +233,15 @@ mod tests {
             }
             fn find_all(&self) -> Result<Vec<Template>, String> {
                 Ok(vec![])
+            }
+            fn find_all_including_deleted(&self) -> Result<Vec<Template>, String> {
+                Ok(vec![])
+            }
+            fn find_by_id_including_deleted(&self, _: &str) -> Result<Option<Template>, String> {
+                Ok(None)
+            }
+            fn physical_delete(&self, _: &str) -> Result<(), String> {
+                Ok(())
             }
             fn delete(&self, _: &str) -> Result<(), String> {
                 Ok(())

@@ -38,11 +38,14 @@ fn row_to_note(row: &Row) -> rusqlite::Result<Note> {
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
         highlight: None,
+        // INV-032 墓碑机制：从 deleted_at 列读取（NULL 表示非墓碑）
+        deleted_at: row.get("deleted_at")?,
     })
 }
 
 /// 显式列名，避免 ALTER TABLE 添加的列顺序问题
-const SELECT_COLS: &str = "id, title, content, color, opacity, pos_x, pos_y, width, height, is_pinned, is_archived, tags, created_at, updated_at";
+/// 含 deleted_at（INV-032 墓碑机制），row_to_note 据此读取
+const SELECT_COLS: &str = "id, title, content, color, opacity, pos_x, pos_y, width, height, is_pinned, is_archived, tags, created_at, updated_at, deleted_at";
 
 impl NoteRepository for SqliteNoteRepository {
     fn save(&self, note: &Note) -> Result<(), String> {
@@ -51,8 +54,8 @@ impl NoteRepository for SqliteNoteRepository {
         // INSERT OR REPLACE 会先 DELETE 再 INSERT，触发 ON DELETE CASCADE 级联删除 reminders
         conn.execute(
             "INSERT INTO notes
-                (id, title, content, color, opacity, pos_x, pos_y, width, height, is_pinned, is_archived, tags, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                (id, title, content, color, opacity, pos_x, pos_y, width, height, is_pinned, is_archived, tags, created_at, updated_at, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
              ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 content = excluded.content,
@@ -65,7 +68,8 @@ impl NoteRepository for SqliteNoteRepository {
                 is_pinned = excluded.is_pinned,
                 is_archived = excluded.is_archived,
                 tags = excluded.tags,
-                updated_at = excluded.updated_at",
+                updated_at = excluded.updated_at,
+                deleted_at = excluded.deleted_at",
             params![
                 note.id,
                 note.title,
@@ -81,6 +85,7 @@ impl NoteRepository for SqliteNoteRepository {
                 serde_json::to_string(&note.tags).unwrap_or_else(|_| "[]".to_string()),
                 note.created_at,
                 note.updated_at,
+                &note.deleted_at,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -89,7 +94,8 @@ impl NoteRepository for SqliteNoteRepository {
 
     fn find_by_id(&self, id: &str) -> Result<Option<Note>, String> {
         let conn = self.db.lock()?;
-        let sql = format!("SELECT {} FROM notes WHERE id = ?1", SELECT_COLS);
+        // 过滤墓碑：业务查询不应返回软删除便签（INV-032）
+        let sql = format!("SELECT {} FROM notes WHERE id = ?1 AND deleted_at IS NULL", SELECT_COLS);
         let mut stmt = conn
             .prepare(&sql)
             .map_err(|e| e.to_string())?;
@@ -100,9 +106,39 @@ impl NoteRepository for SqliteNoteRepository {
         Ok(note)
     }
 
+    fn find_by_id_including_deleted(&self, id: &str) -> Result<Option<Note>, String> {
+        let conn = self.db.lock()?;
+        // 含墓碑查询：供 sync import 仲裁使用（INV-032），不过滤 deleted_at
+        let sql = format!("SELECT {} FROM notes WHERE id = ?1", SELECT_COLS);
+        let note = conn
+            .query_row(&sql, params![id], row_to_note)
+            .optional()
+            .map_err(|e| e.to_string())?;
+        Ok(note)
+    }
+
     fn find_all(&self) -> Result<Vec<Note>, String> {
         let conn = self.db.lock()?;
-        let sql = format!("SELECT {} FROM notes WHERE is_archived = 0 ORDER BY is_pinned DESC, updated_at DESC", SELECT_COLS);
+        // 过滤墓碑：业务查询不应返回软删除便签（INV-032）
+        let sql = format!(
+            "SELECT {} FROM notes WHERE is_archived = 0 AND deleted_at IS NULL ORDER BY is_pinned DESC, updated_at DESC",
+            SELECT_COLS
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| e.to_string())?;
+        let notes = stmt
+            .query_map([], row_to_note)
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        Ok(notes)
+    }
+
+    fn find_all_including_deleted(&self) -> Result<Vec<Note>, String> {
+        let conn = self.db.lock()?;
+        // 含墓碑查询：供 sync export 写出墓碑 JSON 使用（INV-032），不过滤 deleted_at
+        let sql = format!("SELECT {} FROM notes ORDER BY updated_at DESC", SELECT_COLS);
         let mut stmt = conn
             .prepare(&sql)
             .map_err(|e| e.to_string())?;
@@ -121,9 +157,21 @@ impl NoteRepository for SqliteNoteRepository {
         Ok(())
     }
 
+    fn physical_delete(&self, id: &str) -> Result<(), String> {
+        let conn = self.db.lock()?;
+        // 物理删除：仅供 sync_tombstone_cleanup 清理超阈值墓碑使用（INV-032）
+        conn.execute("DELETE FROM notes WHERE id = ?1", params![id])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     fn find_archived(&self) -> Result<Vec<Note>, String> {
         let conn = self.db.lock()?;
-        let sql = format!("SELECT {} FROM notes WHERE is_archived = 1 ORDER BY updated_at DESC", SELECT_COLS);
+        // 过滤墓碑：归档墓碑不返回（INV-032）
+        let sql = format!(
+            "SELECT {} FROM notes WHERE is_archived = 1 AND deleted_at IS NULL ORDER BY updated_at DESC",
+            SELECT_COLS
+        );
         let mut stmt = conn
             .prepare(&sql)
             .map_err(|e| e.to_string())?;
@@ -145,9 +193,10 @@ impl NoteQuery for SqliteNoteRepository {
         // 短查询（<3 字符）回退到 LIKE 模糊匹配，保证用户体验
         if trimmed.chars().count() < 3 {
             let like = format!("%{}%", trimmed);
+            // 过滤墓碑：LIKE 路径不返回软删除便签（INV-032）
             let sql = format!(
                 "SELECT {cols} FROM notes
-                 WHERE title LIKE ?1 OR content LIKE ?1 OR tags LIKE ?1
+                 WHERE (title LIKE ?1 OR content LIKE ?1 OR tags LIKE ?1) AND deleted_at IS NULL
                  ORDER BY is_pinned DESC, updated_at DESC",
                 cols = SELECT_COLS
             );
@@ -163,7 +212,8 @@ impl NoteQuery for SqliteNoteRepository {
         // 对 title(0)/content(1)/tags(2) 三列都生成 snippet，Rust 中选第一个含 <mark> 的返回。
         // 原因：固定查某列时，若该列无匹配词，snippet 返回该列开头纯文本（无 <mark>），用户看不到高亮。
         // 注意：JOIN notes_fts 和 notes 后存在同名列，必须用 n. 前缀限定所有列
-        const SELECT_COLS_QUALIFIED: &str = "n.id, n.title, n.content, n.color, n.opacity, n.pos_x, n.pos_y, n.width, n.height, n.is_pinned, n.is_archived, n.tags, n.created_at, n.updated_at";
+        // 过滤墓碑：用 n. 前缀（JOIN 场景），不返回软删除便签（INV-032）
+        const SELECT_COLS_QUALIFIED: &str = "n.id, n.title, n.content, n.color, n.opacity, n.pos_x, n.pos_y, n.width, n.height, n.is_pinned, n.is_archived, n.tags, n.created_at, n.updated_at, n.deleted_at";
         let sql = format!(
             "SELECT {cols},
                     snippet(notes_fts, 0, '<mark>', '</mark>', '...', 24) as hl_title,
@@ -171,7 +221,7 @@ impl NoteQuery for SqliteNoteRepository {
                     snippet(notes_fts, 2, '<mark>', '</mark>', '...', 24) as hl_tags
              FROM notes_fts f
              JOIN notes n ON f.rowid = n.rowid
-             WHERE notes_fts MATCH ?1
+             WHERE notes_fts MATCH ?1 AND n.deleted_at IS NULL
              ORDER BY n.is_pinned DESC, rank",
             cols = SELECT_COLS_QUALIFIED
         );
@@ -202,11 +252,12 @@ impl NoteQuery for SqliteNoteRepository {
         let end_str = crate::application::month_range::month_end_iso(year, month)?;
 
         let conn = self.db.lock()?;
+        // 过滤墓碑：日历活动不统计软删除便签（INV-032）
         let mut stmt = conn
             .prepare(
                 "SELECT DISTINCT CAST(strftime('%d', created_at) AS INTEGER) AS day
                  FROM notes
-                 WHERE created_at >= ?1 AND created_at < ?2",
+                 WHERE created_at >= ?1 AND created_at < ?2 AND deleted_at IS NULL",
             )
             .map_err(|e| e.to_string())?;
         let days = stmt
@@ -473,5 +524,179 @@ mod tests {
         let results = repo.search_notes("笔记").unwrap();
         assert_eq!(results.len(), 2);
         assert!(results[0].is_pinned);
+    }
+
+    // ===== 墓碑机制测试（INV-032）=====
+
+    #[test]
+    fn find_all_excludes_tombstones() {
+        // 2 条活跃便签 + 1 条墓碑，find_all 应只返回 2 条
+        let repo = setup();
+        let n1 = Note::new("活跃1".to_string(), "amber".to_string());
+        let n2 = Note::new("活跃2".to_string(), "blue".to_string());
+        repo.save(&n1).unwrap();
+        repo.save(&n2).unwrap();
+
+        let mut tomb = Note::new("墓碑".to_string(), "pink".to_string());
+        tomb.delete();
+        repo.save(&tomb).unwrap();
+
+        let all = repo.find_all().unwrap();
+        assert_eq!(all.len(), 2, "find_all 应过滤墓碑，只返回 2 条活跃便签");
+    }
+
+    #[test]
+    fn find_all_including_deleted_returns_tombstones() {
+        // 同上数据，find_all_including_deleted 应返回 3 条（含墓碑）
+        let repo = setup();
+        let n1 = Note::new("活跃1".to_string(), "amber".to_string());
+        let n2 = Note::new("活跃2".to_string(), "blue".to_string());
+        repo.save(&n1).unwrap();
+        repo.save(&n2).unwrap();
+
+        let mut tomb = Note::new("墓碑".to_string(), "pink".to_string());
+        tomb.delete();
+        repo.save(&tomb).unwrap();
+
+        let all = repo.find_all_including_deleted().unwrap();
+        assert_eq!(all.len(), 3, "find_all_including_deleted 应返回全部 3 条（含墓碑）");
+    }
+
+    #[test]
+    fn find_by_id_excludes_tombstone() {
+        // 墓碑便签：find_by_id 返回 None，find_by_id_including_deleted 返回 Some
+        let repo = setup();
+        let mut note = Note::new("墓碑".to_string(), "amber".to_string());
+        let id = note.id.clone();
+        note.delete();
+        repo.save(&note).unwrap();
+
+        let found = repo.find_by_id(&id).unwrap();
+        assert!(found.is_none(), "find_by_id 应过滤墓碑");
+
+        let found_with_tomb = repo.find_by_id_including_deleted(&id).unwrap();
+        assert!(found_with_tomb.is_some(), "find_by_id_including_deleted 应返回墓碑");
+        assert!(found_with_tomb.unwrap().is_deleted(), "返回的应为墓碑便签");
+    }
+
+    #[test]
+    fn search_notes_excludes_tombstones() {
+        // 墓碑便签内容含关键词（≥3 字符触发 FTS5 路径），search 不应返回墓碑
+        let repo = setup();
+        let mut tomb = Note::new("墓碑".to_string(), "amber".to_string());
+        tomb.update_content("这是包含关键词的墓碑内容".to_string());
+        tomb.delete();
+        repo.save(&tomb).unwrap();
+
+        let results = repo.search_notes("关键词").unwrap();
+        assert!(results.is_empty(), "FTS5 路径不应返回墓碑便签");
+    }
+
+    #[test]
+    fn search_notes_short_query_excludes_tombstones() {
+        // 墓碑便签内容含"关"字（<3 字符触发 LIKE 路径），search 不应返回墓碑
+        let repo = setup();
+        let mut tomb = Note::new("墓碑".to_string(), "amber".to_string());
+        tomb.update_content("关于某些事项的记录".to_string());
+        tomb.delete();
+        repo.save(&tomb).unwrap();
+
+        let results = repo.search_notes("关").unwrap();
+        assert!(results.is_empty(), "LIKE 路径不应返回墓碑便签");
+    }
+
+    #[test]
+    fn save_tombstone_persists_deleted_at() {
+        // note.delete() 后 save，重新读出验证 deleted_at.is_some()
+        let repo = setup();
+        let mut note = Note::new("墓碑".to_string(), "amber".to_string());
+        let id = note.id.clone();
+        note.delete();
+        repo.save(&note).unwrap();
+
+        let found = repo.find_by_id_including_deleted(&id).unwrap().unwrap();
+        assert!(found.deleted_at.is_some(), "save 后 deleted_at 应持久化为 Some");
+        assert_eq!(
+            &found.updated_at,
+            found.deleted_at.as_ref().unwrap(),
+            "INV-032: deleted_at == updated_at（确保 last-write-wins 仲裁正确）"
+        );
+    }
+
+    #[test]
+    fn save_non_tombstone_clears_deleted_at() {
+        // 复活场景：先保存墓碑，再用非墓碑（deleted_at=None）覆盖 save
+        // 关键：UPDATE SET 必须显式写 deleted_at = excluded.deleted_at，否则旧墓碑值残留
+        let repo = setup();
+        let mut tomb = Note::new("墓碑".to_string(), "amber".to_string());
+        let id = tomb.id.clone();
+        tomb.delete();
+        repo.save(&tomb).unwrap();
+        assert!(repo.find_by_id_including_deleted(&id).unwrap().unwrap().is_deleted());
+
+        // 用相同 id 的非墓碑覆盖 save（复活）
+        let mut revived = tomb.clone();
+        revived.deleted_at = None;
+        revived.update_title("复活".to_string());
+        repo.save(&revived).unwrap();
+
+        let found = repo.find_by_id_including_deleted(&id).unwrap().unwrap();
+        assert!(found.deleted_at.is_none(), "复活场景：deleted_at 必须被显式覆盖为 None");
+        assert_eq!(found.title, "复活");
+        // 复活后 find_by_id 也能查到（不再被过滤）
+        assert!(repo.find_by_id(&id).unwrap().is_some(), "复活后 find_by_id 应返回便签");
+    }
+
+    #[test]
+    fn physical_delete_removes_record() {
+        // physical_delete 后，find_by_id_including_deleted 也返回 None（彻底删除）
+        let repo = setup();
+        let note = Note::new("测试".to_string(), "amber".to_string());
+        let id = note.id.clone();
+        repo.save(&note).unwrap();
+        assert!(repo.find_by_id_including_deleted(&id).unwrap().is_some());
+
+        repo.physical_delete(&id).unwrap();
+
+        let found = repo.find_by_id_including_deleted(&id).unwrap();
+        assert!(found.is_none(), "physical_delete 后连墓碑查询都应返回 None");
+    }
+
+    #[test]
+    fn find_archived_excludes_tombstones() {
+        // 1 条活跃归档 + 1 条归档墓碑，find_archived 只返回活跃归档
+        let repo = setup();
+        let mut active = Note::new("活跃归档".to_string(), "amber".to_string());
+        active.archive();
+        repo.save(&active).unwrap();
+
+        let mut tomb = Note::new("归档墓碑".to_string(), "blue".to_string());
+        tomb.archive();
+        tomb.delete();
+        repo.save(&tomb).unwrap();
+
+        let archived = repo.find_archived().unwrap();
+        assert_eq!(archived.len(), 1, "find_archived 应只返回活跃归档，不含墓碑");
+        assert_eq!(archived[0].id, active.id);
+    }
+
+    #[test]
+    fn find_activity_by_month_excludes_tombstones() {
+        // 活跃便签 created_at 在 2026-08-01，墓碑便签 created_at 在 2026-08-02
+        // find_activity_by_month(2026, 8) 应含 1 号，不含 2 号
+        let repo = setup();
+
+        let mut active = Note::new("活跃便签".to_string(), "amber".to_string());
+        active.created_at = "2026-08-01T10:00:00.000+00:00".to_string();
+        repo.save(&active).unwrap();
+
+        let mut tomb = Note::new("墓碑便签".to_string(), "blue".to_string());
+        tomb.created_at = "2026-08-02T10:00:00.000+00:00".to_string();
+        tomb.delete();
+        repo.save(&tomb).unwrap();
+
+        let days = repo.find_activity_by_month(2026, 8).unwrap();
+        assert!(days.contains(&1), "活跃便签的 1 号应在结果中");
+        assert!(!days.contains(&2), "墓碑便签的 2 号不应在结果中");
     }
 }

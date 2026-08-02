@@ -78,6 +78,12 @@ pub struct Reminder {
     pub snoozed_until: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// 软删除时间戳：None 表示未删除，Some(ts) 表示墓碑（INV-032）
+    ///
+    /// delete() 时同时设 deleted_at 和 updated_at 为 now，确保 last-write-wins 仲裁
+    /// 用 updated_at 比较即可正确传播删除。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted_at: Option<String>,
 }
 
 /// next_trigger 返回值：区分"不再触发"、"domain 可计算"、"需外部计算"
@@ -126,6 +132,7 @@ impl Reminder {
             snoozed_until: None,
             created_at: now.clone(),
             updated_at: now,
+            deleted_at: None,
         }
     }
 
@@ -311,6 +318,21 @@ impl Reminder {
 
     fn touch(&mut self) {
         self.updated_at = Utc::now().to_rfc3339();
+    }
+
+    /// 软删除：设 deleted_at = now，同时更新 updated_at = now（INV-032）
+    ///
+    /// 关键不变量：delete() 后 updated_at == deleted_at，
+    /// 确保 last-write-wins 仲裁只需比较 updated_at 即可正确传播删除。
+    pub fn delete(&mut self) {
+        let now = Utc::now().to_rfc3339();
+        self.deleted_at = Some(now.clone());
+        self.updated_at = now;
+    }
+
+    /// 判断是否为墓碑（已软删除）
+    pub fn is_deleted(&self) -> bool {
+        self.deleted_at.is_some()
     }
 
     /// 通知标题：note_title 为空时 fallback 为 "便签提醒"。
@@ -865,5 +887,56 @@ mod tests {
         // 中文 5 字符 → 不截断
         let body = r.notification_body("你好世界测试");
         assert_eq!(body, "你好世界测试");
+    }
+
+    // ============ delete / is_deleted 测试 (INV-032) ============
+
+    #[test]
+    fn delete_sets_deleted_at_and_updated_at() {
+        // delete() 后 deleted_at 为 Some，且 updated_at == deleted_at
+        let mut r = Reminder::new(
+            "note-1".to_string(),
+            "测试".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "once".to_string(),
+        );
+        assert!(r.deleted_at.is_none());
+        assert!(!r.is_deleted());
+
+        r.delete();
+
+        assert!(r.deleted_at.is_some());
+        assert_eq!(&r.updated_at, r.deleted_at.as_ref().unwrap());
+        assert!(r.is_deleted());
+    }
+
+    #[test]
+    fn is_deleted_reflects_deleted_at() {
+        // is_deleted 在 delete 前后返回值正确
+        let mut r = Reminder::new(
+            "note-1".to_string(),
+            "测试".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "once".to_string(),
+        );
+        assert!(!r.is_deleted());
+
+        r.delete();
+        assert!(r.is_deleted());
+    }
+
+    #[test]
+    fn delete_updates_updated_at_to_now() {
+        // delete 后 updated_at 应被刷新为当前时间（一定大于 2026-01-01）
+        let mut r = Reminder::new(
+            "note-1".to_string(),
+            "测试".to_string(),
+            "2026-07-03T08:00:00Z".to_string(),
+            "once".to_string(),
+        );
+        r.updated_at = "2026-01-01T10:00:00+00:00".to_string();
+        r.delete();
+        assert!(r.updated_at.as_str() > "2026-01-01T10:00:00+00:00");
+        assert_eq!(&r.updated_at, r.deleted_at.as_ref().unwrap());
     }
 }

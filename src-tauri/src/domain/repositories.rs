@@ -11,13 +11,35 @@ pub trait NoteRepository: Send + Sync {
     /// 保存便签（新增或更新）
     fn save(&self, note: &Note) -> Result<(), String>;
 
-    /// 根据 ID 查找便签
+    /// 根据 ID 查找便签（默认过滤墓碑，业务逻辑用）
     fn find_by_id(&self, id: &str) -> Result<Option<Note>, String>;
 
-    /// 查找所有便签
+    /// 根据 ID 查找便签（含墓碑，供 sync import 仲裁用，INV-032）
+    ///
+    /// 与 find_by_id 的区别：墓碑（deleted_at IS NOT NULL）也会返回。
+    /// 仅供 sync_json_io::import_from_json 使用，让墓碑参与 last-write-wins 仲裁。
+    fn find_by_id_including_deleted(&self, id: &str) -> Result<Option<Note>, String>;
+
+    /// 查找所有便签（默认过滤墓碑，业务逻辑用）
     fn find_all(&self) -> Result<Vec<Note>, String>;
 
-    /// 删除便签
+    /// 查找所有便签（含墓碑，供 sync export 写出墓碑 JSON 用，INV-032）
+    ///
+    /// 仅供 sync_json_io::export_to_json 使用，让墓碑 JSON 写出到 sync 目录，
+    /// 其他设备 import 时能传播删除。
+    fn find_all_including_deleted(&self) -> Result<Vec<Note>, String>;
+
+    /// 删除便签（硬删除，仅供墓碑清理使用，INV-032）
+    ///
+    /// 正常业务删除走 domain Note::delete() + save 软删除路径。
+    /// 此方法执行 DELETE FROM，仅供 sync_tombstone_cleanup 调用清理超阈值墓碑。
+    fn physical_delete(&self, id: &str) -> Result<(), String>;
+
+    /// 删除便签（保留向后兼容，新代码应使用 Note::delete() + save 软删除）
+    ///
+    /// 注：此方法保留为硬删除语义，但 service 层已不再调用，
+    /// 改为 domain Note::delete() + save 软删除。保留是为了 future-proof
+    /// （如未来需要清理非墓碑数据的场景）。
     fn delete(&self, id: &str) -> Result<(), String>;
 
     /// 查找已归档的便签
@@ -52,13 +74,22 @@ pub trait TemplateRepository: Send + Sync {
     /// 保存模板（新增或更新）
     fn save(&self, template: &Template) -> Result<(), String>;
 
-    /// 查找所有模板（按 sort_order 排序）
+    /// 查找所有模板（按 sort_order 排序，默认过滤墓碑）
     fn find_all(&self) -> Result<Vec<Template>, String>;
 
-    /// 根据 ID 查找模板
+    /// 查找所有模板（含墓碑，供 sync export 用，INV-032）
+    fn find_all_including_deleted(&self) -> Result<Vec<Template>, String>;
+
+    /// 根据 ID 查找模板（默认过滤墓碑）
     fn find_by_id(&self, id: &str) -> Result<Option<Template>, String>;
 
-    /// 删除模板
+    /// 根据 ID 查找模板（含墓碑，供 sync import 仲裁用，INV-032）
+    fn find_by_id_including_deleted(&self, id: &str) -> Result<Option<Template>, String>;
+
+    /// 物理删除模板（仅供墓碑清理使用，INV-032）
+    fn physical_delete(&self, id: &str) -> Result<(), String>;
+
+    /// 删除模板（保留向后兼容，新代码应使用 Template::delete() + save 软删除）
     fn delete(&self, id: &str) -> Result<(), String>;
 }
 
@@ -70,19 +101,28 @@ pub trait ReminderRepository: Send + Sync {
     /// 保存提醒
     fn save(&self, reminder: &Reminder) -> Result<(), String>;
 
-    /// 根据 ID 查找提醒
+    /// 根据 ID 查找提醒（默认过滤墓碑）
     fn find_by_id(&self, id: &str) -> Result<Option<Reminder>, String>;
 
-    /// 查找全部提醒（用于同步导出）
+    /// 根据 ID 查找提醒（含墓碑，供 sync import 仲裁用，INV-032）
+    fn find_by_id_including_deleted(&self, id: &str) -> Result<Option<Reminder>, String>;
+
+    /// 查找全部提醒（默认过滤墓碑，用于业务查询）
     fn find_all(&self) -> Result<Vec<Reminder>, String>;
 
-    /// 根据便签 ID 查找提醒
+    /// 查找全部提醒（含墓碑，供 sync export 用，INV-032）
+    fn find_all_including_deleted(&self) -> Result<Vec<Reminder>, String>;
+
+    /// 根据便签 ID 查找提醒（默认过滤墓碑）
     fn find_by_note_id(&self, note_id: &str) -> Result<Vec<Reminder>, String>;
 
-    /// 删除提醒
+    /// 物理删除提醒（仅供墓碑清理使用，INV-032）
+    fn physical_delete(&self, id: &str) -> Result<(), String>;
+
+    /// 删除提醒（保留向后兼容，新代码应使用 Reminder::delete() + save 软删除）
     fn delete(&self, id: &str) -> Result<(), String>;
 
-    /// 删除便签的所有提醒
+    /// 删除便签的所有提醒（保留向后兼容，新代码应逐个 Reminder::delete() + save 软删除）
     fn delete_by_note_id(&self, note_id: &str) -> Result<(), String>;
 }
 

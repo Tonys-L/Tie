@@ -34,6 +34,9 @@
 | LES-024 | 浅模块深化三式：常量表替代薄包装函数 + JSON 提取单点归属 + 函数职责按业务概念归位 | 后端架构 | 中 | 已修复 | 2026-07-24 |
 | LES-025 | 前端关闭按钮与后端 close_note_if_empty 竞态导致便签丢失 | 前端架构 | 高 | 已修复 | 2026-07-26 |
 | LES-026 | 时间字符串格式一致性：ISO 8601 字符串比较的毫秒边界问题 | 后端架构 | 中 | 已修复 | 2026-07-26 |
+| LES-027 | INV-025 的 50% 删除检查在"先拉后推 + merge"修复后过时，误报拦批量删除 | 数据同步 | 中 | 已修复 | 2026-08-03 |
+| LES-028 | 硬删除导致跨设备删除传播失效（墓碑缺失） | 数据同步 | 高 | 已修复 | 2026-08-03 |
+| LES-029 | 墓碑机制实现经验 | 数据同步 | 中 | 经验总结 | 2026-08-03 |
 
 ---
 
@@ -42,7 +45,7 @@
 按业务分类匹配：
 
 - **编码规范**: LES-001, LES-002, LES-006, LES-011, LES-016
-- **数据同步**: LES-003, LES-007, LES-008, LES-009, LES-010, LES-012, LES-015
+- **数据同步**: LES-003, LES-007, LES-008, LES-009, LES-010, LES-012, LES-015, LES-027, LES-028, LES-029
 - **数据存储**: LES-013, LES-014
 - **前端构建**: LES-004
 - **前端架构**: LES-017, LES-020, LES-025
@@ -273,11 +276,91 @@
 1. 重构同步流程为"先拉后推"：fetch→merge→import→export→commit→push，确保远程数据先进入本地数据库再导出推送
 2. merge 命令添加 `--allow-unrelated-histories` 参数，允许合并不相关历史的仓库
 3. merge 失败后检查是否仍有未解决的冲突，若有则拒绝 push（不再盲目继续）
-4. push 前添加安全检查：当删除文件占比超过 50% 时拒绝推送，防止覆盖远程数据
+4. ~~push 前添加安全检查：当删除文件占比超过 50% 时拒绝推送，防止覆盖远程数据~~ **已于 2026-08-03 移除（LES-027）**：在"先拉后推 + merge --allow-unrelated-histories"修复后，diff 显示的删除均为 DB 决定的预期删除，50% 检查退化为拦批量删除的误报。
 
 **影响文件**: `src-tauri/src/application/git_sync.rs`
 
 **预防**: 任何涉及 force push 的同步逻辑，必须遵循"先拉后推"原则，且 merge 失败时禁止继续 push。详见 INV-024/INV-025。
+
+---
+
+## LES-027: INV-025 的 50% 删除检查在"先拉后推 + merge"修复后过时
+
+**问题**: 用户批量删除便签后同步被阻断，提示"同步安全检查：本次推送将删除远程 XXX 个文件，可能覆盖远程数据"。用户无法继续操作。
+
+**原因**: BUGFIX-001 修复 unrelated histories 问题时，同时引入了两道防线：
+1. "先拉后推 + merge --allow-unrelated-histories"（根本防护：远程数据先进入本地 DB）
+2. "push 前 50% 删除检查"（额外护栏）
+
+但防线 1 修复后，push 前 diff 显示的删除都是 **DB 决定的预期删除**（用户主动删除便签 → export 时 `clear_dir_json` + 只写 DB 当前数据 → 被删便签的 JSON 没了 → diff 显示 D）。防线 2 从"防误覆盖"退化为"拦批量删除"，误报率远高于真实防护价值。
+
+**解决方案**: 移除 `git_sync::commit_and_push` 中的 50% 删除检查代码块。保留三重防护：
+- merge --allow-unrelated-histories（远程数据进本地）
+- import last-write-wins 仲裁（不丢更新）
+- push --force-with-lease（防他人并发推送）
+
+**影响文件**: `src-tauri/src/application/git_sync.rs`
+
+**预防**: 防御性护栏引入后需定期评估其必要性——根本防护到位后，额外护栏可能从"防误用"退化为"拦正常操作"。新增护栏时应记录其针对的具体失败场景，便于后续评估。
+
+**关联**: 同时发现更深的 LES-028（跨设备删除传播失效）。
+
+---
+
+## LES-028: 硬删除导致跨设备删除传播失效（墓碑缺失）【已修复】
+
+**问题**: 在设备 A 删除便签后，设备 B 同步时删除会被撤销——被删的便签在设备 B 上仍然存在，且设备 B 的 export 会把删除的 JSON 重新写回远程。
+
+**原因**: 当前 `delete` 是硬删除（`DELETE FROM notes WHERE id=?`），Note 领域模型无 `deleted_at` 字段。同步协议只有"文件存在"这一信号：
+- 设备 A 删除 → DB 无此 note → export 不写出 JSON → sync 目录该 JSON 消失
+- 设备 B fetch+merge → sync 目录该 JSON 消失 → `import_from_json` 只遍历存在的 JSON → 对"缺失"的文件视而不见 → DB 仍保留此 note
+- 设备 B export → `clear_dir_json` + 写 DB 数据 → 重新写出该 note 的 JSON → 删除被撤销
+
+**根因**: 同步协议缺少"删除事件"的载体。硬删除不留痕迹，无法与"本地更新时间"做 last-write-wins 对比。
+
+**解决方案（已实施 7/7 步）**: 引入墓碑机制：
+1. ✅ Note/Reminder/Template 领域模型新增 `deleted_at: Option<String>` 字段（`#[serde(default, skip_serializing_if = "Option::is_none")]`）
+2. ✅ `delete` 改为软删除（`delete()` 同时设 `deleted_at` 和 `updated_at` 为 now，确保 `updated_at == deleted_at`，last-write-wins 仲裁只需比较 `updated_at`）
+3. ✅ export 时墓碑记录也写出 JSON（`sync_json_io::export_to_json` 用 `find_all_including_deleted`，墓碑 JSON 含 `deleted_at` 字段）
+4. ✅ import 时用 `find_by_id_including_deleted` 让本地墓碑的 `updated_at` 参与 last-write-wins 仲裁（远程墓碑更新→传播删除；远程非墓碑更新→复活本地墓碑）
+5. ✅ 所有业务查询（`find_by_id`/`find_all`/`find_archived`/`search_notes`/`find_due`/`find_by_date_range` 等）过滤 `deleted_at IS NOT NULL`
+6. ✅ DB migration 加 `deleted_at` 列（含旧库迁移测试）
+7. ✅ 墓碑清理：`sync_tombstone_cleanup::cleanup_old_tombstones`（跨三类合计超 50 条时物理删除最老的，在 `git_sync::sync` 阶段 4.5 调用）
+
+**影响文件**: `domain/note.rs` + `domain/reminder.rs` + `domain/template.rs`（deleted_at 字段 + delete() 软删除）+ `domain/repositories.rs`（`*_including_deleted` + `physical_delete` trait 方法）+ `domain/mock_repo.rs` + `infrastructure/sqlite_*_repo.rs` + `infrastructure/database.rs`（deleted_at 列迁移）+ `application/sync_json_io.rs`（import/export 改用 `*_including_deleted`）+ `application/note_service.rs`/`reminder_service.rs`/`template_service.rs`（service 层 delete 走 domain delete() + save 软删除）
+
+**预防**: 跨设备同步协议设计时，必须显式考虑删除传播。硬删除 + 文件存在性检测的组合无法传播删除，必须引入墓碑或等价机制。任何"基于文件存在性"的同步协议都需要墓碑。
+
+**状态**: 已修复。墓碑机制（步骤 1-7）已全部落地，跨设备删除传播已可用，墓碑清理（阈值 50）已在 `git_sync::sync` 阶段 4.5 实施。新增 INV-032 文档化墓碑机制不变量。
+
+---
+
+## LES-029: 墓碑机制实现经验
+
+**日期**: 2026-08-03
+**分类**: 数据同步
+**严重度**: 中
+**状态**: 经验总结
+
+**背景**: 实施 LES-028 修复（墓碑机制）过程中积累的实现经验。
+
+**经验**:
+
+1. **delete() 必须同时设 deleted_at 和 updated_at**：墓碑的 `updated_at` 参与 last-write-wins 仲裁（INV-011），所以 `delete()` 必须设 `updated_at = now`，确保删除时间戳正确参与仲裁。如果只设 `deleted_at` 不更新 `updated_at`，旧的 `updated_at` 会导致墓碑被更新的非墓碑覆盖（复活），破坏删除传播。
+
+2. **save 的 ON CONFLICT 必须显式覆盖 deleted_at**：SQLite 的 `INSERT ... ON CONFLICT DO UPDATE` 必须在 SET 中显式写 `deleted_at = excluded.deleted_at`，否则复活场景（非墓碑覆盖墓碑）时旧 `deleted_at` 值残留，导致"复活"失败。这是从 TDD 测试中发现的关键 bug。
+
+3. **Repository 查询默认过滤墓碑**：所有面向业务逻辑的查询（find_all/find_by_id/search_notes/find_due 等）必须默认 `WHERE deleted_at IS NULL`，确保业务逻辑不感知墓碑。只有 sync 专用的 `find_*_including_deleted` 不过滤。
+
+4. **FTS5 search 过滤墓碑需要 n. 前缀**：FTS5 路径有 `JOIN notes_fts f JOIN notes n`，过滤条件必须用 `n.deleted_at IS NULL`（带表前缀），否则列名歧义。
+
+5. **LIKE 路径的 OR 需要括号包裹**：`(title LIKE ?1 OR content LIKE ?1 OR tags LIKE ?1) AND deleted_at IS NULL`，括号保证 OR 先求值，否则 AND 优先级导致逻辑错误。
+
+6. **墓碑清理跨三类合计计算**：墓碑清理阈值（50）是跨 note/reminder/template 三类合计的，不是每类各 50。按 `deleted_at` 升序排序（最老在前），取前 N 条物理删除。
+
+7. **mock_repo 的 trait delete 保留硬删除**：Repository trait 的 `delete` 方法保留硬删除语义（向后兼容），service 层改用 `domain delete() + save` 软删除路径。新增 `physical_delete` 方法供墓碑清理使用。
+
+**预防**: 实施软删除机制时，必须同时考虑：领域模型 delete() 方法、Repository 查询过滤、save 的 UPDATE 显式覆盖、sync 仲裁含墓碑、墓碑清理。
 
 ---
 
@@ -682,3 +765,7 @@ app.querySelector('[data-close]')!.addEventListener('click', async () => {
 | 2026-07-22 | 新增 LES-023（mock/sqlite 仓储保真度缺口：delete 语义差异 + 排序差异 + 存在性守卫）；更新检索指引（后端架构 +LES-023） | AI | #REFACTOR-044 同步更新 constraints.md |
 | 2026-07-24 | 新增 LES-024（浅模块深化三式：常量表替代薄包装函数 + JSON 提取单点归属 + 函数职责按业务概念归位）；更新检索指引（后端架构 +LES-024） | AI | #REFACTOR-045 同步更新 constraints.md/boundaries.md |
 | 2026-07-26 | 新增 LES-025（前端关闭按钮与后端 close_note_if_empty 竞态导致便签丢失）+ LES-026（时间字符串格式一致性：ISO 8601 字符串比较的毫秒边界问题）；更新检索指引（前端架构 +LES-025，后端架构 +LES-026） | AI | #BUGFIX-002 |
+| 2026-08-03 | 新增 LES-027（INV-025 的 50% 删除检查过时）+ LES-028（硬删除导致跨设备删除传播失效，墓碑缺失） | AI | #BUGFIX-003 同步更新 constraints.md |
+| 2026-08-03 | LES-028 状态从"待修复"更新为"已修复（墓碑清理待实施）"：墓碑机制核心步骤 1-6 全部落地（领域模型 deleted_at + delete() 软删除 + Repository *_including_deleted + 业务查询过滤墓碑 + sync import/export 改用 *_including_deleted + DB migration）；步骤 7（定期清理超 N 天墓碑）另建任务 sync_tombstone_cleanup。同步更新 constraints.md 新增 INV-032 文档化墓碑机制不变量 | AI | #TOMBSTONE-001 同步更新 constraints.md |
+| 2026-08-03 | LES-028 影响文件列表补充 reminder_service/template_service：service 层 delete 软删除三模块对齐完成 | AI | #TOMBSTONE-001 同步更新 constraints.md |
+| 2026-08-03 | LES-028 状态更新为"已修复"（墓碑清理已实施）+ 新增 LES-029（墓碑机制实现经验） | AI | #FEAT-TOMBSTONE 同步更新 constraints.md + boundaries.md + glossary.md |

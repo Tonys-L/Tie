@@ -179,6 +179,12 @@ SQLite 作为本地运行时存储（事务/并发安全），JSON 文件作为 
 
 ## T
 
+### Tombstone（墓碑）
+
+软删除标记的实体记录。当用户删除便签/提醒/模板时，不执行物理删除（DELETE FROM），而是通过 `delete()` 方法设置 `deleted_at` 字段（同时更新 `updated_at`）。墓碑记录参与 Git 同步的 last-write-wins 仲裁，确保删除操作能跨设备传播。业务查询默认过滤墓碑（`WHERE deleted_at IS NULL`），只有同步专用的 `find_*_including_deleted` 方法返回含墓碑记录。墓碑清理在超过 50 条阈值时物理删除最老的（INV-032）。
+
+---
+
 ### 便签模板 (Template)
 
 用户自定义的便签内容模板，支持从模板一键创建便签。存储在 SQLite `templates` 表，首次启动为空时自动种子 3 个默认模板（空白/会议记录/待办清单）。模板 id 格式 `tpl-{uuid}`，category 固定为 `custom`。模板随 Git 同步（导出到 `sync/templates/*.json`，按 `updated_at` 仲裁 last-write-wins）。UI 入口三处：设置中心模板管理弹窗（CRUD）、便签右键菜单"从模板新建"（创建新便签）、空便签编辑区顶部模板快捷条（一键填充当前便签）。
@@ -237,3 +243,4 @@ SQLite FTS5 的一种分词器，将文本按 3 字符滑动窗口生成 trigram
 | 2026-07-21 | 新增领域事件（DomainEvent）、事件总线（EventBus）、事件发布者（EventPublisher）术语；更新 AppState 词条（新增 template_repo/event_bus 成员，5→7 个） | AI | #REFACTOR-036 同步更新 ADR-007/constraints.md/boundaries.md |
 | 2026-07-21 | 新增 CQRS 风味拆分、NoteQuery、ReminderQuery、ai-client、runAi 术语；更新 AppState 词条（新增 note_query/reminder_query 成员，7→9 个）；更新 DomainEvent 词条（ADR-008 扩展：scheduler 也 emit ReminderWritten，监听器两条） | AI | #REFACTOR-038 同步更新 ADR-008/010/constraints.md/boundaries.md/lessons/README.md |
 | 2026-07-22 | 更新提醒（Reminder）词条：4 个转换方法（mark_triggered/snooze/mark_done/cancel）返回 `Result<(), String>` 表达转换合法性（INV-031）——终态 Done/Cancelled 拒绝所有转换，Triggered 拒绝重复 mark_triggered；Triggered → Pending via snooze 合法（用户主动延后） | AI | #REFACTOR-039 同步更新 constraints.md/flows.md/boundaries.md/lessons/README.md |
+| 2026-08-03 | 新增 Tombstone（墓碑）术语：软删除机制文档化（INV-032） | AI | #FEAT-TOMBSTONE 同步更新 constraints.md + lessons/README.md + boundaries.md |

@@ -118,6 +118,16 @@ impl GitSync {
         // 阶段 4：双向数据同步（导入远程 JSON → 导出本地 JSON）
         let imported = self.sync_data_bidirectional(note_repo, reminder_repo, template_repo)?;
 
+        // 阶段 4.5：墓碑清理（INV-032）- 跨三类合计超 50 条时物理删除最老的
+        let cleaned = super::sync_tombstone_cleanup::cleanup_old_tombstones(
+            note_repo,
+            reminder_repo,
+            template_repo,
+        )?;
+        if cleaned > 0 {
+            eprintln!("[同步] 墓碑清理：物理删除 {} 条超阈值墓碑", cleaned);
+        }
+
         // 阶段 5：commit + push 安全检查 + push
         let (has_local_changes, commit_msg) = self.commit_and_push(&ctx)?;
 
@@ -274,7 +284,16 @@ impl GitSync {
         Ok(imported)
     }
 
-    /// 阶段 5：commit + push 安全检查 + push
+    /// 阶段 5：commit + push
+    ///
+    /// 安全防护层（INV-024/INV-025）：
+    /// - 上游 merge --allow-unrelated-histories 已确保远程数据进入本地
+    /// - import last-write-wins 仲裁确保不丢更新
+    /// - push 使用 --force-with-lease 防止他人并发推送被覆盖
+    ///
+    /// 注：曾有的"删除占比 >50% 拒绝推送"检查已移除——在"先拉后推 + merge"
+    /// 修复后，diff 显示的删除均为 DB 决定的预期删除（LES-027）。
+    /// 跨设备删除传播问题（墓碑缺失）另行处理。
     fn commit_and_push(&self, ctx: &SyncContext) -> Result<(bool, String), String> {
         git_ops::run_git(&self.sync_dir, &["add", "-A"])?;
         let status = git_ops::run_git(&self.sync_dir, &["status", "--porcelain"])?;
@@ -286,26 +305,6 @@ impl GitSync {
 
         if has_local_changes {
             git_ops::run_git(&self.sync_dir, &["commit", "-m", &commit_msg])?;
-        }
-
-        // push 前安全检查：防止推送导致远程大量文件被删除
-        if ctx.has_remote {
-            let remote_ref = format!("origin/{}", ctx.config.branch);
-            let diff_output = git_ops::run_git(
-                &self.sync_dir,
-                &["diff", "--name-status", &remote_ref, "HEAD"],
-            )
-            .unwrap_or_default();
-
-            let deletions = diff_output.lines().filter(|l| l.starts_with('D')).count();
-            let total_changes = diff_output.lines().count();
-            // 超过 50% 的变更是删除 → 疑似覆盖远程数据，拒绝推送（INV-025）
-            if total_changes > 0 && deletions as f64 / total_changes as f64 > 0.5 {
-                return Err(format!(
-                    "同步安全检查：本次推送将删除远程 {} 个文件（共 {} 个变更），可能覆盖远程数据。请确认远程仓库配置是否正确。",
-                    deletions, total_changes
-                ));
-            }
         }
 
         git_ops::run_git(

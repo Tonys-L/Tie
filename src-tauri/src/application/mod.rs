@@ -25,6 +25,7 @@ pub mod report_generator;
 pub mod shortcut_manager;
 pub mod sync_config;
 pub mod sync_json_io;
+pub mod sync_tombstone_cleanup;
 pub mod template_service;
 pub mod tray_manager;
 pub mod window_manager;

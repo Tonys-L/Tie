@@ -77,9 +77,9 @@ pub fn dismiss_reminder(
     Ok(note_id)
 }
 
-/// 删除提醒，emit `ReminderWritten(Deleted)` 事件
+/// 删除提醒（软删除，墓碑机制 INV-032），emit `ReminderWritten(Deleted)` 事件
 ///
-/// 编排：查 note_id → delete → 返回 note_id 用于通知。
+/// 编排：find → delete（软删除，设 deleted_at + updated_at）→ save → 返回 note_id 用于通知。
 /// 返回 `Option<String>`：被删除提醒对应的 note_id（若提醒不存在则为 None）。
 ///
 /// 存在性守卫：提醒不存在时幂等返回 `Ok(None)`，不 emit 事件（INV-013 保真度缺口修复）。
@@ -88,12 +88,13 @@ pub fn delete_reminder(
     publisher: &dyn EventPublisher,
     id: &str,
 ) -> Result<Option<String>, String> {
-    let reminder = match reminder_repo.find_by_id(id)? {
+    let mut reminder = match reminder_repo.find_by_id(id)? {
         Some(r) => r,
         None => return Ok(None),
     };
     let note_id = reminder.note_id.clone();
-    reminder_repo.delete(id)?;
+    reminder.delete(); // 软删除（墓碑机制 INV-032）
+    reminder_repo.save(&reminder)?;
     publisher.emit(DomainEvent::ReminderWritten {
         action: WriteAction::Deleted,
         id: id.to_string(),
@@ -326,6 +327,66 @@ mod tests {
     #[test]
     fn test_delete_reminder_nonexistent_idempotent_no_emit() {
         // 幂等删除：提醒不存在时返回 Ok(None) 且不 emit 事件（与 sqlite 行为对齐）
+        let repo = InMemoryReminderRepository::new();
+        let (mock, events) = mock_publisher();
+
+        let result = delete_reminder(&repo, &mock, "nonexistent");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), None);
+        assert_eq!(count_events(&events), 0);
+    }
+
+    // ============ delete_reminder 软删除测试（INV-032）============
+
+    #[test]
+    fn delete_reminder_is_soft_delete() {
+        let repo = InMemoryReminderRepository::new();
+        let (mock, _events) = mock_publisher();
+        let r = sample_reminder(&repo);
+
+        delete_reminder(&repo, &mock, &r.id).unwrap();
+
+        // find_all 不含已软删除的 reminder（业务查询默认过滤墓碑）
+        let active = repo.find_all().unwrap();
+        assert!(active.iter().all(|x| x.id != r.id));
+
+        // find_all_including_deleted 含该 reminder 且 is_deleted 为 true（墓碑保留）
+        let all_inc = repo.find_all_including_deleted().unwrap();
+        let tombstone = all_inc.iter().find(|x| x.id == r.id).expect("墓碑应保留");
+        assert!(tombstone.is_deleted());
+    }
+
+    #[test]
+    fn delete_reminder_emits_event() {
+        let repo = InMemoryReminderRepository::new();
+        let (mock, events) = mock_publisher();
+        let r = sample_reminder(&repo);
+
+        delete_reminder(&repo, &mock, &r.id).unwrap();
+
+        assert_eq!(count_events(&events), 1);
+        let events_guard = events.lock().unwrap();
+        match &events_guard[0] {
+            DomainEvent::ReminderWritten { action, id } => {
+                assert_eq!(*action, WriteAction::Deleted);
+                assert_eq!(id, &r.id);
+            }
+            _ => panic!("expected ReminderWritten"),
+        }
+    }
+
+    #[test]
+    fn delete_reminder_returns_note_id() {
+        let repo = InMemoryReminderRepository::new();
+        let (mock, _events) = mock_publisher();
+        let r = sample_reminder(&repo);
+
+        let note_id = delete_reminder(&repo, &mock, &r.id).unwrap();
+        assert_eq!(note_id, Some("note-1".to_string()));
+    }
+
+    #[test]
+    fn delete_reminder_not_found_returns_none() {
         let repo = InMemoryReminderRepository::new();
         let (mock, events) = mock_publisher();
 

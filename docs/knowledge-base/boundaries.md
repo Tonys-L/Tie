@@ -41,7 +41,7 @@
 - `src-tauri/src/infrastructure/database.rs`（FTS5 虚拟表 + 触发器迁移）
 - `src-tauri/src/infrastructure/sqlite_note_repo.rs`（search_notes 实现：FTS5 MATCH + snippet + LIKE 短查询回退）
 - `src/main.ts`（便签窗口前端入口，纯编排：initNoteWindow + setupNoteEvents 编排 5 个 bind 子函数 + 全局事件监听；1903→390 行，业务实现拆分至 15 个模块）
-- `src/hub.ts`（Hub 前端入口，纯编排：页面切换 + 主题/语言 + 初始加载 + visibilitychange/focus 刷新；1441→131 行，业务实现拆分至 12 个模块）
+- `src/hub.ts`（Hub 前端入口，纯编排：页面切换 + 主题/语言 + 初始加载 + visibilitychange/focus 刷新；1441→131 行，业务实现拆分至 10 个模块）
 - `src/note-renderer.ts`（renderNote 渲染便签到 DOM，callback 模式注入 setupEvents 避免循环依赖）
 - `src/colors.ts`（COLOR_MAP/COLORS 颜色映射 + applyNoteStyle，被 note-renderer 与 context-menu 共享以破循环依赖；从原 note-style.ts 拆出，ADR-009 同批次；formatNoteTime 已迁到 datetime.ts，职责错位修正）
 - `src/datetime.ts`（localISO/formatDate/formatNoteTime/quickDate/repeatLabel 日期时间工具，被 reminder-dialog/calendar-view/notes-list/note-renderer 等共享；从原 utils.ts 拆出，ADR-009 同批次；formatNoteTime 从 colors.ts 迁入）
@@ -148,6 +148,7 @@
 - push 策略：--force-with-lease
 - 自动同步防抖：30 秒延迟
 - 写操作副作用解耦（ADR-007）：service 层完成写操作后 emit `DomainEvent`，lib.rs setup 注册监听器接收事件并触发 `schedule_auto_sync`；命令层不再手动调用 `schedule_auto_sync`，消除散布问题与漏调风险（INV-013）
+- 墓碑机制（INV-032）：删除操作走软删除（domain `delete()` + `save`），`deleted_at` 字段标记墓碑；sync 时墓碑参与 last-write-wins 仲裁（远程墓碑更新→传播删除；远程非墓碑更新→复活）；墓碑清理跨三类合计超 50 条时物理删除最老的
 
 **变化点**:
 - 同步协议（当前 Git HTTPS，未来可能其他）
@@ -156,6 +157,7 @@
 
 **对应代码**:
 - `src-tauri/src/application/git_sync.rs`（GitSync struct + sync() 编排 + 调度；`sync_with_notification` 自由函数统一 sync+通知格式，被 sync_commands::sync_notes 和 tray_manager::handle_sync 共用）
+- `src-tauri/src/application/sync_tombstone_cleanup.rs`（墓碑清理：跨三类合计超阈值时物理删除最老的墓碑，在 sync 阶段 4.5 调用）
 - `src-tauri/src/application/sync_config.rs`（SyncConfig + 配置读写 + 认证 URL）
 - `src-tauri/src/application/sync_json_io.rs`（DB ↔ JSON 文件转换：`export_to_json`/`import_from_json` 公开入口 + `export_entity_to_json`/`import_entity_from_json` 泛型实现消除三重重复 + `extract_updated_at` 纯字符串解析供 git_ops 冲突解决复用）
 - `src-tauri/src/application/git_ops.rs`（Git 子进程执行 + 冲突解决；`pub const CREATE_NO_WINDOW: u32 = 0x08000000` 公开常量，供 git_sync/sync_commands 等模块统一引用，消除 magic number 散布）
@@ -177,7 +179,7 @@
 
 - 前端通过 `@tauri-apps/api/core` 的 `invoke` 调用后端命令
 - 后端通过 `window.emit` / `emit_to` 向前端发送事件（如 `flash-window`、`reminder-triggered`）
-- 45 个命令集中在 `application/commands` 模块（按业务域拆分为 9 个子模块：note/reminder/sync/shortcut/locale/system/ai/template/image；原 sync_commands 已按业务能力拆为 sync/shortcut/locale/system 四个子模块，ADR-009 同批次）
+- 55 个命令集中在 `application/commands` 模块（按业务域拆分为 9 个子模块：note/reminder/sync/shortcut/locale/system/ai/template/image；原 sync_commands 已按业务能力拆为 sync/shortcut/locale/system 四个子模块，ADR-009 同批次）
 - `application::paths::data_dir_path()` 是 `exe 同级目录/data` 路径解析的单一所有者，`commands::system_commands::data_dir_path` 转发本函数；供 `get_data_dir`/`open_data_dir` 命令、`lib.rs` setup、`image_service::image_dir` 共用，禁止他处内联重复解析
 - 可能并发的命令必须 `async` 避免死锁
 
@@ -404,3 +406,5 @@
 | 2026-07-22 | sniff_suggestions 提取 build_suggestions 纯函数：reminder_parser.rs 提取 102 行建议项遍历包装逻辑为 `fn build_suggestions(response: SniffResponse) -> Result<Vec<Suggestion>, AiError>` 纯函数（无 async 无 I/O），sniff_suggestions 从 136 行降至 34 行，解析 JSON 后直接调用 `build_suggestions(response)`；新增 11 个纯函数单测（无 mockito 毫秒级）覆盖 5 种建议类型 + 未知类型跳过 + 4 种空数据跳过 + 空响应 + 3 种混合 + reminder 解析错误；通过"删除测试"：类型分发逻辑可独立单测无需启动 mock 服务器，bug 定位从秒级降至毫秒级；291 个测试全部通过 | AI | #REFACTOR-043 |
 | 2026-07-22 | 架构深化第四轮（7 候选合并）：候选1 mock/sqlite 保真度缺口修复（mock delete 幂等化 + find_all/find_by_note_id 加排序 + service 层 delete 加存在性守卫 + 7 个一致性测试，LES-023）；候选2 image_service 反向依赖修复（data_dir_path 从 commands 层提升到 application/paths.rs，image_service 正向依赖 application::paths，system_commands 转发）；候选3 restore_all_windows 委托 note_service::delete_note（消除漏 emit NoteWritten(Deleted) 事件）；候选4 Reminder::effective_time() 单一真相源（is_due/find_next_due_time/find_by_date_range 统一委托，EFFECTIVE_TIME_EXPR SQL 常量）；候选5 手写 JSON 切片改用 serde_json 流式解析（sync_json_io::extract_updated_at + reminder_parser::extract_json + ai_commands::extract_json_array 3 处）；候选6 create_note 抽取 create_note_with_deps 脱离 AppHandle 可单测；候选7a 前端颜色表 purple 缺失 bug 修复 + BATCH_COLORS 统一引用；更新对应代码描述（image_service/paths.rs/note_service/template_service/window_manager/reminder.rs/reminder_service/ipc 通信 data_dir_path）；308 个测试全部通过 | AI | #REFACTOR-044 同步更新 constraints.md/lessons/README.md |
 | 2026-07-24 | 架构深化第五轮（3 候选合并）：候选6 JSON 提取逻辑两处独立实现合并——新建 `application/json_extract.rs`（`extract_object`/`extract_array` 两个语义函数 + 共享 `extract_first` 私有函数 + 8 个测试），ai_commands 删除 `extract_json_array` 及 4 测试改调 `json_extract::extract_array`，reminder_parser 删除 `extract_json` 及 3 测试改调 `json_extract::extract_object`；候选7 formatNoteTime 职责错位修正——从 `colors.ts` 迁到 `datetime.ts`（颜色模块不应承载时间格式化，LES-020 拆分粒度原则），note-renderer.ts import 拆分（colors 取 COLORS/applyNoteStyle，datetime 取 formatNoteTime）；候选8 locale_manager 9 个浅包装函数改为常量表——`LocaleText` 结构体 + 9 个 `pub const`（MENU_NEW_NOTE/MENU_SHOW_ALL/MENU_HUB/MENU_SYNC_NOW/MENU_QUIT/MENU_TOOLTIP/MENU_HUB_TITLE/NOTIFY_SYNC_OK/NOTIFY_SYNC_FAIL）+ `.get()` 方法，tray_manager 7 处 + hub_window_manager 1 处 + git_sync 2 处调用方适配为 `XXX.get()`；321 个测试全部通过 | AI | #REFACTOR-045 同步更新 constraints.md/lessons/README.md |
+| 2026-07-26 | 知识库健康度检查修正：IPC 命令数 45→55（实际 `#[tauri::command]` 统计，原 45 基线过时）；hub.ts 模块数 12→10（实际项目模块 import 统计，原 12 含 Tauri SDK 口径不一致）；未新增能力边界变更（纯数字修正） | AI | #HEALTH-CHECK-001 同步更新 constraints.md |
+| 2026-08-03 | 数据同步能力补充墓碑机制业务规则（INV-032：软删除 + 仲裁含墓碑 + 阈值 50 清理）+ 对应代码新增 `application/sync_tombstone_cleanup.rs` | AI | #FEAT-TOMBSTONE 同步更新 constraints.md + lessons/README.md + glossary.md |

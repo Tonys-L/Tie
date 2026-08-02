@@ -125,22 +125,25 @@ pub fn delete_note(
     // 存在性守卫：便签不存在时幂等返回 Ok(())，不 emit 事件。
     // 避免生产环境（sqlite delete 静默成功）对不存在的便签 emit NoteWritten(Deleted)
     // 触发不必要的 schedule_auto_sync（INV-013 保真度缺口修复）。
-    let note = match note_repo.find_by_id(id)? {
+    let mut note = match note_repo.find_by_id(id)? {
         Some(n) => n,
         None => return Ok(()),
     };
     // 删除前清理便签内容中的图片文件（先取 content 再 delete）
     image_service::cleanup_removed_images(&note.content, "");
-    // 级联删除 reminder 前 emit ReminderWritten(Deleted)，让 listener 触发 schedule_recalc
-    let reminders = reminder_repo.find_by_note_id(id)?;
-    for reminder in &reminders {
+    // 级联软删除 reminder（INV-032）：逐个 Reminder::delete() + save，emit ReminderWritten(Deleted)
+    let mut reminders = reminder_repo.find_by_note_id(id)?;
+    for reminder in &mut reminders {
+        reminder.delete();
+        reminder_repo.save(reminder)?;
         publisher.emit(DomainEvent::ReminderWritten {
             action: WriteAction::Deleted,
             id: reminder.id.clone(),
         });
     }
-    reminder_repo.delete_by_note_id(id)?;
-    note_repo.delete(id)?;
+    // 软删除 note（INV-032）：Note::delete() + save
+    note.delete();
+    note_repo.save(&note)?;
     publisher.emit(DomainEvent::NoteWritten {
         action: WriteAction::Deleted,
         id: id.to_string(),
@@ -157,9 +160,11 @@ pub fn close_note_if_empty(
     note_id: &str,
 ) {
     match note_repo.find_by_id(note_id) {
-        Ok(Some(note)) => {
+        Ok(Some(mut note)) => {
             if note.is_empty() {
-                if let Err(e) = note_repo.delete(note_id) {
+                // 软删除（INV-032）：Note::delete() + save
+                note.delete();
+                if let Err(e) = note_repo.save(&note) {
                     eprintln!("[窗口] 空便签删除失败: {}", e);
                 } else {
                     eprintln!("[窗口] 空便签已自动删除: {}", note_id);
@@ -486,6 +491,96 @@ mod tests {
         assert_eq!(count_events(&events), 0);
     }
 
+    // ============ delete_note 软删除测试 (INV-032) ============
+
+    #[test]
+    fn delete_note_is_soft_delete() {
+        // 软删除：find_all 不含该 note，find_all_including_deleted 含墓碑且 is_deleted 为 true（INV-032）
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+        let (mock, _events) = mock_publisher();
+        let note = Note::new("测试".to_string(), "amber".to_string());
+        let note_id = note.id.clone();
+        note_repo.save(&note).unwrap();
+
+        delete_note(&note_repo, &reminder_repo, &mock, &note_id).unwrap();
+
+        // find_all 不含已软删除的 note
+        let active = note_repo.find_all().unwrap();
+        assert!(!active.iter().any(|n| n.id == note_id));
+        // find_all_including_deleted 含墓碑，且 is_deleted 为 true
+        let including = note_repo.find_all_including_deleted().unwrap();
+        let tombstone = including
+            .iter()
+            .find(|n| n.id == note_id)
+            .expect("墓碑应存在");
+        assert!(tombstone.is_deleted());
+    }
+
+    #[test]
+    fn delete_note_cascades_soft_delete_reminder() {
+        // 级联软删除 reminder：find_by_note_id 不含，find_all_including_deleted 含墓碑且 is_deleted 为 true（INV-032）
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+        let (mock, _events) = mock_publisher();
+        let note = Note::new("测试".to_string(), "amber".to_string());
+        let reminder = Reminder::new(
+            note.id.clone(),
+            "标题".to_string(),
+            "2099-01-01T00:00:00Z".to_string(),
+            "once".to_string(),
+        );
+        let reminder_id = reminder.id.clone();
+        note_repo.save(&note).unwrap();
+        reminder_repo.save(&reminder).unwrap();
+
+        delete_note(&note_repo, &reminder_repo, &mock, &note.id).unwrap();
+
+        // reminder 的 find_by_note_id 不含已软删除的 reminder
+        let active = reminder_repo.find_by_note_id(&note.id).unwrap();
+        assert!(!active.iter().any(|r| r.id == reminder_id));
+        // reminder 的 find_all_including_deleted 含墓碑，且 is_deleted 为 true
+        let including = reminder_repo.find_all_including_deleted().unwrap();
+        let tombstone = including
+            .iter()
+            .find(|r| r.id == reminder_id)
+            .expect("reminder 墓碑应存在");
+        assert!(tombstone.is_deleted());
+    }
+
+    #[test]
+    fn delete_note_emits_note_written_event() {
+        // 验证 emit NoteWritten(Deleted) 事件；有关联 reminder 时同时 emit ReminderWritten(Deleted)
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+        let (mock, events) = mock_publisher();
+        let note = Note::new("测试".to_string(), "amber".to_string());
+        let note_id = note.id.clone();
+        let reminder = Reminder::new(
+            note.id.clone(),
+            "标题".to_string(),
+            "2099-01-01T00:00:00Z".to_string(),
+            "once".to_string(),
+        );
+        let reminder_id = reminder.id.clone();
+        note_repo.save(&note).unwrap();
+        reminder_repo.save(&reminder).unwrap();
+
+        delete_note(&note_repo, &reminder_repo, &mock, &note_id).unwrap();
+
+        let events_guard = events.lock().unwrap();
+        // 验证 emit 了 NoteWritten { action: Deleted, id }
+        let has_note_deleted = events_guard.iter().any(|e| {
+            matches!(e, DomainEvent::NoteWritten { action: WriteAction::Deleted, id } if id == &note_id)
+        });
+        assert!(has_note_deleted, "应 emit NoteWritten(Deleted)");
+        // 验证 emit 了 ReminderWritten { action: Deleted, ... }（有关联 reminder 时）
+        let has_reminder_deleted = events_guard.iter().any(|e| {
+            matches!(e, DomainEvent::ReminderWritten { action: WriteAction::Deleted, id } if id == &reminder_id)
+        });
+        assert!(has_reminder_deleted, "应 emit ReminderWritten(Deleted)");
+    }
+
     // ============ close_note_if_empty 测试 (INV-003) ============
 
     #[test]
@@ -554,6 +649,28 @@ mod tests {
         let (mock, events) = mock_publisher();
         close_note_if_empty(&note_repo, &mock, "nonexistent");
         assert_eq!(count_events(&events), 0);
+    }
+
+    #[test]
+    fn close_note_if_empty_is_soft_delete() {
+        // 软删除：find_all_including_deleted 含墓碑且 is_deleted 为 true（INV-032）
+        let note_repo = InMemoryNoteRepository::new();
+        let (mock, _events) = mock_publisher();
+        let mut note = Note::new(String::new(), "amber".to_string());
+        note.title = String::new();
+        note.content = String::new();
+        let note_id = note.id.clone();
+        note_repo.save(&note).unwrap();
+
+        close_note_if_empty(&note_repo, &mock, &note_id);
+
+        // find_all_including_deleted 含墓碑，且 is_deleted 为 true
+        let including = note_repo.find_all_including_deleted().unwrap();
+        let tombstone = including
+            .iter()
+            .find(|n| n.id == note_id)
+            .expect("墓碑应存在");
+        assert!(tombstone.is_deleted());
     }
 
     // ============ update_note_content 测试 ============

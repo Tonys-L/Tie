@@ -25,6 +25,12 @@ pub struct Note {
     /// 搜索高亮片段（仅搜索结果填充，FTS5 snippet 生成，格式：<mark>关键词</mark>）
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub highlight: Option<String>,
+    /// 软删除时间戳：None 表示未删除，Some(ts) 表示墓碑（INV-032）
+    ///
+    /// delete() 时同时设 deleted_at 和 updated_at 为 now，确保 last-write-wins 仲裁
+    /// 用 updated_at 比较即可正确传播删除（无需 import 改仲裁核心逻辑）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted_at: Option<String>,
 }
 
 /// 标签业务规则常量
@@ -48,6 +54,7 @@ impl Note {
             created_at: now.clone(),
             updated_at: now,
             highlight: None,
+            deleted_at: None,
         }
     }
 
@@ -114,6 +121,22 @@ impl Note {
     /// 集中在 Note 聚合根，让 reminder_scheduler 无需直接访问 is_archived 字段。
     pub fn is_reminder_eligible(&self) -> bool {
         !self.is_archived
+    }
+
+    /// 软删除：设 deleted_at = now，同时更新 updated_at = now（INV-032）
+    ///
+    /// 关键不变量：delete() 后 updated_at == deleted_at，
+    /// 确保 last-write-wins 仲裁只需比较 updated_at 即可正确传播删除。
+    /// save 时需正确写入 deleted_at 字段（None 或 Some(ts)）。
+    pub fn delete(&mut self) {
+        let now = Utc::now().to_rfc3339();
+        self.deleted_at = Some(now.clone());
+        self.updated_at = now;
+    }
+
+    /// 判断是否为墓碑（已软删除）
+    pub fn is_deleted(&self) -> bool {
+        self.deleted_at.is_some()
     }
 
     /// 更新窗口位置和尺寸（宽高低于最小值时自动修正）
@@ -427,5 +450,43 @@ mod tests {
         note.archive();
         assert!(note.is_archived);
         assert!(!note.is_reminder_eligible());
+    }
+
+    // ============ delete / is_deleted 测试 (INV-032) ============
+
+    #[test]
+    fn delete_sets_deleted_at_and_updated_at() {
+        // delete() 后 deleted_at 为 Some，且 updated_at == deleted_at
+        let mut note = Note::new("测试".to_string(), "amber".to_string());
+        assert!(note.deleted_at.is_none());
+        assert!(!note.is_deleted());
+
+        note.delete();
+
+        assert!(note.deleted_at.is_some());
+        assert_eq!(&note.updated_at, note.deleted_at.as_ref().unwrap());
+        assert!(note.is_deleted());
+    }
+
+    #[test]
+    fn is_deleted_reflects_deleted_at() {
+        // is_deleted 在 delete 前后返回值正确
+        let mut note = Note::new("测试".to_string(), "amber".to_string());
+        assert!(!note.is_deleted());
+
+        note.delete();
+        assert!(note.is_deleted());
+    }
+
+    #[test]
+    fn delete_updates_updated_at_to_now() {
+        // 10:00 创建 → 10:05 编辑 → 10:10 delete，updated_at 应为 10:10
+        // 这里用字符串比较验证 delete 后 updated_at 不小于原值
+        let mut note = Note::new("测试".to_string(), "amber".to_string());
+        note.updated_at = "2026-01-01T10:00:00+00:00".to_string();
+        note.delete();
+        // delete 后 updated_at 应被刷新为当前时间（一定大于 2026-01-01）
+        assert!(note.updated_at.as_str() > "2026-01-01T10:00:00+00:00");
+        assert_eq!(&note.updated_at, note.deleted_at.as_ref().unwrap());
     }
 }

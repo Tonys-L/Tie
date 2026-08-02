@@ -156,6 +156,21 @@ impl Database {
                 .map_err(|e| e.to_string())?;
         }
 
+        // 墓碑机制 migration（INV-032）：3 张表加 deleted_at TEXT 列（默认 NULL 表示非墓碑）
+        // 用辅助函数检查避免重复 PRAGMA 查询代码
+        if !has_column(conn, "notes", "deleted_at")? {
+            conn.execute_batch("ALTER TABLE notes ADD COLUMN deleted_at TEXT;")
+                .map_err(|e| e.to_string())?;
+        }
+        if !has_column(conn, "reminders", "deleted_at")? {
+            conn.execute_batch("ALTER TABLE reminders ADD COLUMN deleted_at TEXT;")
+                .map_err(|e| e.to_string())?;
+        }
+        if !has_column(conn, "templates", "deleted_at")? {
+            conn.execute_batch("ALTER TABLE templates ADD COLUMN deleted_at TEXT;")
+                .map_err(|e| e.to_string())?;
+        }
+
         // FTS5 全文搜索虚拟表（外部内容模式，不复制数据）
         // 检查 FTS5 是否可用 + 虚拟表是否已存在
         let has_fts: bool = {
@@ -207,6 +222,21 @@ impl Database {
 
         Ok(())
     }
+}
+
+/// 检查指定表是否有某列（migration 用，避免重复 PRAGMA 查询代码，INV-032）
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, String> {
+    let sql = format!("PRAGMA table_info({})", table);
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        if row.map_err(|e| e.to_string())? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 #[cfg(test)]
@@ -261,6 +291,61 @@ mod tests {
         }
 
         // 清理临时文件（WAL 模式会产生 -wal 和 -shm 附属文件）
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}-wal", &path_str));
+        let _ = std::fs::remove_file(format!("{}-shm", &path_str));
+    }
+
+    // ============ 墓碑 migration 测试（INV-032）============
+
+    #[test]
+    fn fresh_db_has_deleted_at_column() {
+        // 全新数据库初始化后，3 张表都有 deleted_at 列
+        let db = Database::new(":memory:").unwrap();
+        let conn = db.lock().unwrap();
+        assert!(has_column(&conn, "notes", "deleted_at").unwrap());
+        assert!(has_column(&conn, "reminders", "deleted_at").unwrap());
+        assert!(has_column(&conn, "templates", "deleted_at").unwrap());
+    }
+
+    #[test]
+    fn migration_adds_deleted_at_column_for_old_db() {
+        // 旧数据库（无 deleted_at 列）初始化后自动加列
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("ai_notes_test_tombstone_{}.db", ts));
+        let path_str = path.to_str().unwrap().to_string();
+
+        {
+            // 创建旧版 DB（无 deleted_at 列）
+            let conn = Connection::open(&path_str).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE notes (id TEXT PRIMARY KEY, title TEXT, content TEXT, color TEXT, opacity REAL, pos_x INTEGER, pos_y INTEGER, width INTEGER, height INTEGER, is_pinned INTEGER, is_archived INTEGER, tags TEXT, created_at TEXT, updated_at TEXT);
+                 CREATE TABLE reminders (id TEXT PRIMARY KEY, note_id TEXT, note_title TEXT, remind_at TEXT, repeat_type TEXT, status TEXT, snoozed_until TEXT, created_at TEXT, updated_at TEXT);
+                 CREATE TABLE templates (id TEXT PRIMARY KEY, name TEXT, content TEXT, category TEXT, sort_order INTEGER, created_at TEXT, updated_at TEXT);",
+            ).unwrap();
+            // 插入一条旧数据（无 deleted_at）
+            conn.execute("INSERT INTO notes (id, title, content, color, opacity, pos_x, pos_y, width, height, is_pinned, is_archived, tags, created_at, updated_at) VALUES ('n1', 't', 'c', 'amber', 1.0, 0, 0, 320, 280, 0, 0, '[]', '2026-01-01', '2026-01-01')", []).unwrap();
+        }
+
+        // 用 Database::new 重新打开，应自动加 deleted_at 列
+        {
+            let db = Database::new(&path_str).unwrap();
+            let conn = db.lock().unwrap();
+            assert!(has_column(&conn, "notes", "deleted_at").unwrap());
+            assert!(has_column(&conn, "reminders", "deleted_at").unwrap());
+            assert!(has_column(&conn, "templates", "deleted_at").unwrap());
+
+            // 旧数据 deleted_at 应为 NULL（视为非墓碑）
+            let deleted_at: Option<String> = conn
+                .query_row("SELECT deleted_at FROM notes WHERE id='n1'", [], |row| row.get(0))
+                .unwrap();
+            assert!(deleted_at.is_none());
+        }
+
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(format!("{}-wal", &path_str));
         let _ = std::fs::remove_file(format!("{}-shm", &path_str));

@@ -5,37 +5,54 @@ use serde::Serialize;
 
 use crate::domain::{Note, NoteRepository, Reminder, ReminderRepository, Template, TemplateRepository};
 
-/// 导出所有便签、提醒和模板为 JSON 文件
+/// 导出所有便签、提醒和模板为 JSON 文件（含墓碑）
 ///
-/// 内部委托 `export_entity_to_json` 泛型函数处理"查询→清空→序列化→写文件"的通用流程，
-/// Note 特殊处理：合并 find_all（活跃）+ find_archived（归档）后导出。
+/// 内部委托 `export_entity_to_json` 泛型函数处理"查询→清空→序列化→写文件"的通用流程。
+///
+/// **墓碑机制（INV-032，LES-028 修复）**：使用 `find_all_including_deleted` 查询全部记录
+/// （含墓碑和归档），让墓碑 JSON 写出到 sync 目录，其他设备 import 时能感知删除。
+/// Note 的 `find_all_including_deleted` 返回活跃 + 归档 + 墓碑，不再需要单独查询 `find_archived`。
+/// 墓碑 note 的 `deleted_at` 字段用 `#[serde(skip_serializing_if = "Option::is_none")]`，
+/// 所以非墓碑 note 的 JSON 不含 `deleted_at` 字段，墓碑 note 的 JSON 含 `deleted_at` 字段。
 pub fn export_to_json(
     sync_dir: &Path,
     note_repo: &dyn NoteRepository,
     reminder_repo: &dyn ReminderRepository,
     template_repo: &dyn TemplateRepository,
 ) -> Result<(), String> {
-    // 导出便签（活跃 + 归档合并后导出）
-    let notes = note_repo.find_all().map_err(|e| format!("查询便签失败: {}", e))?;
-    let archived = note_repo.find_archived().map_err(|e| format!("查询归档失败: {}", e))?;
-    let all_notes: Vec<Note> = notes.into_iter().chain(archived.into_iter()).collect();
+    // 导出便签（含墓碑和归档，find_all_including_deleted 返回全部）
+    let all_notes = note_repo
+        .find_all_including_deleted()
+        .map_err(|e| format!("查询便签失败: {}", e))?;
     export_entity_to_json(&sync_dir.join("notes"), &all_notes, "便签", |n| n.id.as_str())?;
 
-    // 导出提醒
-    let reminders = reminder_repo.find_all().map_err(|e| format!("查询提醒失败: {}", e))?;
+    // 导出提醒（含墓碑）
+    let reminders = reminder_repo
+        .find_all_including_deleted()
+        .map_err(|e| format!("查询提醒失败: {}", e))?;
     export_entity_to_json(&sync_dir.join("reminders"), &reminders, "提醒", |r| r.id.as_str())?;
 
-    // 导出模板
-    let templates = template_repo.find_all().map_err(|e| format!("查询模板失败: {}", e))?;
+    // 导出模板（含墓碑）
+    let templates = template_repo
+        .find_all_including_deleted()
+        .map_err(|e| format!("查询模板失败: {}", e))?;
     export_entity_to_json(&sync_dir.join("templates"), &templates, "模板", |t| t.id.as_str())?;
 
     Ok(())
 }
 
-/// 从 JSON 文件导入到数据库（upsert，按 updated_at 取最新）
+/// 从 JSON 文件导入到数据库（upsert，按 updated_at 取最新，含墓碑）
 ///
 /// 内部委托 `import_entity_from_json` 泛型函数处理"遍历目录→解析→仲裁→save"的通用流程。
 /// 仲裁规则：`item.updated_at > existing.updated_at` 时覆盖（last-write-wins，INV-011）。
+///
+/// **墓碑机制（INV-032，LES-028 修复）**：使用 `find_by_id_including_deleted` 查询本地记录，
+/// 让墓碑的 `updated_at`（= 删除时间）参与 last-write-wins 仲裁。这样：
+/// - 远程墓碑 updated_at 更新 → 覆盖本地非墓碑（传播删除）
+/// - 远程非墓碑 updated_at 更新 → 覆盖本地墓碑（复活）
+/// - 本地墓碑/非墓碑 updated_at 更新 → 跳过（保留本地）
+/// Note/Reminder/Template 的 `delete()` 同时设 `deleted_at` 和 `updated_at` 为 now，
+/// 所以仲裁只需比较 `updated_at`，无需 import 改仲裁核心逻辑。
 pub fn import_from_json(
     sync_dir: &Path,
     note_repo: &dyn NoteRepository,
@@ -50,7 +67,7 @@ pub fn import_from_json(
         "便签",
         |n| n.id.as_str(),
         |n| n.updated_at.as_str(),
-        |repo, id| repo.find_by_id(id),
+        |repo, id| repo.find_by_id_including_deleted(id),
         |repo, item| repo.save(item),
     )?;
 
@@ -60,7 +77,7 @@ pub fn import_from_json(
         "提醒",
         |r| r.id.as_str(),
         |r| r.updated_at.as_str(),
-        |repo, id| repo.find_by_id(id),
+        |repo, id| repo.find_by_id_including_deleted(id),
         |repo, item| repo.save(item),
     )?;
 
@@ -70,7 +87,7 @@ pub fn import_from_json(
         "模板",
         |t| t.id.as_str(),
         |t| t.updated_at.as_str(),
-        |repo, id| repo.find_by_id(id),
+        |repo, id| repo.find_by_id_including_deleted(id),
         |repo, item| repo.save(item),
     )?;
 
@@ -432,6 +449,201 @@ mod tests {
 
         let found = template_repo.find_by_id(&old_tpl.id).unwrap().unwrap();
         assert_eq!(found.content, "新内容");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ============ 墓碑机制测试 (INV-032 墓碑 / INV-011 last-write-wins 含墓碑) ============
+    // 以下 5 个测试覆盖 LES-028 修复：让墓碑参与 import 仲裁 + export 写出墓碑 JSON。
+
+    /// import 传播墓碑：远程墓碑 updated_at 更新 → 覆盖本地非墓碑（LES-028 修复）
+    ///
+    /// 验证点：本地非墓碑被远程墓碑覆盖后，find_by_id 返回 None（过滤墓碑），
+    /// find_by_id_including_deleted 返回 Some 且 deleted_at.is_some()。
+    #[test]
+    fn import_propagates_tombstone() {
+        let dir = temp_dir();
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+        let template_repo = InMemoryTemplateRepository::new();
+
+        // 本地有非墓碑 note（updated_at = "2026-07-01T00:00:00Z"）
+        let mut local_note = Note::new("本地便签".to_string(), "amber".to_string());
+        local_note.id = "n1".to_string();
+        local_note.updated_at = "2026-07-01T00:00:00Z".to_string();
+        note_repo.save(&local_note).unwrap();
+
+        // 远程 JSON 是墓碑 note（updated_at = "2026-07-02T00:00:00Z", deleted_at = "2026-07-02T00:00:00Z"）
+        let mut remote_note = local_note.clone();
+        remote_note.deleted_at = Some("2026-07-02T00:00:00Z".to_string());
+        remote_note.updated_at = "2026-07-02T00:00:00Z".to_string();
+        let notes_dir = dir.join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        let json = serde_json::to_string_pretty(&remote_note).unwrap();
+        std::fs::write(notes_dir.join("n1.json"), json).unwrap();
+
+        // import：远程墓碑 updated_at 更新 → 覆盖本地
+        let imported = import_from_json(&dir, &note_repo, &reminder_repo, &template_repo).unwrap();
+        assert_eq!(imported, 1);
+
+        // 验证本地 note 变为墓碑
+        assert!(
+            note_repo.find_by_id("n1").unwrap().is_none(),
+            "find_by_id 应过滤墓碑返回 None"
+        );
+        let with_tomb = note_repo
+            .find_by_id_including_deleted("n1")
+            .unwrap()
+            .expect("墓碑应存在");
+        assert!(with_tomb.deleted_at.is_some(), "deleted_at 应为 Some");
+        assert_eq!(with_tomb.deleted_at.as_deref(), Some("2026-07-02T00:00:00Z"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// import 本地更新于远程墓碑 → 本地非墓碑保留（删除不传播，相当于撤销）
+    ///
+    /// 验证点：本地 updated_at 比远程墓碑新 → 跳过 save → 本地仍为非墓碑。
+    #[test]
+    fn import_local_newer_than_remote_tombstone_kept() {
+        let dir = temp_dir();
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+        let template_repo = InMemoryTemplateRepository::new();
+
+        // 本地有非墓碑 note（updated_at = "2026-07-03T00:00:00Z"，比远程墓碑新）
+        let mut local_note = Note::new("本地便签".to_string(), "amber".to_string());
+        local_note.id = "n1".to_string();
+        local_note.updated_at = "2026-07-03T00:00:00Z".to_string();
+        note_repo.save(&local_note).unwrap();
+
+        // 远程 JSON 是墓碑 note（updated_at = "2026-07-02T00:00:00Z"）
+        let mut remote_note = local_note.clone();
+        remote_note.deleted_at = Some("2026-07-02T00:00:00Z".to_string());
+        remote_note.updated_at = "2026-07-02T00:00:00Z".to_string();
+        let notes_dir = dir.join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        let json = serde_json::to_string_pretty(&remote_note).unwrap();
+        std::fs::write(notes_dir.join("n1.json"), json).unwrap();
+
+        // import：本地更新 → 跳过
+        let imported = import_from_json(&dir, &note_repo, &reminder_repo, &template_repo).unwrap();
+        assert_eq!(imported, 0);
+
+        // 验证本地 note 仍为非墓碑
+        let found = note_repo
+            .find_by_id("n1")
+            .unwrap()
+            .expect("note 应存在");
+        assert!(
+            found.deleted_at.is_none(),
+            "deleted_at 应为 None（本地非墓碑保留）"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// import 远程非墓碑更新 → 复活本地墓碑（LES-028 修复）
+    ///
+    /// 验证点：本地墓碑被远程非墓碑覆盖后，find_by_id 返回 Some 且 deleted_at.is_none()。
+    #[test]
+    fn import_revives_when_remote_newer() {
+        let dir = temp_dir();
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+        let template_repo = InMemoryTemplateRepository::new();
+
+        // 本地有墓碑 note（updated_at = "2026-07-01T00:00:00Z", deleted_at = "2026-07-01T00:00:00Z"）
+        let mut local_note = Note::new("被删便签".to_string(), "amber".to_string());
+        local_note.id = "n1".to_string();
+        local_note.deleted_at = Some("2026-07-01T00:00:00Z".to_string());
+        local_note.updated_at = "2026-07-01T00:00:00Z".to_string();
+        note_repo.save(&local_note).unwrap();
+
+        // 远程 JSON 是非墓碑 note（updated_at = "2026-07-02T00:00:00Z", deleted_at = None）
+        let mut remote_note = local_note.clone();
+        remote_note.deleted_at = None;
+        remote_note.updated_at = "2026-07-02T00:00:00Z".to_string();
+        let notes_dir = dir.join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        let json = serde_json::to_string_pretty(&remote_note).unwrap();
+        std::fs::write(notes_dir.join("n1.json"), json).unwrap();
+
+        // import：远程非墓碑更新 → 复活本地墓碑
+        let imported = import_from_json(&dir, &note_repo, &reminder_repo, &template_repo).unwrap();
+        assert_eq!(imported, 1);
+
+        // 验证本地 note 复活
+        let found = note_repo
+            .find_by_id("n1")
+            .unwrap()
+            .expect("复活后 find_by_id 应返回 Some");
+        assert!(found.deleted_at.is_none(), "deleted_at 应为 None（已复活）");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// export 写出墓碑 JSON：DB 中墓碑 note 的 JSON 文件含 deleted_at 字段且非 null（LES-028 修复）
+    ///
+    /// 验证点：调 note.delete() + save 后 export，sync/notes/{id}.json 含 deleted_at 字段。
+    #[test]
+    fn export_writes_tombstone_json() {
+        let dir = temp_dir();
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+        let template_repo = InMemoryTemplateRepository::new();
+
+        // DB 中有墓碑 note（先 delete 再 save）
+        let mut note = Note::new("将被删除".to_string(), "amber".to_string());
+        note.id = "n1".to_string();
+        note.delete();
+        note_repo.save(&note).unwrap();
+
+        // export
+        export_to_json(&dir, &note_repo, &reminder_repo, &template_repo).unwrap();
+
+        // 读取 sync/notes/n1.json 验证含 deleted_at 字段且不为 null
+        let json_path = dir.join("notes").join("n1.json");
+        assert!(json_path.exists(), "墓碑 note 的 JSON 文件应存在");
+        let content = std::fs::read_to_string(&json_path).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let deleted_at = value.get("deleted_at").expect("JSON 应含 deleted_at 字段");
+        assert!(!deleted_at.is_null(), "deleted_at 不应为 null");
+        assert!(deleted_at.as_str().is_some(), "deleted_at 应为字符串");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// export 包含墓碑：1 活跃 + 1 墓碑 → sync/notes 下 2 个 JSON 文件（LES-028 修复）
+    ///
+    /// 验证点：墓碑 note 的 JSON 文件存在（不被 find_all_including_deleted 过滤）。
+    #[test]
+    fn export_includes_tombstones_in_json() {
+        let dir = temp_dir();
+        let note_repo = InMemoryNoteRepository::new();
+        let reminder_repo = InMemoryReminderRepository::new();
+        let template_repo = InMemoryTemplateRepository::new();
+
+        // 1 条活跃 note
+        let mut active = Note::new("活跃便签".to_string(), "amber".to_string());
+        active.id = "n-active".to_string();
+        note_repo.save(&active).unwrap();
+
+        // 1 条墓碑 note
+        let mut tombstone = Note::new("墓碑便签".to_string(), "blue".to_string());
+        tombstone.id = "n-tomb".to_string();
+        tombstone.delete();
+        note_repo.save(&tombstone).unwrap();
+
+        // export
+        export_to_json(&dir, &note_repo, &reminder_repo, &template_repo).unwrap();
+
+        // sync/notes 下应有 2 个 JSON 文件（含墓碑）
+        let notes_dir = dir.join("notes");
+        let active_path = notes_dir.join("n-active.json");
+        let tomb_path = notes_dir.join("n-tomb.json");
+        assert!(active_path.exists(), "活跃 note JSON 应存在");
+        assert!(tomb_path.exists(), "墓碑 note JSON 应存在");
 
         std::fs::remove_dir_all(&dir).ok();
     }
