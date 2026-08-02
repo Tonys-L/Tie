@@ -20,6 +20,11 @@ describe("便签管理", () => {
     await waitForHubReady();
     await switchToHub();
     await navigateTo("notes");
+    // 确保 tab 在"活跃便签"（避免被前一个 spec 文件残留状态影响）
+    await browser.execute(() => {
+      const tab = document.querySelector('.mgr-tab[data-tab="active"]') as HTMLElement;
+      if (tab && !tab.classList.contains('active')) tab.click();
+    });
     await clearAllNotes();
   });
 
@@ -27,17 +32,23 @@ describe("便签管理", () => {
     await clearAllNotes();
     await switchToHub();
     await navigateTo("notes");
+    // 确保 tab 在"活跃便签"
+    await browser.execute(() => {
+      const tab = document.querySelector('.mgr-tab[data-tab="active"]') as HTMLElement;
+      if (tab && !tab.classList.contains('active')) tab.click();
+    });
     await browser.pause(300);
   });
 
   it("M-021 创建便签后出现在 Hub 列表", async () => {
     await createNote("测试便签1", "内容1");
-    await browser.pause(500);
 
     // 切换到 Hub 并刷新
     await switchToHub();
     await navigateTo("notes");
-    await browser.pause(500);
+
+    // 等待便签列表渲染完成（loadNotes 异步，固定 pause 不可靠）
+    await $("#list .note-item").waitForDisplayed({ timeout: 10000 });
 
     const listItems = await $$("#list .note-item");
     expect(listItems.length >= 1).toBe(true);

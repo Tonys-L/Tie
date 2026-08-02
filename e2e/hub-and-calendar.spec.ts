@@ -65,6 +65,11 @@ describe("候选 7：formatNoteTime 时间显示", () => {
     await createNote("时间显示测试便签", "");
     await browser.pause(500);
     await navigateTo("notes");
+    // 确保 tab 在"活跃便签"（避免被前一个 describe 残留状态影响）
+    await browser.execute(() => {
+      const tab = document.querySelector('.mgr-tab[data-tab="active"]') as HTMLElement;
+      if (tab && !tab.classList.contains('active')) tab.click();
+    });
     await browser.pause(500);
   });
 
@@ -73,10 +78,10 @@ describe("候选 7：formatNoteTime 时间显示", () => {
   });
 
   it("M-012 Hub 列表显示便签时间（格式 yyyy/MM/dd HH:MM）", async () => {
-    // 等待便签列表渲染完成
-    await $(".note-item").waitForDisplayed({ timeout: 5000 });
+    // 等待便签列表渲染完成（loadNotes 异步，增加超时）
+    await $("#list .note-item").waitForDisplayed({ timeout: 10000 });
     const timeElement = await $(".note-date");
-    await timeElement.waitForDisplayed({ timeout: 5000 });
+    await timeElement.waitForDisplayed({ timeout: 10000 });
     const timeText = await timeElement.getText();
     // 验证格式为 yyyy/MM/dd HH:MM（如 "2026/07/25 01:17"，由 formatDate 生成）
     expect(timeText).toMatch(/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}$/);
@@ -112,7 +117,19 @@ describe("日历视图", () => {
   });
 
   it("M-063 月视图显示当月日历", async () => {
-    const calendar = await $("#cal-grid, #cal-month-view, .cal-day");
+    // 等待日历页面显示
+    await $("#page-calendar").waitForDisplayed({ timeout: 10000 });
+
+    // 确保月视图激活（避免被前一个 describe 残留的年视图状态影响）
+    const monthBtn = await $(".cal-view-btn[data-view='month']");
+    if (await monthBtn.isExisting()) {
+      await monthBtn.click();
+      await browser.pause(300);
+    }
+
+    // 等待日历网格渲染完成
+    const calendar = await $("#cal-grid .cal-day");
+    await calendar.waitForDisplayed({ timeout: 10000 });
     expect(await calendar.isDisplayed()).toBe(true);
   });
 
