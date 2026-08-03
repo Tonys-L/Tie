@@ -285,3 +285,35 @@ pub fn focus_note_window_and_emit(app: &AppHandle, note_id: &str, event: &str) -
         false
     }
 }
+
+/// 非置顶便签聚焦时提升 z-order 到同层级顶部
+///
+/// 便签从任务栏/最小化恢复后可能不在最前。使用 Win32 HWND_TOP（非 TOPMOST）
+/// 在同层级内提升 z-order，不影响其他应用窗口。
+///
+/// 仅对非置顶便签生效；置顶便签本身已在 TOPMOST 层级，无需调整。
+pub fn bring_note_to_front_if_not_pinned(window: &tauri::Window) {
+    let label = window.label();
+    if !label.starts_with("note-") {
+        return;
+    }
+    let is_pinned = window.is_always_on_top().unwrap_or(false);
+    if is_pinned {
+        return;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::*;
+        if let Ok(hwnd) = window.hwnd() {
+            let _ = unsafe {
+                SetWindowPos(
+                    hwnd,
+                    Some(HWND::default()), // HWND_TOP = 在同层级置顶
+                    0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                )
+            };
+        }
+    }
+}

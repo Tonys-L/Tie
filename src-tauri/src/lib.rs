@@ -60,29 +60,9 @@ pub fn run() {
                 }
                 tauri::WindowEvent::Focused(is_focused) => {
                     // 非置顶便签从任务栏/最小化恢复后，可能不在最前
-                    // 使用 Win32 HWND_TOP（非 TOPMOST）提升 z-order，不影响其他应用
+                    // 委托 window_manager 提升同层级 z-order，不影响其他应用
                     if *is_focused {
-                        let label = window.label();
-                        if label.starts_with("note-") {
-                            let is_pinned = window.is_always_on_top().unwrap_or(false);
-                            if !is_pinned {
-                                #[cfg(target_os = "windows")]
-                                {
-                                    use windows::Win32::Foundation::HWND;
-                                    use windows::Win32::UI::WindowsAndMessaging::*;
-                                    if let Ok(hwnd) = window.hwnd() {
-                                        let _ = unsafe {
-                                            SetWindowPos(
-                                                hwnd,
-                                                Some(HWND::default()), // HWND_TOP = 在同层级置顶
-                                                0, 0, 0, 0,
-                                                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-                                            )
-                                        };
-                                    }
-                                }
-                            }
-                        }
+                        crate::application::window_manager::bring_note_to_front_if_not_pinned(window);
                     }
                 }
                 _ => {}
