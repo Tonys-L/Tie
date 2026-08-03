@@ -173,7 +173,7 @@ export function getArchivedNotes(): any[] {
 function renderTagSidebar(): void {
   const notes = currentTab === 'active' ? activeNotes
     : currentTab === 'archived' ? archivedNotes
-    : [...activeNotes, ...archivedNotes];
+    : [...activeNotes, ...archivedNotes].filter(n => reminderCountCache.getCount(n.id) > 0);
   const tagMap = new Map<string, number>();
   notes.forEach(n => {
     (n.tags || []).forEach((tag: string) => {
