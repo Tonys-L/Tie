@@ -48,6 +48,8 @@ jobs:
 
       - name: Upload fixed-name installer for direct download
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $setup = Get-ChildItem src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe | Select-Object -First 1
           if ($setup) {
