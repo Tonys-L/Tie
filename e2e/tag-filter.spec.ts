@@ -5,6 +5,7 @@
  * - 活跃 tab 只显示活跃便签的标签
  * - 归档 tab 只显示归档便签的标签
  * - 点击标签筛选后列表非空
+ * - 切换 tab 时标签筛选自动清空
  */
 import { describe, it, before, after } from "mocha";
 import { $, $$, expect } from "@wdio/globals";
@@ -101,6 +102,34 @@ describe("标签侧边栏按 tab 过滤", () => {
       // 列表应有便签
       const noteItems = await $$(".note-item");
       expect(noteItems.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("切换 tab 时标签筛选自动清空", async () => {
+    // 在归档 tab 选中标签
+    const archivedTagItem = await $('.tag-sidebar-item[data-tag-filter="archived-tag"]');
+    if (await archivedTagItem.isExisting()) {
+      await archivedTagItem.click();
+      await browser.pause(300);
+
+      // 确认标签已选中
+      expect(await archivedTagItem.getAttribute("class")).toContain("active");
+
+      // 切到活跃 tab
+      const activeTab = await $('.mgr-tab[data-tab="active"]');
+      await activeTab.click();
+      await browser.pause(300);
+
+      // 活跃 tab 中不应有标签处于选中状态
+      const activeTags = await $$(".tag-sidebar-item.active");
+      expect(activeTags.length).toBe(0);
+
+      // 切回归档 tab，标签也不应处于选中状态
+      const archivedTab = await $('.mgr-tab[data-tab="archived"]');
+      await archivedTab.click();
+      await browser.pause(300);
+      const archivedTags = await $$(".tag-sidebar-item.active");
+      expect(archivedTags.length).toBe(0);
     }
   });
 });

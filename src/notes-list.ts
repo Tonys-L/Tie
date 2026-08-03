@@ -61,6 +61,8 @@ document.querySelectorAll('.mgr-tab').forEach(tab => {
     if (searchInput) { searchInput.value = ''; searchQuery = ''; searchResults = null; }
     // 切换 tab 时清空多选
     clearSelection();
+    selectedTag = null;
+    renderTagSidebar();
     renderList();
   });
 });
