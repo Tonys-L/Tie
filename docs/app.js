@@ -85,9 +85,9 @@
         var el = document.getElementById("versionTag");
         if (!el) return;
 
-        // GitHub Pages 静态托管下也可访问 api.github.com（只读、公开数据）
+        // 通过 jsDelivr CDN 读取 package.json，避免 GitHub API 速率限制（60次/小时）
         // 失败时静默降级为 "latest"，不影响页面其他功能
-        var url = "https://api.github.com/repos/Tonys-L/Tie/releases/latest";
+        var url = "https://cdn.jsdelivr.net/gh/Tonys-L/Tie@main/package.json";
 
         var controller;
         if ("AbortController" in window) {
@@ -104,9 +104,8 @@
                 return res.json();
             })
             .then(function (data) {
-                if (data && data.tag_name) {
-                    // tag_name 形如 v1.0.0
-                    el.textContent = data.tag_name.replace(/^v/i, "");
+                if (data && data.version) {
+                    el.textContent = data.version;
                 } else {
                     el.textContent = "latest";
                 }
