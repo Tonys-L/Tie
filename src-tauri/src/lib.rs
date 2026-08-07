@@ -229,6 +229,8 @@ pub fn run() {
             commands::create_note_from_template,
             commands::get_pin_desktop,
             commands::set_pin_desktop,
+            commands::get_note_taskbar,
+            commands::set_note_taskbar,
         ])
         .build(tauri::generate_context!())
         .expect("启动应用失败");

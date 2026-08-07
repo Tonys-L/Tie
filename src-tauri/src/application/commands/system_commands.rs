@@ -63,6 +63,30 @@ pub async fn set_pin_desktop(app: tauri::AppHandle, enabled: bool) -> Result<boo
     Ok(enabled)
 }
 
+/// 获取便签窗口任务栏显示配置
+#[tauri::command]
+pub async fn get_note_taskbar() -> Result<bool, String> {
+    let config = crate::application::note_taskbar_config::NoteTaskbarConfig::load()?;
+    Ok(config.show_in_taskbar)
+}
+
+/// 设置便签窗口任务栏显示配置，并立即对所有已存在的便签窗口生效
+#[tauri::command]
+pub async fn set_note_taskbar(app: tauri::AppHandle, show_in_taskbar: bool) -> Result<bool, String> {
+    let config = crate::application::note_taskbar_config::NoteTaskbarConfig { show_in_taskbar };
+    config.save()?;
+
+    // 立即对所有已存在的 note-* 窗口应用
+    use tauri::Manager;
+    for window in app.webview_windows().values() {
+        let label = window.label();
+        if !label.starts_with("note-") { continue; }
+        let _ = window.set_skip_taskbar(!show_in_taskbar);
+    }
+
+    Ok(show_in_taskbar)
+}
+
 /// 在系统默认浏览器中打开 URL
 #[tauri::command]
 pub fn open_url(url: String) -> Result<(), String> {

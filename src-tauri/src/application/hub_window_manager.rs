@@ -16,6 +16,7 @@
 //! 设计要点：
 //! - Hub 窗口与 note 窗口是不同生命周期，独立 module 隔离关注点
 //! - 与 `window_manager`（note 窗口生命周期）单向依赖无环
+//! - Hub 始终显示在任务栏（设置中心，不配置 skip_taskbar）
 
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 

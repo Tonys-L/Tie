@@ -13,6 +13,7 @@ pub mod locale_manager;
 pub mod lunar_calendar;
 pub mod month_range;
 pub mod note_service;
+pub mod note_taskbar_config;
 pub mod paths;
 pub mod pin_desktop_config;
 #[cfg(target_os = "windows")]

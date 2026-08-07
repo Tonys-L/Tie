@@ -142,6 +142,8 @@ export default {
     autoStartDesc: 'Launch Tie on system startup',
     pinDesktop: 'Pin immune to Show Desktop',
     pinDesktopDesc: 'Pinned notes survive Win+D, always visible',
+    noteTaskbar: 'Notes in Taskbar',
+    noteTaskbarDesc: 'Show note windows in the system taskbar (off by default, use Alt+Tab to switch)',
     general: 'General',
     generalDesc: 'Basic app settings',
     startup: 'Startup',

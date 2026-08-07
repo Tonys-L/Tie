@@ -36,7 +36,7 @@
 - `src-tauri/src/application/template_service.rs`（模板编排：save_template 通过 find_by_id 判断 Created/Updated、delete_template 加存在性守卫（find_by_id 返回 None 时 Ok(()) 不 emit 事件，LES-023）、create_note_from_template 查模板→建 Note→开窗→emit NoteWritten(Created)；所有写操作 emit `TemplateWritten`/`NoteWritten` 事件）
 - `src-tauri/src/application/event_bus.rs`（事件总线：DomainEvent 枚举 + WriteAction 枚举 + EventPublisher trait + EventBus 同步实现 + MockEventPublisher 测试工具；解耦 service 层写操作与 schedule_auto_sync 副作用，详见 ADR-007）
 - `src-tauri/src/application/window_manager.rs`（Note 窗口生命周期管理：open_note_window/open_note_window_with_url 创建、activate_note_for_reminder 提醒触发、restore_all_windows 启动恢复（空便签删除委托 note_service::delete_note，消除漏 emit NoteWritten(Deleted) 事件，LES-023）、close_note_window 销毁、set_note_pinned/restore_note_on_top 置顶、focus_note_window_and_emit 聚焦+事件、flash_window 闪烁；ADR-009 拆分后仅聚焦 note 窗口，Hub 窗口逻辑已迁到 hub_window_manager，重叠物理计算已迁到 window_overlap_resolver）
-- `src-tauri/src/application/hub_window_manager.rs`（Hub 窗口管理：toggle_hub_window 切换可见性、open_or_focus_hub 托盘菜单调用、create_hub_window 统一创建入口；ADR-009 从 window_manager 拆出，tray_manager/shortcut_manager 委托本模块）
+- `src-tauri/src/application/hub_window_manager.rs`（Hub 窗口管理：toggle_hub_window 切换可见性、open_or_focus_hub 托盘菜单调用、create_hub_window 统一创建入口；ADR-009 从 window_manager 拆出，tray_manager/shortcut_manager 委托本模块；Hub 始终显示在任务栏，不配置 skip_taskbar）
 - `src-tauri/src/application/window_overlap_resolver.rs`（窗口重叠解析器：compute_overlaps 纯函数计算同位置便签级联偏移 30px + resolve_overlaps 执行 Tauri set_position 副作用；ADR-009 从 window_manager 拆出，纯函数部分无 Tauri 依赖可独立单测，5 个单测覆盖无重叠/2 同位/3 同位/多组独立/空输入场景）
 - `src-tauri/src/infrastructure/database.rs`（FTS5 虚拟表 + 触发器迁移）
 - `src-tauri/src/infrastructure/sqlite_note_repo.rs`（search_notes 实现：FTS5 MATCH + snippet + LIKE 短查询回退）

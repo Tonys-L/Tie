@@ -218,7 +218,7 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 ### 窗口管理约束
 
 - 每张便签一个独立窗口，label 格式 `note-{uuid}`
-- 便签窗口必须 `decorations(false)` + `transparent(true)` + `shadow(false)`
+- 便签窗口必须 `decorations(false)` + `transparent(true)` + `shadow(false)`；`skip_taskbar` 由 `note_taskbar_config` 决定（默认 false 不显示，用户可在 Hub 开启）
 - 窗口已存在时禁止重复创建，应聚焦 + 闪烁提示
 - 提醒触发的窗口创建由后端直接执行（`open_note_window_with_url`），不依赖前端事件监听
 - 提醒触发时若窗口已存在，通过 `emit_to` 发送 `reminder-triggered` 事件让前端显示横幅
@@ -434,3 +434,4 @@ domain 层（核心层）零技术框架依赖，仅使用 serde/uuid/chrono 值
 | 2026-08-03 | 新增 INV-032（墓碑机制软删除确保跨设备删除传播，LES-028 修复）：文档化代码已引用但未在 constraints.md 登记的 INV-032 不变量（历史不一致修正）。涵盖 5 项要点：① 领域模型 deleted_at 字段 + delete() 同时设 updated_at ② Repository `*_including_deleted` + `physical_delete` ③ 业务查询默认过滤墓碑 ④ sync import 用 find_by_id_including_deleted 让墓碑参与 last-write-wins 仲裁 ⑤ sync export 用 find_all_including_deleted 写出墓碑 JSON。sync_json_io import/export 是本次完成的部分（Task 10+11），其余部分（领域模型/Repository/sqlite/mock/DB migration）此前已完成，墓碑清理另建任务 | AI | #TOMBSTONE-001 同步更新 lessons/README.md |
 | 2026-08-03 | INV-032 检查位置补充 service 层：reminder_service::delete_reminder 改软删除（domain delete() + save），与 note_service/template_service 对齐 | AI | #TOMBSTONE-001 |
 | 2026-08-03 | 墓碑机制全量落地：INV-011 修订（仲裁含墓碑）+ INV-032 墓碑清理已实施（sync_tombstone_cleanup 阈值 50） | AI | #FEAT-TOMBSTONE 同步更新 lessons/README.md + boundaries.md + glossary.md |
+| 2026-08-07 | 便签任务栏显示配置项：新建 `application/note_taskbar_config.rs`（NoteTaskbarConfig，仿 pin_desktop_config 范式，默认 show_in_taskbar=false，文件 note_taskbar.json）；window_manager 便签创建读取配置决定 skip_taskbar；system_commands 新增 get_note_taskbar/set_note_taskbar（set 遍历所有 note-* 窗口立即应用 set_skip_taskbar）；hub_window_manager 恢复原样（Hub 始终显示在任务栏，不配置 skip_taskbar）；前端 hub.html 开关 id note-taskbar + general-settings.ts 绑定 + i18n noteTaskbar/noteTaskbarDesc；窗口管理约束修订：便签 skip_taskbar 由配置决定 | AI | #FEAT-TASKBAR |

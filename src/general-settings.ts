@@ -53,6 +53,22 @@ export async function loadGeneralSettings(): Promise<void> {
     } catch (e) { console.error('设置置顶免疫失败:', e); }
   });
 
+  // 便签显示在任务栏开关
+  try {
+    const showInTaskbar = await invoke<boolean>('get_note_taskbar');
+    if (showInTaskbar) document.getElementById('note-taskbar')!.classList.add('on');
+  } catch (e) { console.error('获取便签任务栏显示状态失败:', e); }
+
+  document.getElementById('note-taskbar')?.addEventListener('click', async () => {
+    const el = document.getElementById('note-taskbar')!;
+    const turningOn = !el.classList.contains('on');
+    try {
+      const result = await invoke<boolean>('set_note_taskbar', { showInTaskbar: turningOn });
+      if (result) el.classList.add('on');
+      else el.classList.remove('on');
+    } catch (e) { console.error('设置便签任务栏显示失败:', e); }
+  });
+
   // 数据目录路径
   try {
     const dir = await api.getDataDir();

@@ -142,6 +142,8 @@ export default {
     autoStartDesc: '系统启动时自动运行 Tie',
     pinDesktop: '置顶免疫显示桌面',
     pinDesktopDesc: '置顶便签不受 Win+D 影响，始终可见',
+    noteTaskbar: '便签显示在任务栏',
+    noteTaskbarDesc: '开启后便签窗口显示在系统任务栏（默认关闭，通过 Alt+Tab 切换）',
     general: '通用',
     generalDesc: '基础应用设置',
     startup: '启动',
